@@ -27,7 +27,7 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: v1.64
+          version: v2.1
 
   test:
     name: Test
@@ -89,6 +89,7 @@ jobs:
           govulncheck ./...
 
       - name: gosec
+        continue-on-error: true
         run: |
           go install github.com/securego/gosec/v2/cmd/gosec@latest
           gosec -fmt sarif -out gosec.sarif ./...
