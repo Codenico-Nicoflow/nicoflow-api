@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -156,8 +157,9 @@ func main() {
 	}
 
 	srv := &http.Server{
-		Addr:    ":" + cfg.Port,
-		Handler: r,
+		Addr:              ":" + cfg.Port,
+		Handler:           r,
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 	slog.Info("server starting", "port", cfg.Port, "env", cfg.AppEnv)
 	if err := srv.ListenAndServe(); err != nil {
