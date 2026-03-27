@@ -25,7 +25,7 @@ jobs:
           cache: true
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
           version: v2.1
 
@@ -74,7 +74,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      security-events: write
     steps:
       - uses: actions/checkout@v4
 
@@ -89,16 +88,9 @@ jobs:
           govulncheck ./...
 
       - name: gosec
-        continue-on-error: true
         run: |
           go install github.com/securego/gosec/v2/cmd/gosec@latest
-          gosec -fmt sarif -out gosec.sarif ./...
-
-      - name: Upload SARIF report
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: gosec.sarif
+          gosec ./...
 
   build:
     name: Build
