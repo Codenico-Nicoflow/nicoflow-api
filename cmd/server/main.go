@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -46,5 +47,7 @@ func main() {
 			"message": "Hello, World!",
 		})
 	})
-	router.Run()
+	if err := router.Run(); err != nil {
+		log.Fatalf("server error: %v", err)
+	}
 }
