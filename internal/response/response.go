@@ -37,11 +37,6 @@ const (
 	ErrAILimitReached      = "AI_LIMIT_REACHED"     // 403
 )
 
-type envelope struct {
-	Data  interface{} `json:"data,omitempty"`
-	Error string      `json:"error,omitempty"`
-}
-
 func RespondOK(c *gin.Context, data any) {
 	c.JSON(http.StatusOK, gin.H{"data": data, "error": nil})
 }

@@ -5,15 +5,15 @@ import (
 )
 
 type Config struct {
-	DBUrl             string
-	JWTSecret         string
-	LSWebhookSecret   string
-	AWSAccessKeyID    string
-	AWSSecretKey      string
-	S3Bucket          string
-	CORSOrigins       string
-	AppEnv            string
-	Port              string
+	DBUrl           string
+	JWTSecret       string
+	LSWebhookSecret string
+	AWSAccessKeyID  string
+	AWSSecretKey    string
+	S3Bucket        string
+	CORSOrigins     string
+	AppEnv          string
+	Port            string
 }
 
 func Load() Config {

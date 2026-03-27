@@ -1,15 +1,7 @@
 package ws
 
 import (
-	"time"
-
 	"github.com/gin-gonic/gin"
-)
-
-const (
-	writeWait  = 10 * time.Second
-	pongWait   = 60 * time.Second
-	pingPeriod = (pongWait * 9) / 10
 )
 
 // Upgrader is set in main to avoid importing gorilla/websocket here if not yet available.
