@@ -33,35 +33,35 @@ func main() {
 	)
 
 	// ── Services ────────────────────────────────────────────────────────────────
-	authSvc       := service.NewAuthService(userRepo, refreshTokenRepo, cfg.JWTSecret)
-	areaSvc       := service.NewAreaService(areaRepo, planRepo)
-	projectSvc    := service.NewProjectService(projectRepo, planRepo)
-	taskSvc       := service.NewTaskService(taskRepo)
-	subtaskSvc    := service.NewSubtaskService(subtaskRepo)
-	inboxSvc      := service.NewInboxService(taskRepo)
+	authSvc := service.NewAuthService(userRepo, refreshTokenRepo, cfg.JWTSecret)
+	areaSvc := service.NewAreaService(areaRepo, planRepo)
+	projectSvc := service.NewProjectService(projectRepo, planRepo)
+	taskSvc := service.NewTaskService(taskRepo)
+	subtaskSvc := service.NewSubtaskService(subtaskRepo)
+	inboxSvc := service.NewInboxService(taskRepo)
 	timeSpreadSvc := service.NewTimeSpreadService(taskRepo)
-	userPlanSvc   := service.NewUserPlanService(planRepo)
-	aiSessionSvc  := service.NewAISessionService(aiSessionRepo, planRepo)
-	aiMessageSvc  := service.NewAIMessageService(aiMessageRepo, aiSessionRepo, aiUsageRepo, planRepo)
-	billingSvc    := service.NewBillingService(webhookEventRepo, planRepo)
-	attachSvc     := service.NewAttachmentService(cfg.S3Bucket)
-	hub           := ws.NewHub()
-	wsSvc         := service.NewWSService(hub)
+	userPlanSvc := service.NewUserPlanService(planRepo)
+	aiSessionSvc := service.NewAISessionService(aiSessionRepo, planRepo)
+	aiMessageSvc := service.NewAIMessageService(aiMessageRepo, aiSessionRepo, aiUsageRepo, planRepo)
+	billingSvc := service.NewBillingService(webhookEventRepo, planRepo)
+	attachSvc := service.NewAttachmentService(cfg.S3Bucket)
+	hub := ws.NewHub()
+	wsSvc := service.NewWSService(hub)
 
 	// ── Handlers ────────────────────────────────────────────────────────────────
-	authH         := handler.NewAuthHandler(authSvc)
-	areaH         := handler.NewAreaHandler(areaSvc)
-	projectH      := handler.NewProjectHandler(projectSvc)
-	taskH         := handler.NewTaskHandler(taskSvc)
-	subtaskH      := handler.NewSubtaskHandler(subtaskSvc)
-	inboxH        := handler.NewInboxHandler(inboxSvc)
-	timeSpreadH   := handler.NewTimeSpreadHandler(timeSpreadSvc)
-	userPlanH     := handler.NewUserPlanHandler(userPlanSvc)
-	aiSessionH    := handler.NewAISessionHandler(aiSessionSvc)
-	aiMessageH    := handler.NewAIMessageHandler(aiMessageSvc)
-	billingH      := handler.NewBillingHandler(billingSvc)
-	attachH       := handler.NewAttachmentHandler(attachSvc)
-	wsH           := handler.NewWSHandler(wsSvc)
+	authH := handler.NewAuthHandler(authSvc)
+	areaH := handler.NewAreaHandler(areaSvc)
+	projectH := handler.NewProjectHandler(projectSvc)
+	taskH := handler.NewTaskHandler(taskSvc)
+	subtaskH := handler.NewSubtaskHandler(subtaskSvc)
+	inboxH := handler.NewInboxHandler(inboxSvc)
+	timeSpreadH := handler.NewTimeSpreadHandler(timeSpreadSvc)
+	userPlanH := handler.NewUserPlanHandler(userPlanSvc)
+	aiSessionH := handler.NewAISessionHandler(aiSessionSvc)
+	aiMessageH := handler.NewAIMessageHandler(aiMessageSvc)
+	billingH := handler.NewBillingHandler(billingSvc)
+	attachH := handler.NewAttachmentHandler(attachSvc)
+	wsH := handler.NewWSHandler(wsSvc)
 
 	// ── Router ──────────────────────────────────────────────────────────────────
 	if cfg.AppEnv == "production" {
@@ -69,9 +69,17 @@ func main() {
 	}
 
 	r := gin.New()
+
+	var logger gin.HandlerFunc
+	if cfg.AppEnv == "production" {
+		logger = middleware.Logger()
+	} else {
+		logger = gin.Logger()
+	}
+
 	r.Use(
 		middleware.RequestID(),
-		middleware.Logger(),
+		logger,
 		middleware.CORS(cfg.CORSOrigins),
 		gin.Recovery(),
 	)
@@ -104,26 +112,39 @@ func main() {
 		protected.PUT("/projects/:id", projectH.Update)
 		protected.DELETE("/projects/:id", projectH.Delete)
 
-		protected.GET("/tasks", taskH.List)
-		protected.POST("/tasks", taskH.Create)
-		protected.PUT("/tasks/:id", taskH.Update)
-		protected.DELETE("/tasks/:id", taskH.Delete)
+		tasks := protected.Group("/tasks")
+		{
+			tasks.GET("", taskH.List)
+			tasks.POST("", taskH.Create)
+			tasks.PUT("/:taskId", taskH.Update)
+			tasks.DELETE("/:taskId", taskH.Delete)
 
-		protected.GET("/tasks/:taskId/subtasks", subtaskH.List)
-		protected.POST("/tasks/:taskId/subtasks", subtaskH.Create)
-		protected.PUT("/tasks/:taskId/subtasks/:id", subtaskH.Update)
-		protected.DELETE("/tasks/:taskId/subtasks/:id", subtaskH.Delete)
+			subtasks := tasks.Group("/:taskId/subtasks")
+			{
+				subtasks.GET("", subtaskH.List)
+				subtasks.POST("", subtaskH.Create)
+				subtasks.PUT("/:subtaskId", subtaskH.Update)
+				subtasks.DELETE("/:subtaskId", subtaskH.Delete)
+			}
+		}
 
 		protected.POST("/inbox/capture", inboxH.Capture)
 		protected.GET("/inbox", inboxH.List)
 
 		protected.GET("/time-spread", timeSpreadH.Get)
 
-		protected.GET("/ai/sessions", aiSessionH.List)
-		protected.POST("/ai/sessions", aiSessionH.Create)
-		protected.DELETE("/ai/sessions/:id", aiSessionH.Delete)
-		protected.GET("/ai/sessions/:sessionId/messages", aiMessageH.ListBySession)
-		protected.POST("/ai/sessions/:sessionId/messages", aiMessageH.Send)
+		aiSessions := protected.Group("/ai/sessions")
+		{
+			aiSessions.GET("", aiSessionH.List)
+			aiSessions.POST("", aiSessionH.Create)
+			aiSessions.DELETE("/:id", aiSessionH.Delete)
+
+			messages := aiSessions.Group("/:sessionId/messages")
+			{
+				messages.GET("", aiMessageH.ListBySession)
+				messages.POST("", aiMessageH.Send)
+			}
+		}
 
 		protected.GET("/user/plan", userPlanH.Get)
 

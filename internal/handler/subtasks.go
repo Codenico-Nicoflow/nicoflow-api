@@ -46,7 +46,7 @@ func (h *SubtaskHandler) List(c *gin.Context) {
 
 func (h *SubtaskHandler) Update(c *gin.Context) {
 	taskID := c.Param("taskId")
-	id := c.Param("id")
+	id := c.Param("subtaskId")
 	var req struct {
 		Title string `json:"title"`
 		Done  bool   `json:"done"`
@@ -65,7 +65,7 @@ func (h *SubtaskHandler) Update(c *gin.Context) {
 
 func (h *SubtaskHandler) Delete(c *gin.Context) {
 	taskID := c.Param("taskId")
-	id := c.Param("id")
+	id := c.Param("subtaskId")
 	if err := h.svc.Delete(c.Request.Context(), id, taskID); err != nil {
 		response.RespondError(c, http.StatusInternalServerError, response.ErrDatabaseError, err.Error())
 		return

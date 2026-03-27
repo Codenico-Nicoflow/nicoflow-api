@@ -50,7 +50,7 @@ func (h *TaskHandler) List(c *gin.Context) {
 }
 
 func (h *TaskHandler) Update(c *gin.Context) {
-	id := c.Param("id")
+	id := c.Param("taskId")
 	var updates model.Task
 	if err := c.ShouldBindJSON(&updates); err != nil {
 		response.RespondError(c, http.StatusBadRequest, response.ErrInvalidInput, err.Error())
@@ -66,7 +66,7 @@ func (h *TaskHandler) Update(c *gin.Context) {
 }
 
 func (h *TaskHandler) Delete(c *gin.Context) {
-	id := c.Param("id")
+	id := c.Param("taskId")
 	userID := c.GetString(middleware.ContextUserID)
 	if err := h.svc.Delete(c.Request.Context(), id, userID); err != nil {
 		response.RespondError(c, http.StatusInternalServerError, response.ErrDatabaseError, err.Error())
