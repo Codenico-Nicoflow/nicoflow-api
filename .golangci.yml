@@ -12,7 +12,6 @@ linters:
     - unused
     - gocyclo
     - misspell
-    - gosimple
     - prealloc
   settings:
     gocyclo:
