@@ -19,6 +19,19 @@ func NewTaskHandler(svc *service.TaskService) *TaskHandler {
 	return &TaskHandler{svc: svc}
 }
 
+// Create godoc
+// @Summary      Create a task
+// @Description  Creates a new task for the authenticated user
+// @Tags         tasks
+// @Accept       json
+// @Produce      json
+// @Param        body  body      swaggertypes.CreateTaskRequest  true  "Task data"
+// @Success      201   {object}  swaggertypes.TaskResponse
+// @Failure      400   {object}  swaggertypes.ErrorResponse
+// @Failure      401   {object}  swaggertypes.ErrorResponse
+// @Failure      500   {object}  swaggertypes.ErrorResponse
+// @Security     BearerAuth
+// @Router       /tasks [post]
 func (h *TaskHandler) Create(c *gin.Context) {
 	var req struct {
 		Title        string  `json:"title" binding:"required"`
@@ -39,6 +52,16 @@ func (h *TaskHandler) Create(c *gin.Context) {
 	response.RespondCreated(c, t)
 }
 
+// List godoc
+// @Summary      List tasks
+// @Description  Returns all tasks belonging to the authenticated user
+// @Tags         tasks
+// @Produce      json
+// @Success      200  {object}  swaggertypes.TaskListResponse
+// @Failure      401  {object}  swaggertypes.ErrorResponse
+// @Failure      500  {object}  swaggertypes.ErrorResponse
+// @Security     BearerAuth
+// @Router       /tasks [get]
 func (h *TaskHandler) List(c *gin.Context) {
 	userID := c.GetString(middleware.ContextUserID)
 	tasks, err := h.svc.List(c.Request.Context(), userID)
@@ -49,6 +72,20 @@ func (h *TaskHandler) List(c *gin.Context) {
 	response.RespondOK(c, tasks)
 }
 
+// Update godoc
+// @Summary      Update a task
+// @Description  Updates a task owned by the authenticated user
+// @Tags         tasks
+// @Accept       json
+// @Produce      json
+// @Param        taskId  path      string                  true  "Task ID"
+// @Param        body    body      swaggertypes.UpdateTaskRequest  true  "Updated task fields"
+// @Success      200     {object}  swaggertypes.TaskResponse
+// @Failure      400     {object}  swaggertypes.ErrorResponse
+// @Failure      401     {object}  swaggertypes.ErrorResponse
+// @Failure      500     {object}  swaggertypes.ErrorResponse
+// @Security     BearerAuth
+// @Router       /tasks/{taskId} [put]
 func (h *TaskHandler) Update(c *gin.Context) {
 	id := c.Param("taskId")
 	var updates model.Task
@@ -65,6 +102,17 @@ func (h *TaskHandler) Update(c *gin.Context) {
 	response.RespondOK(c, t)
 }
 
+// Delete godoc
+// @Summary      Delete a task
+// @Description  Deletes a task owned by the authenticated user
+// @Tags         tasks
+// @Produce      json
+// @Param        taskId  path      string  true  "Task ID"
+// @Success      200     {object}  swaggertypes.EmptyResponse
+// @Failure      401     {object}  swaggertypes.ErrorResponse
+// @Failure      500     {object}  swaggertypes.ErrorResponse
+// @Security     BearerAuth
+// @Router       /tasks/{taskId} [delete]
 func (h *TaskHandler) Delete(c *gin.Context) {
 	id := c.Param("taskId")
 	userID := c.GetString(middleware.ContextUserID)

@@ -1,0 +1,1678 @@
+basePath: /v1
+definitions:
+  swaggertypes.AIMessageData:
+    properties:
+      content:
+        example: Summarise my tasks for today
+        type: string
+      created_at:
+        type: string
+      id:
+        example: msg_01jw...
+        type: string
+      role:
+        example: user
+        type: string
+      session_id:
+        example: sess_01jw...
+        type: string
+    type: object
+  swaggertypes.AIMessageListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/swaggertypes.AIMessageData'
+        type: array
+      error:
+        $ref: '#/definitions/swaggertypes.ErrorBody'
+    type: object
+  swaggertypes.AIMessageResponse:
+    properties:
+      data:
+        $ref: '#/definitions/swaggertypes.AIMessageData'
+      error:
+        $ref: '#/definitions/swaggertypes.ErrorBody'
+    type: object
+  swaggertypes.AISessionData:
+    properties:
+      created_at:
+        type: string
+      id:
+        example: sess_01jw...
+        type: string
+      status:
+        example: active
+        type: string
+      title:
+        example: New Conversation
+        type: string
+      updated_at:
+        type: string
+      user_id:
+        example: usr_01jw...
+        type: string
+    type: object
+  swaggertypes.AISessionListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/swaggertypes.AISessionData'
+        type: array
+      error:
+        $ref: '#/definitions/swaggertypes.ErrorBody'
+    type: object
+  swaggertypes.AISessionResponse:
+    properties:
+      data:
+        $ref: '#/definitions/swaggertypes.AISessionData'
+      error:
+        $ref: '#/definitions/swaggertypes.ErrorBody'
+    type: object
+  swaggertypes.AccessTokenData:
+    properties:
+      accessToken:
+        example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        type: string
+    type: object
+  swaggertypes.AccessTokenResponse:
+    properties:
+      data:
+        $ref: '#/definitions/swaggertypes.AccessTokenData'
+      error:
+        $ref: '#/definitions/swaggertypes.ErrorBody'
+    type: object
+  swaggertypes.AreaData:
+    properties:
+      color:
+        example: '#3B82F6'
+        type: string
+      createdAt:
+        type: string
+      displayOrder:
+        example: 0
+        type: integer
+      id:
+        example: area_01jw...
+        type: string
+      name:
+        example: Work
+        type: string
+      updatedAt:
+        type: string
+      userId:
+        example: usr_01jw...
+        type: string
+    type: object
+  swaggertypes.AreaListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/swaggertypes.AreaData'
+        type: array
+      error:
+        $ref: '#/definitions/swaggertypes.ErrorBody'
+    type: object
+  swaggertypes.AreaResponse:
+    properties:
+      data:
+        $ref: '#/definitions/swaggertypes.AreaData'
+      error:
+        $ref: '#/definitions/swaggertypes.ErrorBody'
+    type: object
+  swaggertypes.BillingURLData:
+    properties:
+      url:
+        example: https://app.lemonsqueezy.com/checkout/...
+        type: string
+    type: object
+  swaggertypes.BillingURLResponse:
+    properties:
+      data:
+        $ref: '#/definitions/swaggertypes.BillingURLData'
+      error:
+        $ref: '#/definitions/swaggertypes.ErrorBody'
+    type: object
+  swaggertypes.CaptureInboxRequest:
+    properties:
+      title:
+        example: Read Go spec
+        type: string
+    type: object
+  swaggertypes.CreateAreaRequest:
+    properties:
+      name:
+        example: Work
+        type: string
+    type: object
+  swaggertypes.CreateProjectRequest:
+    properties:
+      areaId:
+        example: area_01jw...
+        type: string
+      name:
+        example: Launch blog
+        type: string
+    type: object
+  swaggertypes.CreateSubtaskRequest:
+    properties:
+      title:
+        example: Write test cases
+        type: string
+    type: object
+  swaggertypes.CreateTaskRequest:
+    properties:
+      dueDate:
+        example: "2026-04-01"
+        type: string
+      projectId:
+        example: proj_01jw...
+        type: string
+      scheduledFor:
+        example: today
+        type: string
+      title:
+        example: Write unit tests
+        type: string
+    type: object
+  swaggertypes.DownloadURLRequest:
+    properties:
+      key:
+        example: uploads/user_01jw.../screenshot.png
+        type: string
+    type: object
+  swaggertypes.EmptyData:
+    type: object
+  swaggertypes.EmptyResponse:
+    properties:
+      data:
+        $ref: '#/definitions/swaggertypes.EmptyData'
+      error:
+        $ref: '#/definitions/swaggertypes.ErrorBody'
+    type: object
+  swaggertypes.ErrorBody:
+    properties:
+      code:
+        example: INVALID_INPUT
+        type: string
+      message:
+        example: email is required
+        type: string
+    type: object
+  swaggertypes.ErrorResponse:
+    properties:
+      data:
+        type: object
+      error:
+        $ref: '#/definitions/swaggertypes.ErrorBody'
+    type: object
+  swaggertypes.HealthData:
+    properties:
+      status:
+        example: ok
+        type: string
+    type: object
+  swaggertypes.HealthResponse:
+    properties:
+      data:
+        $ref: '#/definitions/swaggertypes.HealthData'
+      error:
+        $ref: '#/definitions/swaggertypes.ErrorBody'
+    type: object
+  swaggertypes.LoginRequest:
+    properties:
+      email:
+        example: user@example.com
+        type: string
+      password:
+        example: password123
+        type: string
+    type: object
+  swaggertypes.MessageData:
+    properties:
+      message:
+        example: logged out
+        type: string
+    type: object
+  swaggertypes.MessageResponse:
+    properties:
+      data:
+        $ref: '#/definitions/swaggertypes.MessageData'
+      error:
+        $ref: '#/definitions/swaggertypes.ErrorBody'
+    type: object
+  swaggertypes.NLPParseRequest:
+    properties:
+      input:
+        example: Call dentist tomorrow
+        type: string
+    type: object
+  swaggertypes.NLPResponse:
+    properties:
+      data:
+        $ref: '#/definitions/swaggertypes.NLPResultData'
+      error:
+        $ref: '#/definitions/swaggertypes.ErrorBody'
+    type: object
+  swaggertypes.NLPResultData:
+    properties:
+      due_date:
+        example: "2026-03-29"
+        type: string
+      scheduled_for:
+        example: tomorrow
+        type: string
+      title:
+        example: Call dentist
+        type: string
+    type: object
+  swaggertypes.ProjectData:
+    properties:
+      area_id:
+        example: area_01jw...
+        type: string
+      created_at:
+        type: string
+      display_order:
+        example: 0
+        type: integer
+      id:
+        example: proj_01jw...
+        type: string
+      name:
+        example: Launch blog
+        type: string
+      status:
+        example: active
+        type: string
+      updated_at:
+        type: string
+      user_id:
+        example: usr_01jw...
+        type: string
+    type: object
+  swaggertypes.ProjectListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/swaggertypes.ProjectData'
+        type: array
+      error:
+        $ref: '#/definitions/swaggertypes.ErrorBody'
+    type: object
+  swaggertypes.ProjectResponse:
+    properties:
+      data:
+        $ref: '#/definitions/swaggertypes.ProjectData'
+      error:
+        $ref: '#/definitions/swaggertypes.ErrorBody'
+    type: object
+  swaggertypes.RefreshRequest:
+    properties:
+      refreshToken:
+        example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        type: string
+    type: object
+  swaggertypes.RegisterRequest:
+    properties:
+      email:
+        example: user@example.com
+        type: string
+      password:
+        example: password123
+        type: string
+    type: object
+  swaggertypes.SendMessageRequest:
+    properties:
+      content:
+        example: Summarise my tasks for today
+        type: string
+    type: object
+  swaggertypes.SubtaskData:
+    properties:
+      created_at:
+        type: string
+      done:
+        example: false
+        type: boolean
+      id:
+        example: sub_01jw...
+        type: string
+      position:
+        example: 0
+        type: integer
+      task_id:
+        example: task_01jw...
+        type: string
+      title:
+        example: Write test cases
+        type: string
+      updated_at:
+        type: string
+    type: object
+  swaggertypes.SubtaskListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/swaggertypes.SubtaskData'
+        type: array
+      error:
+        $ref: '#/definitions/swaggertypes.ErrorBody'
+    type: object
+  swaggertypes.SubtaskResponse:
+    properties:
+      data:
+        $ref: '#/definitions/swaggertypes.SubtaskData'
+      error:
+        $ref: '#/definitions/swaggertypes.ErrorBody'
+    type: object
+  swaggertypes.TaskData:
+    properties:
+      created_at:
+        type: string
+      due_date:
+        example: "2026-04-01"
+        type: string
+      id:
+        example: task_01jw...
+        type: string
+      notes:
+        example: 'See PR #42'
+        type: string
+      project_id:
+        example: proj_01jw...
+        type: string
+      scheduled_for:
+        example: today
+        type: string
+      status:
+        example: active
+        type: string
+      title:
+        example: Write unit tests
+        type: string
+      updated_at:
+        type: string
+      user_id:
+        example: usr_01jw...
+        type: string
+    type: object
+  swaggertypes.TaskListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/swaggertypes.TaskData'
+        type: array
+      error:
+        $ref: '#/definitions/swaggertypes.ErrorBody'
+    type: object
+  swaggertypes.TaskResponse:
+    properties:
+      data:
+        $ref: '#/definitions/swaggertypes.TaskData'
+      error:
+        $ref: '#/definitions/swaggertypes.ErrorBody'
+    type: object
+  swaggertypes.TokensData:
+    properties:
+      accessToken:
+        example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        type: string
+      refreshToken:
+        example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        type: string
+    type: object
+  swaggertypes.TokensResponse:
+    properties:
+      data:
+        $ref: '#/definitions/swaggertypes.TokensData'
+      error:
+        $ref: '#/definitions/swaggertypes.ErrorBody'
+    type: object
+  swaggertypes.URLData:
+    properties:
+      url:
+        example: https://bucket.s3.amazonaws.com/...
+        type: string
+    type: object
+  swaggertypes.URLResponse:
+    properties:
+      data:
+        $ref: '#/definitions/swaggertypes.URLData'
+      error:
+        $ref: '#/definitions/swaggertypes.ErrorBody'
+    type: object
+  swaggertypes.UpdateAreaRequest:
+    properties:
+      name:
+        example: Personal
+        type: string
+    type: object
+  swaggertypes.UpdateProjectRequest:
+    properties:
+      areaId:
+        example: area_01jw...
+        type: string
+      name:
+        example: Launch blog v2
+        type: string
+    type: object
+  swaggertypes.UpdateSubtaskRequest:
+    properties:
+      done:
+        example: true
+        type: boolean
+      title:
+        example: Write test cases
+        type: string
+    type: object
+  swaggertypes.UpdateTaskRequest:
+    properties:
+      dueDate:
+        example: "2026-04-01"
+        type: string
+      notes:
+        example: 'See PR #42'
+        type: string
+      projectId:
+        example: proj_01jw...
+        type: string
+      scheduledFor:
+        example: today
+        type: string
+      status:
+        example: done
+        type: string
+      title:
+        example: Write unit tests
+        type: string
+    type: object
+  swaggertypes.UploadURLRequest:
+    properties:
+      filename:
+        example: screenshot.png
+        type: string
+    type: object
+  swaggertypes.UserData:
+    properties:
+      created_at:
+        type: string
+      email:
+        example: user@example.com
+        type: string
+      id:
+        example: usr_01jw...
+        type: string
+      name:
+        example: Jane Doe
+        type: string
+      timezone:
+        example: UTC
+        type: string
+      updated_at:
+        type: string
+    type: object
+  swaggertypes.UserPlanData:
+    properties:
+      created_at:
+        type: string
+      current_period_end:
+        type: string
+      current_period_start:
+        type: string
+      id:
+        example: plan_01jw...
+        type: string
+      lemon_squeezy_customer_id:
+        type: string
+      lemon_squeezy_subscription_id:
+        type: string
+      plan:
+        example: free
+        type: string
+      status:
+        example: active
+        type: string
+      updated_at:
+        type: string
+      user_id:
+        example: usr_01jw...
+        type: string
+    type: object
+  swaggertypes.UserPlanResponse:
+    properties:
+      data:
+        $ref: '#/definitions/swaggertypes.UserPlanData'
+      error:
+        $ref: '#/definitions/swaggertypes.ErrorBody'
+    type: object
+  swaggertypes.UserResponse:
+    properties:
+      data:
+        $ref: '#/definitions/swaggertypes.UserData'
+      error:
+        $ref: '#/definitions/swaggertypes.ErrorBody'
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: REST API for the Nicoflow productivity platform
+  title: Nicoflow API
+  version: "1.0"
+paths:
+  /ai/sessions:
+    get:
+      description: Returns all AI conversation sessions for the authenticated user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.AISessionListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List AI sessions
+      tags:
+      - ai
+    post:
+      description: Creates a new AI conversation session for the authenticated user
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/swaggertypes.AISessionResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create an AI session
+      tags:
+      - ai
+  /ai/sessions/{id}:
+    delete:
+      description: Deletes an AI conversation session owned by the authenticated user
+      parameters:
+      - description: Session ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.EmptyResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete an AI session
+      tags:
+      - ai
+  /ai/sessions/{sessionId}/messages:
+    get:
+      description: Returns all messages in the specified AI conversation session
+      parameters:
+      - description: Session ID
+        in: path
+        name: sessionId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.AIMessageListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List messages in a session
+      tags:
+      - ai
+    post:
+      consumes:
+      - application/json
+      description: Sends a message in an AI conversation session and returns the assistant
+        reply
+      parameters:
+      - description: Session ID
+        in: path
+        name: sessionId
+        required: true
+        type: string
+      - description: Message content
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/swaggertypes.SendMessageRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/swaggertypes.AIMessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Send a message
+      tags:
+      - ai
+  /areas:
+    get:
+      description: Returns all areas belonging to the authenticated user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.AreaListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List areas
+      tags:
+      - areas
+    post:
+      consumes:
+      - application/json
+      description: Creates a new area for the authenticated user
+      parameters:
+      - description: Area data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/swaggertypes.CreateAreaRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/swaggertypes.AreaResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create an area
+      tags:
+      - areas
+  /areas/{id}:
+    delete:
+      description: Deletes an area owned by the authenticated user
+      parameters:
+      - description: Area ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.EmptyResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete an area
+      tags:
+      - areas
+    put:
+      consumes:
+      - application/json
+      description: Updates the name of an area owned by the authenticated user
+      parameters:
+      - description: Area ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Updated area data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/swaggertypes.UpdateAreaRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.AreaResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update an area
+      tags:
+      - areas
+  /attachments/download-url:
+    post:
+      consumes:
+      - application/json
+      description: Returns a pre-signed S3 URL to download a file attachment
+      parameters:
+      - description: S3 object key
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/swaggertypes.DownloadURLRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.URLResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get S3 download URL
+      tags:
+      - attachments
+  /attachments/upload-url:
+    post:
+      consumes:
+      - application/json
+      description: Returns a pre-signed S3 URL to upload a file attachment
+      parameters:
+      - description: File name to upload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/swaggertypes.UploadURLRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.URLResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get S3 upload URL
+      tags:
+      - attachments
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Authenticates a user and returns access + refresh tokens
+      parameters:
+      - description: Login credentials
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/swaggertypes.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.TokensResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      summary: Log in
+      tags:
+      - auth
+  /auth/logout:
+    post:
+      description: Logs out the current user (client should discard tokens)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.MessageResponse'
+      summary: Log out
+      tags:
+      - auth
+  /auth/refresh:
+    post:
+      consumes:
+      - application/json
+      description: Exchanges a valid refresh token for a new access token (single-use
+        rotation)
+      parameters:
+      - description: Refresh token
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/swaggertypes.RefreshRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.AccessTokenResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      summary: Refresh access token
+      tags:
+      - auth
+  /auth/register:
+    post:
+      consumes:
+      - application/json
+      description: Creates a new user account with email and password
+      parameters:
+      - description: Registration credentials
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/swaggertypes.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/swaggertypes.UserResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      summary: Register a new user
+      tags:
+      - auth
+  /billing/checkout-url:
+    get:
+      description: Returns a Lemon Squeezy checkout URL to upgrade to PRO
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.BillingURLResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get checkout URL
+      tags:
+      - billing
+  /billing/portal-url:
+    get:
+      description: Returns a Lemon Squeezy customer portal URL to manage subscription
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.BillingURLResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get billing portal URL
+      tags:
+      - billing
+  /billing/webhook:
+    post:
+      consumes:
+      - application/json
+      description: Receives and processes Lemon Squeezy webhook events. Idempotent
+        — duplicate events are ignored.
+      parameters:
+      - description: HMAC-SHA256 signature from Lemon Squeezy
+        in: header
+        name: X-Signature
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.EmptyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      summary: Lemon Squeezy webhook
+      tags:
+      - billing
+  /health:
+    get:
+      description: Returns 200 if the server is running
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.HealthResponse'
+      summary: Health check
+      tags:
+      - health
+  /inbox:
+    get:
+      description: Returns all unscheduled tasks (project_id IS NULL) for the authenticated
+        user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.TaskListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List inbox items
+      tags:
+      - inbox
+  /inbox/capture:
+    post:
+      consumes:
+      - application/json
+      description: Quickly captures a task title into the inbox (no project, no scheduling)
+      parameters:
+      - description: Task title
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/swaggertypes.CaptureInboxRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/swaggertypes.TaskResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Capture to inbox
+      tags:
+      - inbox
+  /nlp:
+    post:
+      consumes:
+      - application/json
+      description: Parses a natural language task description into structured task
+        fields. Requires PRO plan.
+      parameters:
+      - description: Natural language input
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/swaggertypes.NLPParseRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.NLPResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Parse natural language input
+      tags:
+      - nlp
+  /projects:
+    get:
+      description: Returns all projects belonging to the authenticated user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.ProjectListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List projects
+      tags:
+      - projects
+    post:
+      consumes:
+      - application/json
+      description: Creates a new project for the authenticated user, optionally under
+        an area
+      parameters:
+      - description: Project data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/swaggertypes.CreateProjectRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/swaggertypes.ProjectResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create a project
+      tags:
+      - projects
+  /projects/{id}:
+    delete:
+      description: Deletes a project owned by the authenticated user
+      parameters:
+      - description: Project ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.EmptyResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete a project
+      tags:
+      - projects
+    put:
+      consumes:
+      - application/json
+      description: Updates a project owned by the authenticated user
+      parameters:
+      - description: Project ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Updated project data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/swaggertypes.UpdateProjectRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.ProjectResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update a project
+      tags:
+      - projects
+  /tasks:
+    get:
+      description: Returns all tasks belonging to the authenticated user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.TaskListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List tasks
+      tags:
+      - tasks
+    post:
+      consumes:
+      - application/json
+      description: Creates a new task for the authenticated user
+      parameters:
+      - description: Task data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/swaggertypes.CreateTaskRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/swaggertypes.TaskResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create a task
+      tags:
+      - tasks
+  /tasks/{taskId}:
+    delete:
+      description: Deletes a task owned by the authenticated user
+      parameters:
+      - description: Task ID
+        in: path
+        name: taskId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.EmptyResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete a task
+      tags:
+      - tasks
+    put:
+      consumes:
+      - application/json
+      description: Updates a task owned by the authenticated user
+      parameters:
+      - description: Task ID
+        in: path
+        name: taskId
+        required: true
+        type: string
+      - description: Updated task fields
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/swaggertypes.UpdateTaskRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.TaskResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update a task
+      tags:
+      - tasks
+  /tasks/{taskId}/subtasks:
+    get:
+      description: Returns all subtasks for the specified task
+      parameters:
+      - description: Task ID
+        in: path
+        name: taskId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.SubtaskListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List subtasks
+      tags:
+      - subtasks
+    post:
+      consumes:
+      - application/json
+      description: Creates a new subtask under the specified task
+      parameters:
+      - description: Task ID
+        in: path
+        name: taskId
+        required: true
+        type: string
+      - description: Subtask data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/swaggertypes.CreateSubtaskRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/swaggertypes.SubtaskResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create a subtask
+      tags:
+      - subtasks
+  /tasks/{taskId}/subtasks/{subtaskId}:
+    delete:
+      description: Deletes a subtask from the specified task
+      parameters:
+      - description: Task ID
+        in: path
+        name: taskId
+        required: true
+        type: string
+      - description: Subtask ID
+        in: path
+        name: subtaskId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.EmptyResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete a subtask
+      tags:
+      - subtasks
+    put:
+      consumes:
+      - application/json
+      description: Updates the title or done state of a subtask
+      parameters:
+      - description: Task ID
+        in: path
+        name: taskId
+        required: true
+        type: string
+      - description: Subtask ID
+        in: path
+        name: subtaskId
+        required: true
+        type: string
+      - description: Updated subtask data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/swaggertypes.UpdateSubtaskRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.SubtaskResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update a subtask
+      tags:
+      - subtasks
+  /time-spread:
+    get:
+      description: Returns tasks grouped by scheduled date for the authenticated user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.EmptyResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get time-spread view
+      tags:
+      - time-spread
+  /user/plan:
+    get:
+      description: Returns the current subscription plan for the authenticated user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.UserPlanResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get user plan
+      tags:
+      - user
+  /ws:
+    get:
+      description: Upgrades the HTTP connection to a WebSocket for real-time updates.
+        Not yet implemented.
+      produces:
+      - application/json
+      responses:
+        "101":
+          description: Switching Protocols
+          schema:
+            type: string
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: WebSocket upgrade
+      tags:
+      - websocket
+securityDefinitions:
+  BearerAuth:
+    description: 'Enter: Bearer <token>'
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

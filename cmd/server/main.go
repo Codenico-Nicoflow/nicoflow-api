@@ -1,3 +1,12 @@
+// @title           Nicoflow API
+// @version         1.0
+// @description     REST API for the Nicoflow productivity platform
+// @host            localhost:8080
+// @BasePath        /v1
+// @securityDefinitions.apikey BearerAuth
+// @in              header
+// @name            Authorization
+// @description     Enter: Bearer <token>
 package main
 
 import (
@@ -8,9 +17,12 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 
 	"nicoflow-api/internal/config"
 	"nicoflow-api/internal/db"
+	_ "nicoflow-api/docs"
 	"nicoflow-api/internal/handler"
 	"nicoflow-api/internal/middleware"
 	pgrepo "nicoflow-api/internal/repository/postgres"
@@ -96,6 +108,11 @@ func main() {
 		middleware.CORS(cfg.CORSOrigins),
 		gin.Recovery(),
 	)
+
+	// Swagger UI — only in non-production environments
+	if cfg.AppEnv != "production" {
+		r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	}
 
 	v1 := r.Group("/v1")
 
