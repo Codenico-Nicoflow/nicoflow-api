@@ -11,5 +11,5 @@ type WebhookEvent struct {
 	EventName           string          `json:"event_name"`
 	Payload             json.RawMessage `json:"payload"`
 	ProcessedAt         time.Time       `json:"processed_at"`
-	Error               string          `json:"error"`
+	Error               *string         `json:"error,omitempty"`
 }

@@ -7,7 +7,7 @@ type Task struct {
 	UserID       string    `json:"user_id"`
 	ProjectID    *string   `json:"project_id,omitempty"`
 	Title        string    `json:"title"`
-	Notes        string    `json:"notes"`
+	Notes        *string   `json:"notes,omitempty"`
 	DueDate      *string   `json:"due_date,omitempty"`      // DATE as "YYYY-MM-DD"
 	ScheduledFor *string   `json:"scheduled_for,omitempty"` // "today" | "tomorrow" | "this_week"
 	Status       string    `json:"status"`                  // "inbox" | "active" | "done" | "cancelled"
