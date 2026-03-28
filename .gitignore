@@ -1,3 +1,6 @@
 .claude
 /server
 .env
+server
+build-errors.log
+tmp/

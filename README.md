@@ -76,6 +76,9 @@ make migrate
 
 # Roll back last migration
 make rollback
+
+# Create new migration files
+migrate create -ext sql -dir migrations -seq [example_migration_name]
 ```
 
 Migration files live in `migrations/`. Convention: `{seq}_{description}.up.sql` / `.down.sql`.
@@ -176,6 +179,34 @@ nicoflow-api/
 ├── Dockerfile
 └── go.mod
 ```
+
+---
+
+## Developer Rules of Thumb
+
+### Migrations
+- One file per schema change — never edit an existing migration file, always add a new one
+- Model + repo + migration always move together: if you add a column, update the struct, update the scan, run the migration
+- If the column doesn't exist in the DB yet, any query referencing it will error at runtime
+
+### Logging
+- `slog` → application-level events (startup, shutdown, fatal errors — no HTTP request exists yet)
+- `middleware.Logger()` → HTTP request/response lifecycle only (method, path, status, latency)
+- Don't log inside repos/services — return the error and let it bubble up to the HTTP layer
+
+### Error handling
+- `errors.Is(err, pgx.ErrNoRows)` → not found, return `nil, nil` → handler returns 404
+- `err != nil` (after the above check) → real DB error → handler returns 500
+- Repos wrap errors with `fmt.Errorf("RepoName.Method: %w", err)` and return them — they never log
+
+### Context
+- `gin.Context` — handlers only. Use it for: request body, headers, URL params, writing responses
+- `context.Context` — services and repos. Use it for: DB queries, cancellation, timeouts
+- Bridge between them: `c.Request.Context()` — pass this from handler into service/repo so DB queries abort if the client disconnects
+
+### SQL
+- Always list columns explicitly in SELECT — never `SELECT *`
+- Column order in the query must match field order in `rows.Scan(...)` — pgx maps by position not name
 
 ---
 
