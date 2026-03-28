@@ -20,9 +20,9 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
+	_ "nicoflow-api/docs"
 	"nicoflow-api/internal/config"
 	"nicoflow-api/internal/db"
-	_ "nicoflow-api/docs"
 	"nicoflow-api/internal/handler"
 	"nicoflow-api/internal/middleware"
 	pgrepo "nicoflow-api/internal/repository/postgres"
