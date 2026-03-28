@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"os"
@@ -9,8 +10,10 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"nicoflow-api/internal/config"
+	"nicoflow-api/internal/db"
 	"nicoflow-api/internal/handler"
 	"nicoflow-api/internal/middleware"
+	pgrepo "nicoflow-api/internal/repository/postgres"
 	"nicoflow-api/internal/service"
 	"nicoflow-api/internal/ws"
 )
@@ -18,20 +21,27 @@ import (
 func main() {
 	cfg := config.Load()
 
+	// ── Database ─────────────────────────────────────────────────────────────────
+	ctx := context.Background()
+	pool, err := db.New(ctx, cfg.DBUrl)
+	if err != nil {
+		slog.Error("failed to connect to database", "err", err)
+		os.Exit(1)
+	}
+	defer pool.Close()
+
 	// ── Repositories ────────────────────────────────────────────────────────────
-	var (
-		userRepo         = nilUserRepo{}
-		refreshTokenRepo = nilRefreshTokenRepo{}
-		areaRepo         = nilAreaRepo{}
-		projectRepo      = nilProjectRepo{}
-		taskRepo         = nilTaskRepo{}
-		subtaskRepo      = nilSubtaskRepo{}
-		planRepo         = nilUserPlanRepo{}
-		webhookEventRepo = nilWebhookEventRepo{}
-		aiSessionRepo    = nilAISessionRepo{}
-		aiMessageRepo    = nilAIMessageRepo{}
-		aiUsageRepo      = nilAIUsageMonthlyRepo{}
-	)
+	userRepo := pgrepo.NewUserRepo(pool)
+	refreshTokenRepo := pgrepo.NewRefreshTokenRepo(pool)
+	areaRepo := pgrepo.NewAreaRepo(pool)
+	projectRepo := pgrepo.NewProjectRepo(pool)
+	taskRepo := pgrepo.NewTaskRepo(pool)
+	subtaskRepo := pgrepo.NewSubtaskRepo(pool)
+	planRepo := pgrepo.NewUserPlanRepo(pool)
+	webhookEventRepo := pgrepo.NewWebhookEventRepo(pool)
+	aiSessionRepo := pgrepo.NewAISessionRepo(pool)
+	aiMessageRepo := pgrepo.NewAIMessageRepo(pool)
+	aiUsageRepo := pgrepo.NewAIUsageMonthlyRepo(pool)
 
 	// ── Services ────────────────────────────────────────────────────────────────
 	authSvc := service.NewAuthService(userRepo, refreshTokenRepo, cfg.JWTSecret)
@@ -48,6 +58,7 @@ func main() {
 	attachSvc := service.NewAttachmentService(cfg.S3Bucket)
 	hub := ws.NewHub()
 	wsSvc := service.NewWSService(hub)
+	nlpSvc := service.NewNLPService(planRepo)
 
 	// ── Handlers ────────────────────────────────────────────────────────────────
 	authH := handler.NewAuthHandler(authSvc)
@@ -63,6 +74,7 @@ func main() {
 	billingH := handler.NewBillingHandler(billingSvc)
 	attachH := handler.NewAttachmentHandler(attachSvc)
 	wsH := handler.NewWSHandler(wsSvc)
+	nlpH := handler.NewNLPHandler(nlpSvc)
 
 	// ── Router ──────────────────────────────────────────────────────────────────
 	if cfg.AppEnv == "production" {
@@ -154,6 +166,8 @@ func main() {
 
 		protected.POST("/attachments/upload-url", attachH.UploadURL)
 		protected.POST("/attachments/download-url", attachH.DownloadURL)
+
+		protected.POST("/nlp", nlpH.Parse)
 	}
 
 	srv := &http.Server{
