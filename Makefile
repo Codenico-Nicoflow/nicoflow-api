@@ -1,4 +1,4 @@
-.PHONY: dev build test lint migrate-up migrate-down migrate-down-one migrate-version migrate-create migrate-force
+.PHONY: dev build test lint docs migrate-up migrate-down migrate-down-one migrate-version migrate-create migrate-force
 
 dev:
 	$(HOME)/go/bin/air
@@ -11,6 +11,10 @@ test:
 
 lint:
 	golangci-lint run
+
+docs:
+	swag init -g cmd/server/main.go --output docs
+	swag fmt
 
 ## Database migrations (requires DB_URL env var, except migrate-create)
 

@@ -109,6 +109,14 @@ jobs:
       - name: Build
         run: go build ./...
 
+      - name: Install swag CLI
+        run: go install github.com/swaggo/swag/cmd/swag@latest
+
+      - name: Validate Swagger docs
+        run: |
+          swag init -g cmd/server/main.go --output docs
+          git diff --exit-code docs/
+
   # TODO: ECR push (when AWS ECS migration begins)
   # Add the following steps conditionally on github.ref == 'refs/heads/main':
   #   - uses: aws-actions/configure-aws-credentials@v4
