@@ -3,3 +3,4 @@
 .env
 server
 build-errors.log
+tmp/
