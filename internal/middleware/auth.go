@@ -15,6 +15,7 @@ const (
 	ContextPlan   = "plan"
 )
 
+// Claims is basically the JWT payload
 type claims struct {
 	UserID string `json:"userId"`
 	Plan   string `json:"plan"`
@@ -26,10 +27,7 @@ func Auth(jwtSecret string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		header := c.GetHeader("Authorization")
 		if !strings.HasPrefix(header, "Bearer ") {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"data":  nil,
-				"error": gin.H{"code": response.ErrInvalidToken, "message": "missing or malformed token"},
-			})
+			response.RespondError(c, http.StatusUnauthorized, response.ErrInvalidToken, "missing or malformed token")
 			return
 		}
 		tokenStr := strings.TrimPrefix(header, "Bearer ")
@@ -41,19 +39,13 @@ func Auth(jwtSecret string) gin.HandlerFunc {
 			return key, nil
 		})
 		if err != nil || !parsed.Valid {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"data":  nil,
-				"error": gin.H{"code": response.ErrInvalidToken, "message": "invalid or expired token"},
-			})
+			response.RespondError(c, http.StatusUnauthorized, response.ErrInvalidToken, "invalid or expired token")
 			return
 		}
 
 		cl, ok := parsed.Claims.(*claims)
 		if !ok || cl.UserID == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"data":  nil,
-				"error": gin.H{"code": response.ErrInvalidToken, "message": "invalid token claims"},
-			})
+			response.RespondError(c, http.StatusUnauthorized, response.ErrInvalidToken, "invalid token claims")
 			return
 		}
 
