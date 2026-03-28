@@ -68,17 +68,48 @@ make lint
 
 ---
 
+## Local Development with Docker
+
+The easiest way to run the full stack locally (API + Postgres):
+
+```bash
+cp .env.example .env        # fill in secrets
+docker compose up --build   # starts postgres + api on :8080
+docker compose down -v      # tear down including volumes
+```
+
+The `DB_URL` in `.env` should point to the compose postgres service:
+```
+DB_URL=postgres://nicoflow:nicoflow@postgres:5432/nicoflow?sslmode=disable
+```
+
+After the stack is up, run migrations:
+```bash
+make migrate-up
+```
+
+---
+
 ## Database Migrations
 
 ```bash
 # Apply all pending migrations
-make migrate
+make migrate-up
 
-# Roll back last migration
-make rollback
+# Roll back all (dev)
+make migrate-down
 
-# Create new migration files
-migrate create -ext sql -dir migrations -seq [example_migration_name]
+# Roll back one step (prod-safe)
+make migrate-down-one
+
+# Show current version
+make migrate-version
+
+# Create new migration pair
+make migrate-create name=add_notes_to_users
+
+# Force-set version (use when a migration fails mid-way)
+make migrate-force version=5
 ```
 
 Migration files live in `migrations/`. Convention: `{seq}_{description}.up.sql` / `.down.sql`.
@@ -377,7 +408,9 @@ GitHub Actions on every push/PR to `staging` and `main`:
 
 1. `golangci-lint` — static analysis
 2. `go test ./... -race` — tests with race detector
-3. `gosec` — security scan
+3. `gosec` + `govulncheck` — security scans
+4. `go build ./...` — binary compilation
+5. `docker build` — image validation (< 20MB target)
 
 See `.github/workflows/ci-backend.yml`.
 
