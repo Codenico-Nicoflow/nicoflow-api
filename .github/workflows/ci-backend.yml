@@ -108,3 +108,36 @@ jobs:
 
       - name: Build
         run: go build ./...
+
+  # TODO: ECR push (when AWS ECS migration begins)
+  # Add the following steps conditionally on github.ref == 'refs/heads/main':
+  #   - uses: aws-actions/configure-aws-credentials@v4
+  #     with:
+  #       aws-region: us-east-1
+  #       role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+  #   - uses: aws-actions/amazon-ecr-login@v2
+  # Then set push: true and add ECR tags:
+  #   <ECR_REGISTRY>/nicoflow-api:${{ github.sha }}
+  #   <ECR_REGISTRY>/nicoflow-api:latest
+  docker-build:
+    name: Docker Build
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: |
+            nicoflow-api:latest
+            nicoflow-api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
