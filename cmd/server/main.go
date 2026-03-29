@@ -118,7 +118,7 @@ func main() {
 
 	// Public
 	v1.GET("/health", handler.Health)
-	auth := v1.Group("/auth")
+	auth := v1.Group("/auth", middleware.RateLimitIP(10, 10))
 	{
 		auth.POST("/register", authH.Register)
 		auth.POST("/login", authH.Login)
@@ -128,7 +128,7 @@ func main() {
 	v1.POST("/billing/webhook", billingH.Webhook)
 
 	// Authenticated
-	protected := v1.Group("", middleware.Auth(cfg.JWTSecret))
+	protected := v1.Group("", middleware.Auth(cfg.JWTSecret), middleware.RateLimitUser(100, 100))
 	{
 		protected.GET("/ws", wsH.Upgrade)
 
