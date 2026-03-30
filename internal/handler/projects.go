@@ -19,18 +19,19 @@ func NewProjectHandler(svc *service.ProjectService) *ProjectHandler {
 }
 
 // Create godoc
-// @Summary      Create a project
-// @Description  Creates a new project for the authenticated user, optionally under an area
-// @Tags         projects
-// @Accept       json
-// @Produce      json
-// @Param        body  body      swaggertypes.CreateProjectRequest  true  "Project data"
-// @Success      201   {object}  swaggertypes.ProjectResponse
-// @Failure      400   {object}  swaggertypes.ErrorResponse
-// @Failure      401   {object}  swaggertypes.ErrorResponse
-// @Failure      500   {object}  swaggertypes.ErrorResponse
-// @Security     BearerAuth
-// @Router       /projects [post]
+//
+//	@Summary		Create a project
+//	@Description	Creates a new project for the authenticated user, optionally under an area
+//	@Tags			projects
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		swaggertypes.CreateProjectRequest	true	"Project data"
+//	@Success		201		{object}	swaggertypes.ProjectResponse
+//	@Failure		400		{object}	swaggertypes.ErrorResponse
+//	@Failure		401		{object}	swaggertypes.ErrorResponse
+//	@Failure		500		{object}	swaggertypes.ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/projects [post]
 func (h *ProjectHandler) Create(c *gin.Context) {
 	var req struct {
 		Name   string  `json:"name" binding:"required"`
@@ -50,15 +51,16 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 }
 
 // List godoc
-// @Summary      List projects
-// @Description  Returns all projects belonging to the authenticated user
-// @Tags         projects
-// @Produce      json
-// @Success      200  {object}  swaggertypes.ProjectListResponse
-// @Failure      401  {object}  swaggertypes.ErrorResponse
-// @Failure      500  {object}  swaggertypes.ErrorResponse
-// @Security     BearerAuth
-// @Router       /projects [get]
+//
+//	@Summary		List projects
+//	@Description	Returns all projects belonging to the authenticated user
+//	@Tags			projects
+//	@Produce		json
+//	@Success		200	{object}	swaggertypes.ProjectListResponse
+//	@Failure		401	{object}	swaggertypes.ErrorResponse
+//	@Failure		500	{object}	swaggertypes.ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/projects [get]
 func (h *ProjectHandler) List(c *gin.Context) {
 	userID := c.GetString(middleware.ContextUserID)
 	projects, err := h.svc.List(c.Request.Context(), userID)
@@ -70,19 +72,20 @@ func (h *ProjectHandler) List(c *gin.Context) {
 }
 
 // Update godoc
-// @Summary      Update a project
-// @Description  Updates a project owned by the authenticated user
-// @Tags         projects
-// @Accept       json
-// @Produce      json
-// @Param        id    path      string                     true  "Project ID"
-// @Param        body  body      swaggertypes.UpdateProjectRequest  true  "Updated project data"
-// @Success      200   {object}  swaggertypes.ProjectResponse
-// @Failure      400   {object}  swaggertypes.ErrorResponse
-// @Failure      401   {object}  swaggertypes.ErrorResponse
-// @Failure      500   {object}  swaggertypes.ErrorResponse
-// @Security     BearerAuth
-// @Router       /projects/{id} [put]
+//
+//	@Summary		Update a project
+//	@Description	Updates a project owned by the authenticated user
+//	@Tags			projects
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string								true	"Project ID"
+//	@Param			body	body		swaggertypes.UpdateProjectRequest	true	"Updated project data"
+//	@Success		200		{object}	swaggertypes.ProjectResponse
+//	@Failure		400		{object}	swaggertypes.ErrorResponse
+//	@Failure		401		{object}	swaggertypes.ErrorResponse
+//	@Failure		500		{object}	swaggertypes.ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/projects/{id} [put]
 func (h *ProjectHandler) Update(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
@@ -103,16 +106,17 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 }
 
 // Delete godoc
-// @Summary      Delete a project
-// @Description  Deletes a project owned by the authenticated user
-// @Tags         projects
-// @Produce      json
-// @Param        id   path      string  true  "Project ID"
-// @Success      200  {object}  swaggertypes.EmptyResponse
-// @Failure      401  {object}  swaggertypes.ErrorResponse
-// @Failure      500  {object}  swaggertypes.ErrorResponse
-// @Security     BearerAuth
-// @Router       /projects/{id} [delete]
+//
+//	@Summary		Delete a project
+//	@Description	Deletes a project owned by the authenticated user
+//	@Tags			projects
+//	@Produce		json
+//	@Param			id	path		string	true	"Project ID"
+//	@Success		200	{object}	swaggertypes.EmptyResponse
+//	@Failure		401	{object}	swaggertypes.ErrorResponse
+//	@Failure		500	{object}	swaggertypes.ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/projects/{id} [delete]
 func (h *ProjectHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
 	userID := c.GetString(middleware.ContextUserID)

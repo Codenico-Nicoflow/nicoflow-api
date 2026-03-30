@@ -28,6 +28,7 @@ func Auth(jwtSecret string) gin.HandlerFunc {
 		header := c.GetHeader("Authorization")
 		if !strings.HasPrefix(header, "Bearer ") {
 			response.RespondError(c, http.StatusUnauthorized, response.ErrInvalidToken, "missing or malformed token")
+			c.Abort()
 			return
 		}
 		tokenStr := strings.TrimPrefix(header, "Bearer ")
@@ -40,12 +41,14 @@ func Auth(jwtSecret string) gin.HandlerFunc {
 		})
 		if err != nil || !parsed.Valid {
 			response.RespondError(c, http.StatusUnauthorized, response.ErrInvalidToken, "invalid or expired token")
+			c.Abort()
 			return
 		}
 
 		cl, ok := parsed.Claims.(*claims)
 		if !ok || cl.UserID == "" {
 			response.RespondError(c, http.StatusUnauthorized, response.ErrInvalidToken, "invalid token claims")
+			c.Abort()
 			return
 		}
 

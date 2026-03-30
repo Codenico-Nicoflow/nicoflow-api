@@ -68,19 +68,6 @@ definitions:
       error:
         $ref: '#/definitions/swaggertypes.ErrorBody'
     type: object
-  swaggertypes.AccessTokenData:
-    properties:
-      accessToken:
-        example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-        type: string
-    type: object
-  swaggertypes.AccessTokenResponse:
-    properties:
-      data:
-        $ref: '#/definitions/swaggertypes.AccessTokenData'
-      error:
-        $ref: '#/definitions/swaggertypes.ErrorBody'
-    type: object
   swaggertypes.AreaData:
     properties:
       color:
@@ -308,7 +295,7 @@ definitions:
     type: object
   swaggertypes.RefreshRequest:
     properties:
-      refreshToken:
+      refresh_token:
         example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
         type: string
     type: object
@@ -414,10 +401,10 @@ definitions:
     type: object
   swaggertypes.TokensData:
     properties:
-      accessToken:
+      access_token:
         example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
         type: string
-      refreshToken:
+      refresh_token:
         example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
         type: string
     type: object
@@ -934,7 +921,16 @@ paths:
       - auth
   /auth/logout:
     post:
-      description: Logs out the current user (client should discard tokens)
+      consumes:
+      - application/json
+      description: Invalidates the provided refresh token
+      parameters:
+      - description: Refresh token to invalidate
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/swaggertypes.RefreshRequest'
       produces:
       - application/json
       responses:
@@ -942,15 +938,44 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/swaggertypes.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
       summary: Log out
+      tags:
+      - auth
+  /auth/logout-all:
+    post:
+      description: Invalidates all refresh tokens for the current user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/swaggertypes.MessageResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Log out all devices
       tags:
       - auth
   /auth/refresh:
     post:
       consumes:
       - application/json
-      description: Exchanges a valid refresh token for a new access token (single-use
-        rotation)
+      description: Exchanges a valid refresh token for a new access + refresh token
+        pair (single-use rotation)
       parameters:
       - description: Refresh token
         in: body
@@ -964,7 +989,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/swaggertypes.AccessTokenResponse'
+            $ref: '#/definitions/swaggertypes.TokensResponse'
         "400":
           description: Bad Request
           schema:
@@ -973,7 +998,7 @@ paths:
           description: Unauthorized
           schema:
             $ref: '#/definitions/swaggertypes.ErrorResponse'
-      summary: Refresh access token
+      summary: Refresh tokens
       tags:
       - auth
   /auth/register:
@@ -997,6 +1022,10 @@ paths:
             $ref: '#/definitions/swaggertypes.UserResponse'
         "400":
           description: Bad Request
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "409":
+          description: Conflict
           schema:
             $ref: '#/definitions/swaggertypes.ErrorResponse'
         "500":
@@ -1645,6 +1674,28 @@ paths:
       summary: Get user plan
       tags:
       - user
+  /users/me:
+    delete:
+      description: Soft-deletes the authenticated user and revokes all their refresh
+        tokens
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/swaggertypes.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete account
+      tags:
+      - users
   /ws:
     get:
       description: Upgrades the HTTP connection to a WebSocket for real-time updates.

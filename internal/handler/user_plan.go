@@ -19,15 +19,16 @@ func NewUserPlanHandler(svc *service.UserPlanService) *UserPlanHandler {
 }
 
 // Get godoc
-// @Summary      Get user plan
-// @Description  Returns the current subscription plan for the authenticated user
-// @Tags         user
-// @Produce      json
-// @Success      200  {object}  swaggertypes.UserPlanResponse
-// @Failure      401  {object}  swaggertypes.ErrorResponse
-// @Failure      500  {object}  swaggertypes.ErrorResponse
-// @Security     BearerAuth
-// @Router       /user/plan [get]
+//
+//	@Summary		Get user plan
+//	@Description	Returns the current subscription plan for the authenticated user
+//	@Tags			user
+//	@Produce		json
+//	@Success		200	{object}	swaggertypes.UserPlanResponse
+//	@Failure		401	{object}	swaggertypes.ErrorResponse
+//	@Failure		500	{object}	swaggertypes.ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/user/plan [get]
 func (h *UserPlanHandler) Get(c *gin.Context) {
 	userID := c.GetString(middleware.ContextUserID)
 	plan, err := h.svc.Get(c.Request.Context(), userID)

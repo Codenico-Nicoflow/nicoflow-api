@@ -20,19 +20,20 @@ func NewNLPHandler(svc *service.NLPService) *NLPHandler {
 }
 
 // Parse godoc
-// @Summary      Parse natural language input
-// @Description  Parses a natural language task description into structured task fields. Requires PRO plan.
-// @Tags         nlp
-// @Accept       json
-// @Produce      json
-// @Param        body  body      swaggertypes.NLPParseRequest  true  "Natural language input"
-// @Success      200   {object}  swaggertypes.NLPResponse
-// @Failure      400   {object}  swaggertypes.ErrorResponse
-// @Failure      401   {object}  swaggertypes.ErrorResponse
-// @Failure      403   {object}  swaggertypes.ErrorResponse
-// @Failure      500   {object}  swaggertypes.ErrorResponse
-// @Security     BearerAuth
-// @Router       /nlp [post]
+//
+//	@Summary		Parse natural language input
+//	@Description	Parses a natural language task description into structured task fields. Requires PRO plan.
+//	@Tags			nlp
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		swaggertypes.NLPParseRequest	true	"Natural language input"
+//	@Success		200		{object}	swaggertypes.NLPResponse
+//	@Failure		400		{object}	swaggertypes.ErrorResponse
+//	@Failure		401		{object}	swaggertypes.ErrorResponse
+//	@Failure		403		{object}	swaggertypes.ErrorResponse
+//	@Failure		500		{object}	swaggertypes.ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/nlp [post]
 func (h *NLPHandler) Parse(c *gin.Context) {
 	var req struct {
 		Input string `json:"input" binding:"required"`

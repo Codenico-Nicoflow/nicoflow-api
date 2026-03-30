@@ -1,12 +1,12 @@
-// @title           Nicoflow API
-// @version         1.0
-// @description     REST API for the Nicoflow productivity platform
-// @host            localhost:8080
-// @BasePath        /v1
-// @securityDefinitions.apikey BearerAuth
-// @in              header
-// @name            Authorization
-// @description     Enter: Bearer <token>
+// @title						Nicoflow API
+// @version					1.0
+// @description				REST API for the Nicoflow productivity platform
+// @host						localhost:8080
+// @BasePath					/v1
+// @securityDefinitions.apikey	BearerAuth
+// @in							header
+// @name						Authorization
+// @description				Enter: Bearer <token>
 package main
 
 import (
@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
+	"github.com/go-playground/validator/v10"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
@@ -27,13 +29,25 @@ import (
 	"nicoflow-api/internal/middleware"
 	pgrepo "nicoflow-api/internal/repository/postgres"
 	"nicoflow-api/internal/service"
+	"nicoflow-api/internal/validations"
 	"nicoflow-api/internal/ws"
 )
+
+func InitValidators() {
+	if v, ok := binding.Validator.Engine().(*validator.Validate); ok {
+		err := v.RegisterValidation("strong_password", validations.PasswordValidator)
+		if err != nil {
+			slog.Error("failed to register strong_password validator", "err", err)
+		}
+	}
+}
 
 func main() {
 	cfg := config.Load()
 
-	// ── Database ─────────────────────────────────────────────────────────────────
+	// --- Initialize Validators --------------------------------------------------
+	InitValidators()
+	// --- Database ───────────────────────────────────────────────────────────────
 	ctx := context.Background()
 	pool, err := db.New(ctx, cfg.DBUrl)
 	if err != nil {
@@ -56,7 +70,8 @@ func main() {
 	aiUsageRepo := pgrepo.NewAIUsageMonthlyRepo(pool)
 
 	// ── Services ────────────────────────────────────────────────────────────────
-	authSvc := service.NewAuthService(userRepo, refreshTokenRepo, cfg.JWTSecret)
+	authSvc := service.NewAuthService(userRepo, refreshTokenRepo, planRepo, cfg.JWTSecret)
+	userSvc := service.NewUserService(userRepo, refreshTokenRepo)
 	areaSvc := service.NewAreaService(areaRepo, planRepo)
 	projectSvc := service.NewProjectService(projectRepo, planRepo)
 	taskSvc := service.NewTaskService(taskRepo)
@@ -74,6 +89,7 @@ func main() {
 
 	// ── Handlers ────────────────────────────────────────────────────────────────
 	authH := handler.NewAuthHandler(authSvc)
+	userH := handler.NewUserHandler(userSvc)
 	areaH := handler.NewAreaHandler(areaSvc)
 	projectH := handler.NewProjectHandler(projectSvc)
 	taskH := handler.NewTaskHandler(taskSvc)
@@ -123,13 +139,16 @@ func main() {
 		auth.POST("/register", authH.Register)
 		auth.POST("/login", authH.Login)
 		auth.POST("/refresh", authH.Refresh)
-		auth.POST("/logout", authH.Logout)
 	}
 	v1.POST("/billing/webhook", billingH.Webhook)
 
 	// Authenticated
 	protected := v1.Group("", middleware.Auth(cfg.JWTSecret), middleware.RateLimitUser(100, 100))
 	{
+		protected.POST("/auth/logout", authH.Logout)
+		protected.POST("/auth/logout-all", authH.LogoutAll)
+		protected.DELETE("/users/me", userH.DeleteMe)
+
 		protected.GET("/ws", wsH.Upgrade)
 
 		protected.GET("/areas", areaH.List)

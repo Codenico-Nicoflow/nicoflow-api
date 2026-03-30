@@ -19,15 +19,16 @@ func NewAISessionHandler(svc *service.AISessionService) *AISessionHandler {
 }
 
 // Create godoc
-// @Summary      Create an AI session
-// @Description  Creates a new AI conversation session for the authenticated user
-// @Tags         ai
-// @Produce      json
-// @Success      201  {object}  swaggertypes.AISessionResponse
-// @Failure      401  {object}  swaggertypes.ErrorResponse
-// @Failure      500  {object}  swaggertypes.ErrorResponse
-// @Security     BearerAuth
-// @Router       /ai/sessions [post]
+//
+//	@Summary		Create an AI session
+//	@Description	Creates a new AI conversation session for the authenticated user
+//	@Tags			ai
+//	@Produce		json
+//	@Success		201	{object}	swaggertypes.AISessionResponse
+//	@Failure		401	{object}	swaggertypes.ErrorResponse
+//	@Failure		500	{object}	swaggertypes.ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/ai/sessions [post]
 func (h *AISessionHandler) Create(c *gin.Context) {
 	userID := c.GetString(middleware.ContextUserID)
 	session, err := h.svc.Create(c.Request.Context(), userID)
@@ -39,15 +40,16 @@ func (h *AISessionHandler) Create(c *gin.Context) {
 }
 
 // List godoc
-// @Summary      List AI sessions
-// @Description  Returns all AI conversation sessions for the authenticated user
-// @Tags         ai
-// @Produce      json
-// @Success      200  {object}  swaggertypes.AISessionListResponse
-// @Failure      401  {object}  swaggertypes.ErrorResponse
-// @Failure      500  {object}  swaggertypes.ErrorResponse
-// @Security     BearerAuth
-// @Router       /ai/sessions [get]
+//
+//	@Summary		List AI sessions
+//	@Description	Returns all AI conversation sessions for the authenticated user
+//	@Tags			ai
+//	@Produce		json
+//	@Success		200	{object}	swaggertypes.AISessionListResponse
+//	@Failure		401	{object}	swaggertypes.ErrorResponse
+//	@Failure		500	{object}	swaggertypes.ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/ai/sessions [get]
 func (h *AISessionHandler) List(c *gin.Context) {
 	userID := c.GetString(middleware.ContextUserID)
 	sessions, err := h.svc.List(c.Request.Context(), userID)
@@ -59,16 +61,17 @@ func (h *AISessionHandler) List(c *gin.Context) {
 }
 
 // Delete godoc
-// @Summary      Delete an AI session
-// @Description  Deletes an AI conversation session owned by the authenticated user
-// @Tags         ai
-// @Produce      json
-// @Param        id   path      string  true  "Session ID"
-// @Success      200  {object}  swaggertypes.EmptyResponse
-// @Failure      401  {object}  swaggertypes.ErrorResponse
-// @Failure      500  {object}  swaggertypes.ErrorResponse
-// @Security     BearerAuth
-// @Router       /ai/sessions/{id} [delete]
+//
+//	@Summary		Delete an AI session
+//	@Description	Deletes an AI conversation session owned by the authenticated user
+//	@Tags			ai
+//	@Produce		json
+//	@Param			id	path		string	true	"Session ID"
+//	@Success		200	{object}	swaggertypes.EmptyResponse
+//	@Failure		401	{object}	swaggertypes.ErrorResponse
+//	@Failure		500	{object}	swaggertypes.ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/ai/sessions/{id} [delete]
 func (h *AISessionHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
 	userID := c.GetString(middleware.ContextUserID)

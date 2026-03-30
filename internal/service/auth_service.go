@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -37,11 +38,12 @@ type jwtClaims struct {
 type AuthService struct {
 	users         repository.UserRepo
 	refreshTokens repository.RefreshTokenRepo
+	userPlans     repository.UserPlanRepo
 	jwtSecret     string
 }
 
-func NewAuthService(users repository.UserRepo, refreshTokens repository.RefreshTokenRepo, jwtSecret string) *AuthService {
-	return &AuthService{users: users, refreshTokens: refreshTokens, jwtSecret: jwtSecret}
+func NewAuthService(users repository.UserRepo, refreshTokens repository.RefreshTokenRepo, userPlans repository.UserPlanRepo, jwtSecret string) *AuthService {
+	return &AuthService{users: users, refreshTokens: refreshTokens, userPlans: userPlans, jwtSecret: jwtSecret}
 }
 
 func (s *AuthService) Register(ctx context.Context, email, password string) (*model.User, error) {
@@ -67,7 +69,8 @@ func (s *AuthService) Register(ctx context.Context, email, password string) (*mo
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
-	if err := s.users.Create(ctx, u); err != nil {
+
+	if err = s.users.Create(ctx, u); err != nil {
 		return nil, fmt.Errorf("AuthService.Register: %w", err)
 	}
 	return u, nil
@@ -86,7 +89,16 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (access
 		return "", "", ErrInvalidCredentials
 	}
 
-	accessToken, err = s.issueAccessToken(u.ID, "free")
+	plan, err := s.userPlans.FindByUserID(ctx, u.ID)
+	if err != nil {
+		return "", "", fmt.Errorf("AuthService.Login: %w", err)
+	}
+
+	planType := "free"
+	if plan != nil {
+		planType = plan.Plan
+	}
+	accessToken, err = s.issueAccessToken(u.ID, planType)
 	if err != nil {
 		return "", "", fmt.Errorf("AuthService.Login: %w", err)
 	}
@@ -98,30 +110,61 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (access
 	return accessToken, refreshToken, nil
 }
 
-func (s *AuthService) Refresh(ctx context.Context, rawToken string) (string, error) {
+func (s *AuthService) Refresh(ctx context.Context, rawToken string) (accessToken, refreshToken string, err error) {
 	hash := hashToken(rawToken)
 	t, err := s.refreshTokens.FindByTokenHash(ctx, hash)
 	if err != nil {
-		return "", fmt.Errorf("AuthService.Refresh: %w", err)
+		return "", "", fmt.Errorf("AuthService.Refresh: %w", err)
 	}
 	if t == nil {
-		return "", ErrTokenNotFound
+		return "", "", ErrTokenNotFound
 	}
 	if time.Now().After(t.ExpiresAt) {
 		_ = s.refreshTokens.DeleteByTokenHash(ctx, hash)
-		return "", ErrTokenExpired
+		return "", "", ErrTokenExpired
 	}
 
 	if err := s.refreshTokens.DeleteByTokenHash(ctx, hash); err != nil {
-		return "", fmt.Errorf("AuthService.Refresh: delete old token: %w", err)
+		return "", "", fmt.Errorf("AuthService.Refresh: delete old token: %w", err)
 	}
 
-	accessToken, err := s.issueAccessToken(t.UserID, "free")
+	plan, err := s.userPlans.FindByUserID(ctx, t.UserID)
 	if err != nil {
-		return "", fmt.Errorf("AuthService.Refresh: %w", err)
+		return "", "", fmt.Errorf("AuthService.Refresh: %w", err)
 	}
-	return accessToken, nil
+
+	planType := "free"
+	if plan != nil {
+		planType = plan.Plan
+	}
+	accessToken, err = s.issueAccessToken(t.UserID, planType)
+	if err != nil {
+		return "", "", fmt.Errorf("AuthService.Refresh: %w", err)
+	}
+	refreshToken, err = s.issueRefreshToken(ctx, t.UserID)
+	if err != nil {
+		return "", "", fmt.Errorf("AuthService.Refresh: %w", err)
+	}
+
+	return accessToken, refreshToken, nil
 }
+
+func (s *AuthService) Logout(ctx context.Context, rawToken string) error {
+	hash := hashToken(rawToken)
+	if err := s.refreshTokens.DeleteByTokenHash(ctx, hash); err != nil {
+		return fmt.Errorf("AuthService.Logout: %w", err)
+	}
+	return nil
+}
+
+func (s *AuthService) LogoutAll(ctx context.Context, userID string) error {
+	if err := s.refreshTokens.DeleteAllByUserID(ctx, userID); err != nil {
+		return fmt.Errorf("AuthService.LogoutAll: %w", err)
+	}
+	return nil
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 func (s *AuthService) issueAccessToken(userID, plan string) (string, error) {
 	now := time.Now().UTC()
@@ -142,7 +185,10 @@ func (s *AuthService) issueAccessToken(userID, plan string) (string, error) {
 }
 
 func (s *AuthService) issueRefreshToken(ctx context.Context, userID string) (string, error) {
-	raw := uuid.NewString()
+	raw, err := generateRefreshToken()
+	if err != nil {
+		return "", fmt.Errorf("issueRefreshToken: %w", err)
+	}
 	now := time.Now().UTC()
 	t := &model.RefreshToken{
 		ID:        uuid.NewString(),
@@ -157,7 +203,15 @@ func (s *AuthService) issueRefreshToken(ctx context.Context, userID string) (str
 	return raw, nil
 }
 
+func generateRefreshToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
 func hashToken(raw string) string {
 	sum := sha256.Sum256([]byte(raw))
-	return hex.EncodeToString(sum[:])
+	return "rt_" + hex.EncodeToString(sum[:])
 }
