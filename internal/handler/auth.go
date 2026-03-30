@@ -24,17 +24,18 @@ func NewAuthHandler(svc *service.AuthService) *AuthHandler {
 }
 
 // Register godoc
-// @Summary      Register a new user
-// @Description  Creates a new user account with email and password
-// @Tags         auth
-// @Accept       json
-// @Produce      json
-// @Param        body  body      swaggertypes.RegisterRequest  true  "Registration credentials"
-// @Success      201   {object}  swaggertypes.UserResponse
-// @Failure      400   {object}  swaggertypes.ErrorResponse
-// @Failure      409   {object}  swaggertypes.ErrorResponse
-// @Failure      500   {object}  swaggertypes.ErrorResponse
-// @Router       /auth/register [post]
+//
+//	@Summary		Register a new user
+//	@Description	Creates a new user account with email and password
+//	@Tags			auth
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		swaggertypes.RegisterRequest	true	"Registration credentials"
+//	@Success		201		{object}	swaggertypes.UserResponse
+//	@Failure		400		{object}	swaggertypes.ErrorResponse
+//	@Failure		409		{object}	swaggertypes.ErrorResponse
+//	@Failure		500		{object}	swaggertypes.ErrorResponse
+//	@Router			/auth/register [post]
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req dto.RegisterRequest
 
@@ -68,16 +69,17 @@ func (h *AuthHandler) Register(c *gin.Context) {
 }
 
 // Login godoc
-// @Summary      Log in
-// @Description  Authenticates a user and returns access + refresh tokens
-// @Tags         auth
-// @Accept       json
-// @Produce      json
-// @Param        body  body      swaggertypes.LoginRequest  true  "Login credentials"
-// @Success      200   {object}  swaggertypes.TokensResponse
-// @Failure      400   {object}  swaggertypes.ErrorResponse
-// @Failure      401   {object}  swaggertypes.ErrorResponse
-// @Router       /auth/login [post]
+//
+//	@Summary		Log in
+//	@Description	Authenticates a user and returns access + refresh tokens
+//	@Tags			auth
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		swaggertypes.LoginRequest	true	"Login credentials"
+//	@Success		200		{object}	swaggertypes.TokensResponse
+//	@Failure		400		{object}	swaggertypes.ErrorResponse
+//	@Failure		401		{object}	swaggertypes.ErrorResponse
+//	@Router			/auth/login [post]
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req dto.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -93,16 +95,17 @@ func (h *AuthHandler) Login(c *gin.Context) {
 }
 
 // Refresh godoc
-// @Summary      Refresh tokens
-// @Description  Exchanges a valid refresh token for a new access + refresh token pair (single-use rotation)
-// @Tags         auth
-// @Accept       json
-// @Produce      json
-// @Param        body  body      swaggertypes.RefreshRequest  true  "Refresh token"
-// @Success      200   {object}  swaggertypes.TokensResponse
-// @Failure      400   {object}  swaggertypes.ErrorResponse
-// @Failure      401   {object}  swaggertypes.ErrorResponse
-// @Router       /auth/refresh [post]
+//
+//	@Summary		Refresh tokens
+//	@Description	Exchanges a valid refresh token for a new access + refresh token pair (single-use rotation)
+//	@Tags			auth
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		swaggertypes.RefreshRequest	true	"Refresh token"
+//	@Success		200		{object}	swaggertypes.TokensResponse
+//	@Failure		400		{object}	swaggertypes.ErrorResponse
+//	@Failure		401		{object}	swaggertypes.ErrorResponse
+//	@Router			/auth/refresh [post]
 func (h *AuthHandler) Refresh(c *gin.Context) {
 	var req struct {
 		RefreshToken string `json:"refresh_token" binding:"required"`
@@ -120,17 +123,18 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 }
 
 // Logout godoc
-// @Summary      Log out
-// @Description  Invalidates the provided refresh token
-// @Tags         auth
-// @Accept       json
-// @Produce      json
-// @Security     BearerAuth
-// @Param        body  body      swaggertypes.RefreshRequest  true  "Refresh token to invalidate"
-// @Success      200   {object}  swaggertypes.MessageResponse
-// @Failure      400   {object}  swaggertypes.ErrorResponse
-// @Failure      401   {object}  swaggertypes.ErrorResponse
-// @Router       /auth/logout [post]
+//
+//	@Summary		Log out
+//	@Description	Invalidates the provided refresh token
+//	@Tags			auth
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			body	body		swaggertypes.RefreshRequest	true	"Refresh token to invalidate"
+//	@Success		200		{object}	swaggertypes.MessageResponse
+//	@Failure		400		{object}	swaggertypes.ErrorResponse
+//	@Failure		401		{object}	swaggertypes.ErrorResponse
+//	@Router			/auth/logout [post]
 func (h *AuthHandler) Logout(c *gin.Context) {
 	var req struct {
 		RefreshToken string `json:"refresh_token" binding:"required"`
@@ -147,14 +151,15 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 }
 
 // LogoutAll godoc
-// @Summary      Log out all devices
-// @Description  Invalidates all refresh tokens for the current user
-// @Tags         auth
-// @Produce      json
-// @Security     BearerAuth
-// @Success      200  {object}  swaggertypes.MessageResponse
-// @Failure      401  {object}  swaggertypes.ErrorResponse
-// @Router       /auth/logout-all [post]
+//
+//	@Summary		Log out all devices
+//	@Description	Invalidates all refresh tokens for the current user
+//	@Tags			auth
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Success		200	{object}	swaggertypes.MessageResponse
+//	@Failure		401	{object}	swaggertypes.ErrorResponse
+//	@Router			/auth/logout-all [post]
 func (h *AuthHandler) LogoutAll(c *gin.Context) {
 	userID := c.GetString(middleware.ContextUserID)
 	if err := h.svc.LogoutAll(c.Request.Context(), userID); err != nil {

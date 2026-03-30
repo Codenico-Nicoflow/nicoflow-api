@@ -19,15 +19,16 @@ func NewTimeSpreadHandler(svc *service.TimeSpreadService) *TimeSpreadHandler {
 }
 
 // Get godoc
-// @Summary      Get time-spread view
-// @Description  Returns tasks grouped by scheduled date for the authenticated user
-// @Tags         time-spread
-// @Produce      json
-// @Success      200  {object}  swaggertypes.EmptyResponse
-// @Failure      401  {object}  swaggertypes.ErrorResponse
-// @Failure      500  {object}  swaggertypes.ErrorResponse
-// @Security     BearerAuth
-// @Router       /time-spread [get]
+//
+//	@Summary		Get time-spread view
+//	@Description	Returns tasks grouped by scheduled date for the authenticated user
+//	@Tags			time-spread
+//	@Produce		json
+//	@Success		200	{object}	swaggertypes.EmptyResponse
+//	@Failure		401	{object}	swaggertypes.ErrorResponse
+//	@Failure		500	{object}	swaggertypes.ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/time-spread [get]
 func (h *TimeSpreadHandler) Get(c *gin.Context) {
 	userID := c.GetString(middleware.ContextUserID)
 	data, err := h.svc.Get(c.Request.Context(), userID)

@@ -1,12 +1,12 @@
-// @title           Nicoflow API
-// @version         1.0
-// @description     REST API for the Nicoflow productivity platform
-// @host            localhost:8080
-// @BasePath        /v1
-// @securityDefinitions.apikey BearerAuth
-// @in              header
-// @name            Authorization
-// @description     Enter: Bearer <token>
+// @title						Nicoflow API
+// @version					1.0
+// @description				REST API for the Nicoflow productivity platform
+// @host						localhost:8080
+// @BasePath					/v1
+// @securityDefinitions.apikey	BearerAuth
+// @in							header
+// @name						Authorization
+// @description				Enter: Bearer <token>
 package main
 
 import (

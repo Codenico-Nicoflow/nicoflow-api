@@ -19,15 +19,16 @@ func NewUserHandler(svc *service.UserService) *UserHandler {
 }
 
 // DeleteMe godoc
-// @Summary      Delete account
-// @Description  Soft-deletes the authenticated user and revokes all their refresh tokens
-// @Tags         users
-// @Produce      json
-// @Security     BearerAuth
-// @Success      204
-// @Failure      401  {object}  swaggertypes.ErrorResponse
-// @Failure      500  {object}  swaggertypes.ErrorResponse
-// @Router       /users/me [delete]
+//
+//	@Summary		Delete account
+//	@Description	Soft-deletes the authenticated user and revokes all their refresh tokens
+//	@Tags			users
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Success		204
+//	@Failure		401	{object}	swaggertypes.ErrorResponse
+//	@Failure		500	{object}	swaggertypes.ErrorResponse
+//	@Router			/users/me [delete]
 func (h *UserHandler) DeleteMe(c *gin.Context) {
 	userID := c.GetString(middleware.ContextUserID)
 	if err := h.svc.Delete(c.Request.Context(), userID); err != nil {

@@ -19,18 +19,19 @@ func NewAttachmentHandler(svc *service.AttachmentService) *AttachmentHandler {
 }
 
 // UploadURL godoc
-// @Summary      Get S3 upload URL
-// @Description  Returns a pre-signed S3 URL to upload a file attachment
-// @Tags         attachments
-// @Accept       json
-// @Produce      json
-// @Param        body  body      swaggertypes.UploadURLRequest  true  "File name to upload"
-// @Success      200   {object}  swaggertypes.URLResponse
-// @Failure      400   {object}  swaggertypes.ErrorResponse
-// @Failure      401   {object}  swaggertypes.ErrorResponse
-// @Failure      500   {object}  swaggertypes.ErrorResponse
-// @Security     BearerAuth
-// @Router       /attachments/upload-url [post]
+//
+//	@Summary		Get S3 upload URL
+//	@Description	Returns a pre-signed S3 URL to upload a file attachment
+//	@Tags			attachments
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		swaggertypes.UploadURLRequest	true	"File name to upload"
+//	@Success		200		{object}	swaggertypes.URLResponse
+//	@Failure		400		{object}	swaggertypes.ErrorResponse
+//	@Failure		401		{object}	swaggertypes.ErrorResponse
+//	@Failure		500		{object}	swaggertypes.ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/attachments/upload-url [post]
 func (h *AttachmentHandler) UploadURL(c *gin.Context) {
 	var req struct {
 		Filename string `json:"filename" binding:"required"`
@@ -49,18 +50,19 @@ func (h *AttachmentHandler) UploadURL(c *gin.Context) {
 }
 
 // DownloadURL godoc
-// @Summary      Get S3 download URL
-// @Description  Returns a pre-signed S3 URL to download a file attachment
-// @Tags         attachments
-// @Accept       json
-// @Produce      json
-// @Param        body  body      swaggertypes.DownloadURLRequest  true  "S3 object key"
-// @Success      200   {object}  swaggertypes.URLResponse
-// @Failure      400   {object}  swaggertypes.ErrorResponse
-// @Failure      401   {object}  swaggertypes.ErrorResponse
-// @Failure      500   {object}  swaggertypes.ErrorResponse
-// @Security     BearerAuth
-// @Router       /attachments/download-url [post]
+//
+//	@Summary		Get S3 download URL
+//	@Description	Returns a pre-signed S3 URL to download a file attachment
+//	@Tags			attachments
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		swaggertypes.DownloadURLRequest	true	"S3 object key"
+//	@Success		200		{object}	swaggertypes.URLResponse
+//	@Failure		400		{object}	swaggertypes.ErrorResponse
+//	@Failure		401		{object}	swaggertypes.ErrorResponse
+//	@Failure		500		{object}	swaggertypes.ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/attachments/download-url [post]
 func (h *AttachmentHandler) DownloadURL(c *gin.Context) {
 	var req struct {
 		Key string `json:"key" binding:"required"`

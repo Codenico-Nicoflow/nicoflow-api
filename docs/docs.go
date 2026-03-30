@@ -603,27 +603,12 @@ const docTemplate = `{
         },
         "/auth/logout": {
             "post": {
-                "description": "Logs out the current user (client should discard tokens)",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "auth"
-                ],
-                "summary": "Log out",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/swaggertypes.MessageResponse"
-                        }
+                "security": [
+                    {
+                        "BearerAuth": []
                     }
-                }
-            }
-        },
-        "/auth/refresh": {
-            "post": {
-                "description": "Exchanges a valid refresh token for a new access token (single-use rotation)",
+                ],
+                "description": "Invalidates the provided refresh token",
                 "consumes": [
                     "application/json"
                 ],
@@ -633,7 +618,84 @@ const docTemplate = `{
                 "tags": [
                     "auth"
                 ],
-                "summary": "Refresh access token",
+                "summary": "Log out",
+                "parameters": [
+                    {
+                        "description": "Refresh token to invalidate",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/swaggertypes.RefreshRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/swaggertypes.MessageResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/swaggertypes.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/swaggertypes.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/logout-all": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Invalidates all refresh tokens for the current user",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Log out all devices",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/swaggertypes.MessageResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/swaggertypes.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/refresh": {
+            "post": {
+                "description": "Exchanges a valid refresh token for a new access + refresh token pair (single-use rotation)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Refresh tokens",
                 "parameters": [
                     {
                         "description": "Refresh token",
@@ -649,7 +711,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/swaggertypes.AccessTokenResponse"
+                            "$ref": "#/definitions/swaggertypes.TokensResponse"
                         }
                     },
                     "400": {
@@ -700,6 +762,12 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/swaggertypes.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/swaggertypes.ErrorResponse"
                         }
@@ -1712,6 +1780,40 @@ const docTemplate = `{
                 }
             }
         },
+        "/users/me": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Soft-deletes the authenticated user and revokes all their refresh tokens",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Delete account",
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/swaggertypes.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/swaggertypes.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/ws": {
             "get": {
                 "security": [
@@ -1846,26 +1948,6 @@ const docTemplate = `{
             "properties": {
                 "data": {
                     "$ref": "#/definitions/swaggertypes.AISessionData"
-                },
-                "error": {
-                    "$ref": "#/definitions/swaggertypes.ErrorBody"
-                }
-            }
-        },
-        "swaggertypes.AccessTokenData": {
-            "type": "object",
-            "properties": {
-                "accessToken": {
-                    "type": "string",
-                    "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                }
-            }
-        },
-        "swaggertypes.AccessTokenResponse": {
-            "type": "object",
-            "properties": {
-                "data": {
-                    "$ref": "#/definitions/swaggertypes.AccessTokenData"
                 },
                 "error": {
                     "$ref": "#/definitions/swaggertypes.ErrorBody"
@@ -2209,7 +2291,7 @@ const docTemplate = `{
         "swaggertypes.RefreshRequest": {
             "type": "object",
             "properties": {
-                "refreshToken": {
+                "refresh_token": {
                     "type": "string",
                     "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
                 }
@@ -2364,11 +2446,11 @@ const docTemplate = `{
         "swaggertypes.TokensData": {
             "type": "object",
             "properties": {
-                "accessToken": {
+                "access_token": {
                     "type": "string",
                     "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
                 },
-                "refreshToken": {
+                "refresh_token": {
                     "type": "string",
                     "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
                 }

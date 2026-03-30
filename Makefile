@@ -13,8 +13,8 @@ lint:
 	golangci-lint run
 
 docs:
-	swag init -g cmd/server/main.go --output docs
-	swag fmt
+	$(HOME)/go/bin/swag init -g cmd/server/main.go --output docs
+	$(HOME)/go/bin/swag fmt
 
 ## Database migrations (requires DB_URL env var, except migrate-create)
 
