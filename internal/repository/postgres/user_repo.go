@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -35,7 +36,7 @@ func (r *UserRepo) FindByEmail(ctx context.Context, email string) (*model.User, 
 	u := &model.User{}
 	err := r.db.QueryRow(ctx,
 		`SELECT id, email, password_hash, name, timezone, created_at, updated_at
-		 FROM users WHERE email = $1`,
+		 FROM users WHERE email = $1 AND deleted_at IS NULL`,
 		email,
 	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Name, &u.Timezone, &u.CreatedAt, &u.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -51,7 +52,7 @@ func (r *UserRepo) FindByID(ctx context.Context, id string) (*model.User, error)
 	u := &model.User{}
 	err := r.db.QueryRow(ctx,
 		`SELECT id, email, password_hash, name, timezone, created_at, updated_at
-		 FROM users WHERE id = $1`,
+		 FROM users WHERE id = $1 AND deleted_at IS NULL`,
 		id,
 	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Name, &u.Timezone, &u.CreatedAt, &u.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -63,4 +64,14 @@ func (r *UserRepo) FindByID(ctx context.Context, id string) (*model.User, error)
 	return u, nil
 }
 
-// TODO: implement Delete user
+func (r *UserRepo) SoftDelete(ctx context.Context, id string) error {
+	now := time.Now().UTC()
+	_, err := r.db.Exec(ctx,
+		`UPDATE users SET deleted_at = $1 WHERE id = $2 AND deleted_at IS NULL`,
+		now, id,
+	)
+	if err != nil {
+		return fmt.Errorf("UserRepo.SoftDelete: %w", err)
+	}
+	return nil
+}

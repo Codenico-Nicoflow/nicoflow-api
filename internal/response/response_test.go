@@ -190,3 +190,33 @@ func TestRespondCreate(t *testing.T) {
 		})
 	}
 }
+
+func TestResponseNoContent(t *testing.T) {
+	w := httptest.NewRecorder()
+	r := setupRouter(func(ctx *gin.Context) {
+		response.RespondNoContent(ctx)
+	})
+	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+	r.ServeHTTP(w, req)
+
+	// check status
+	if w.Code != http.StatusNoContent {
+		t.Errorf("expected status code %d, got %d", http.StatusNoContent, w.Code)
+	}
+
+	// decode response body
+	var responseBody struct {
+		Data  any `json:"data"`
+		Error any `json:"error"`
+	}
+	json.NewDecoder(w.Body).Decode(&responseBody)
+
+	// check response body
+	if responseBody.Data != nil {
+		t.Errorf("expected data to be nil, got %v", responseBody.Data)
+	}
+
+	if responseBody.Error != nil {
+		t.Errorf("expected error to be nil, got %v", responseBody.Error)
+	}
+}
