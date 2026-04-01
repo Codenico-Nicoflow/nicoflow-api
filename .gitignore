@@ -3,3 +3,7 @@
 build-errors.log
 tmp/
 bin/
+
+# IDE
+.idea/
+*.iml
