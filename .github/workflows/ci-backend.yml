@@ -56,6 +56,16 @@ jobs:
           go-version: '1.25.8'
           cache: true
 
+      - name: Install migrate CLI
+        run: |
+          curl -sSL https://github.com/golang-migrate/migrate/releases/download/v4.18.1/migrate.linux-amd64.tar.gz | tar -xz
+          sudo mv migrate /usr/local/bin/migrate
+
+      - name: Run migrations
+        env:
+          DB_URL: postgres://nicoflow:nicoflow@localhost:5432/nicoflow_test?sslmode=disable
+        run: migrate -path migrations -database "$DB_URL" up
+
       - name: Test
         env:
           TEST_DATABASE_URL: postgres://nicoflow:nicoflow@localhost:5432/nicoflow_test?sslmode=disable
