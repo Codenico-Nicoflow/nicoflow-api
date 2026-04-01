@@ -19,6 +19,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
 	"github.com/go-playground/validator/v10"
+	"github.com/joho/godotenv"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
@@ -43,6 +44,11 @@ func InitValidators() {
 }
 
 func main() {
+	// Load .env in non-production environments (no-op if file doesn't exist)
+	if os.Getenv("APP_ENV") != "production" {
+		_ = godotenv.Load()
+	}
+
 	cfg := config.Load()
 
 	// --- Initialize Validators --------------------------------------------------
