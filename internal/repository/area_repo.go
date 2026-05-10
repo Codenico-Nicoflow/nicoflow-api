@@ -3,7 +3,7 @@ package repository
 import (
 	"context"
 
-	"nicoflow-api/internal/model"
+	"github.com/nicoflow/nicoflow-api/internal/model"
 )
 
 type AreaRepo interface {

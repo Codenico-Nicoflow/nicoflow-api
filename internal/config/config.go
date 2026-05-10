@@ -2,10 +2,12 @@ package config
 
 import (
 	"os"
+
+	"github.com/rs/zerolog/log"
 )
 
 type Config struct {
-	DBUrl           string
+	DatabaseURL     string
 	JWTSecret       string
 	LSWebhookSecret string
 	AWSAccessKeyID  string
@@ -14,6 +16,9 @@ type Config struct {
 	CORSOrigins     string
 	AppEnv          string
 	Port            string
+	MinIOEndpoint   string
+	MinIOAccessKey  string
+	MinIOSecretKey  string
 }
 
 func Load() Config {
@@ -21,9 +26,20 @@ func Load() Config {
 	if port == "" {
 		port = "8080"
 	}
+
+	databaseURL := os.Getenv("DATABASE_URL")
+	jwtSecret := os.Getenv("JWT_SECRET")
+
+	if databaseURL == "" {
+		log.Fatal().Msg("required env var DATABASE_URL is not set")
+	}
+	if jwtSecret == "" {
+		log.Fatal().Msg("required env var JWT_SECRET is not set")
+	}
+
 	return Config{
-		DBUrl:           os.Getenv("DB_URL"),
-		JWTSecret:       os.Getenv("JWT_SECRET"),
+		DatabaseURL:     databaseURL,
+		JWTSecret:       jwtSecret,
 		LSWebhookSecret: os.Getenv("LS_WEBHOOK_SECRET"),
 		AWSAccessKeyID:  os.Getenv("AWS_ACCESS_KEY_ID"),
 		AWSSecretKey:    os.Getenv("AWS_SECRET_ACCESS_KEY"),
@@ -31,5 +47,8 @@ func Load() Config {
 		CORSOrigins:     os.Getenv("CORS_ORIGINS"),
 		AppEnv:          os.Getenv("APP_ENV"),
 		Port:            port,
+		MinIOEndpoint:   os.Getenv("MINIO_ENDPOINT"),
+		MinIOAccessKey:  os.Getenv("MINIO_ACCESS_KEY"),
+		MinIOSecretKey:  os.Getenv("MINIO_SECRET_KEY"),
 	}
 }

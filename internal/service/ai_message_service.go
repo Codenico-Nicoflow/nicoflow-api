@@ -3,8 +3,8 @@ package service
 import (
 	"context"
 
-	"nicoflow-api/internal/model"
-	"nicoflow-api/internal/repository"
+	"github.com/nicoflow/nicoflow-api/internal/model"
+	"github.com/nicoflow/nicoflow-api/internal/repository"
 )
 
 type AIMessageService struct {

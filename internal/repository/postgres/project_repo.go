@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"nicoflow-api/internal/model"
+	"github.com/nicoflow/nicoflow-api/internal/model"
 )
 
 type ProjectRepo struct {

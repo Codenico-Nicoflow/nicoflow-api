@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"
 
-	"nicoflow-api/internal/response"
+	"github.com/nicoflow/nicoflow-api/internal/response"
 )
 
 type limiterEntry struct {

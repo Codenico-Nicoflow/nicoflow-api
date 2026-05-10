@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"nicoflow-api/internal/response"
+	"github.com/nicoflow/nicoflow-api/internal/response"
 	"testing"
 
 	"github.com/gin-gonic/gin"

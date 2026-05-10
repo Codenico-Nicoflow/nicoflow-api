@@ -4,7 +4,7 @@ dev:
 	$(HOME)/go/bin/air
 
 build:
-	go build -o bin/server ./cmd/server
+	go build -o bin/server ./cmd/api
 
 test:
 	go test ./... -race -cover
@@ -13,7 +13,7 @@ lint:
 	golangci-lint run
 
 docs:
-	$(HOME)/go/bin/swag init -g cmd/server/main.go --output docs
+	$(HOME)/go/bin/swag init -g cmd/api/main.go --output docs
 	$(HOME)/go/bin/swag fmt
 
 ## Database migrations (requires DB_URL env var, except migrate-create)

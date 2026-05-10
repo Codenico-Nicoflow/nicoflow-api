@@ -1,6 +1,6 @@
 package service
 
-import "nicoflow-api/internal/ws"
+import "github.com/nicoflow/nicoflow-api/internal/ws"
 
 type WSService struct {
 	hub *ws.Hub

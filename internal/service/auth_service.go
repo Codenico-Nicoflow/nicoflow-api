@@ -13,8 +13,8 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
-	"nicoflow-api/internal/model"
-	"nicoflow-api/internal/repository"
+	"github.com/nicoflow/nicoflow-api/internal/model"
+	"github.com/nicoflow/nicoflow-api/internal/repository"
 )
 
 var (

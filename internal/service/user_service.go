@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"nicoflow-api/internal/repository"
+	"github.com/nicoflow/nicoflow-api/internal/repository"
 )
 
 type UserService struct {

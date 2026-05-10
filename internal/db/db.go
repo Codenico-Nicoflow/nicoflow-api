@@ -8,7 +8,14 @@ import (
 )
 
 func New(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
-	pool, err := pgxpool.New(ctx, dsn)
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("db.New: parse config: %w", err)
+	}
+	cfg.MaxConns = 25
+	cfg.MinConns = 5
+
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("db.New: %w", err)
 	}

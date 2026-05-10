@@ -5,7 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"nicoflow-api/internal/response"
+	"github.com/nicoflow/nicoflow-api/internal/response"
 )
 
 // PlanEnforcer rejects free-tier users from routes that require a paid plan.

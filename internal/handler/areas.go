@@ -5,9 +5,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"nicoflow-api/internal/middleware"
-	"nicoflow-api/internal/response"
-	"nicoflow-api/internal/service"
+	"github.com/nicoflow/nicoflow-api/internal/middleware"
+	"github.com/nicoflow/nicoflow-api/internal/response"
+	"github.com/nicoflow/nicoflow-api/internal/service"
 )
 
 type AreaHandler struct {
