@@ -7,7 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 
-	"nicoflow-api/internal/response"
+	"github.com/nicoflow/nicoflow-api/internal/response"
 )
 
 const (

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"nicoflow-api/internal/model"
+	"github.com/nicoflow/nicoflow-api/internal/model"
 )
 
 type AIUsageMonthlyRepo interface {

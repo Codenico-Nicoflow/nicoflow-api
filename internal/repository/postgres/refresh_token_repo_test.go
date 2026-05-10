@@ -8,9 +8,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"nicoflow-api/internal/model"
-	pgrepo "nicoflow-api/internal/repository/postgres"
-	"nicoflow-api/internal/testutil"
+	"github.com/nicoflow/nicoflow-api/internal/model"
+	pgrepo "github.com/nicoflow/nicoflow-api/internal/repository/postgres"
+	"github.com/nicoflow/nicoflow-api/internal/testutil"
 )
 
 // insertTestUser inserts a minimal user row so FK constraints on refresh_tokens pass.

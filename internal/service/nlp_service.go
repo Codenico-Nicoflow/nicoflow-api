@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"nicoflow-api/internal/repository"
+	"github.com/nicoflow/nicoflow-api/internal/repository"
 )
 
 var ErrNLPPlanRequired = errors.New("PRO plan required for NLP")

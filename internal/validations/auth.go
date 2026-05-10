@@ -2,7 +2,7 @@ package validations
 
 import (
 	"net"
-	"nicoflow-api/internal/response"
+	"github.com/nicoflow/nicoflow-api/internal/response"
 	"regexp"
 	"strings"
 	"unicode"

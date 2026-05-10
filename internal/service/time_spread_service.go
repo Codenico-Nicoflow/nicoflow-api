@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 
-	"nicoflow-api/internal/repository"
+	"github.com/nicoflow/nicoflow-api/internal/repository"
 )
 
 type TimeSpreadService struct {

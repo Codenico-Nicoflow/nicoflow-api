@@ -17,13 +17,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"nicoflow-api/internal/handler"
-	"nicoflow-api/internal/middleware"
-	"nicoflow-api/internal/model"
-	pgrepo "nicoflow-api/internal/repository/postgres"
-	"nicoflow-api/internal/service"
-	"nicoflow-api/internal/testutil"
-	"nicoflow-api/internal/validations"
+	"github.com/nicoflow/nicoflow-api/internal/handler"
+	"github.com/nicoflow/nicoflow-api/internal/middleware"
+	"github.com/nicoflow/nicoflow-api/internal/model"
+	pgrepo "github.com/nicoflow/nicoflow-api/internal/repository/postgres"
+	"github.com/nicoflow/nicoflow-api/internal/service"
+	"github.com/nicoflow/nicoflow-api/internal/testutil"
+	"github.com/nicoflow/nicoflow-api/internal/validations"
 )
 
 const authTestSecret = "integration-test-secret"

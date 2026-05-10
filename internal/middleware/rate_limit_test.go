@@ -9,8 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"nicoflow-api/internal/middleware"
-	"nicoflow-api/internal/response"
+	"github.com/nicoflow/nicoflow-api/internal/middleware"
+	"github.com/nicoflow/nicoflow-api/internal/response"
 )
 
 func setupAuthRateLimitRouter(burst, ratePerMin int) *gin.Engine {

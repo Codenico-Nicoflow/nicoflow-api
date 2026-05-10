@@ -8,11 +8,11 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 
-	"nicoflow-api/internal/dto"
-	"nicoflow-api/internal/middleware"
-	"nicoflow-api/internal/response"
-	"nicoflow-api/internal/service"
-	"nicoflow-api/internal/validations"
+	"github.com/nicoflow/nicoflow-api/internal/dto"
+	"github.com/nicoflow/nicoflow-api/internal/middleware"
+	"github.com/nicoflow/nicoflow-api/internal/response"
+	"github.com/nicoflow/nicoflow-api/internal/service"
+	"github.com/nicoflow/nicoflow-api/internal/validations"
 )
 
 type AuthHandler struct {

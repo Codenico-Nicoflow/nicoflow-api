@@ -10,8 +10,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 
-	"nicoflow-api/internal/middleware"
-	"nicoflow-api/internal/response"
+	"github.com/nicoflow/nicoflow-api/internal/middleware"
+	"github.com/nicoflow/nicoflow-api/internal/response"
 )
 
 const testSecret = "test-secret-key"
