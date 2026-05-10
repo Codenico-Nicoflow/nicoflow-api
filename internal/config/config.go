@@ -22,19 +22,18 @@ type Config struct {
 }
 
 func Load() Config {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-
 	databaseURL := os.Getenv("DATABASE_URL")
 	jwtSecret := os.Getenv("JWT_SECRET")
+	port := os.Getenv("PORT")
 
 	if databaseURL == "" {
 		log.Fatal().Msg("required env var DATABASE_URL is not set")
 	}
 	if jwtSecret == "" {
 		log.Fatal().Msg("required env var JWT_SECRET is not set")
+	}
+	if port == "" {
+		log.Fatal().Msg("required env var PORT is not set")
 	}
 
 	return Config{
