@@ -159,26 +159,26 @@ func main() {
 
 		protected.GET("/areas", areaH.List)
 		protected.POST("/areas", areaH.Create)
-		protected.PUT("/areas/:id", areaH.Update)
+		protected.PATCH("/areas/:id", areaH.Update)
 		protected.DELETE("/areas/:id", areaH.Delete)
 
 		protected.GET("/projects", projectH.List)
 		protected.POST("/projects", projectH.Create)
-		protected.PUT("/projects/:id", projectH.Update)
+		protected.PATCH("/projects/:id", projectH.Update)
 		protected.DELETE("/projects/:id", projectH.Delete)
 
 		tasks := protected.Group("/tasks")
 		{
 			tasks.GET("", taskH.List)
 			tasks.POST("", taskH.Create)
-			tasks.PUT("/:taskId", taskH.Update)
+			tasks.PATCH("/:taskId", taskH.Update)
 			tasks.DELETE("/:taskId", taskH.Delete)
 
 			subtasks := tasks.Group("/:taskId/subtasks")
 			{
 				subtasks.GET("", subtaskH.List)
 				subtasks.POST("", subtaskH.Create)
-				subtasks.PUT("/:subtaskId", subtaskH.Update)
+				subtasks.PATCH("/:subtaskId", subtaskH.Update)
 				subtasks.DELETE("/:subtaskId", subtaskH.Delete)
 			}
 		}

@@ -20,10 +20,11 @@ func NewProjectRepo(db *pgxpool.Pool) *ProjectRepo {
 }
 
 func (r *ProjectRepo) Create(ctx context.Context, p *model.Project) error {
+
 	_, err := r.db.Exec(ctx,
-		`INSERT INTO projects (id, user_id, area_id, name, status, display_order, created_at, updated_at)
+		`INSERT INTO projects (id, user_id, area_id, name, status, folder_icon, display_order, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		p.ID, p.UserID, p.AreaID, p.Name, p.Status, p.DisplayOrder, p.CreatedAt, p.UpdatedAt,
+		p.ID, p.UserID, p.AreaID, p.Name, p.Status, p.FolderIcon, p.DisplayOrder, p.CreatedAt, p.UpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("ProjectRepo.Create: %w", err)
@@ -33,7 +34,7 @@ func (r *ProjectRepo) Create(ctx context.Context, p *model.Project) error {
 
 func (r *ProjectRepo) List(ctx context.Context, userID string) ([]model.Project, error) {
 	rows, err := r.db.Query(ctx,
-		`SELECT id, user_id, area_id, name, status, display_order, created_at, updated_at
+		`SELECT id, user_id, area_id, name, status, folder_icon,  display_order, created_at, updated_at
 		 FROM projects WHERE user_id = $1 ORDER BY display_order ASC`,
 		userID,
 	)
@@ -45,7 +46,7 @@ func (r *ProjectRepo) List(ctx context.Context, userID string) ([]model.Project,
 	var result []model.Project
 	for rows.Next() {
 		var p model.Project
-		if err := rows.Scan(&p.ID, &p.UserID, &p.AreaID, &p.Name, &p.Status, &p.DisplayOrder, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.UserID, &p.AreaID, &p.Name, &p.Status, &p.FolderIcon, &p.DisplayOrder, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("ProjectRepo.List scan: %w", err)
 		}
 		result = append(result, p)
