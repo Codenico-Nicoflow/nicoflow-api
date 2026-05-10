@@ -4,10 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"github.com/nicoflow/nicoflow-api/internal/response"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/nicoflow/nicoflow-api/internal/response"
 )
 
 func setupRouter(handler gin.HandlerFunc) *gin.Engine {
