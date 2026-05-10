@@ -2,12 +2,13 @@ package validations
 
 import (
 	"net"
-	"github.com/nicoflow/nicoflow-api/internal/response"
 	"regexp"
 	"strings"
 	"unicode"
 
 	"github.com/go-playground/validator/v10"
+
+	"github.com/nicoflow/nicoflow-api/internal/response"
 )
 
 func PasswordValidator(fl validator.FieldLevel) bool {

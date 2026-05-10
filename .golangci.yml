@@ -10,10 +10,13 @@ linters:
     - govet
     - staticcheck
     - unused
+    - exhaustive
     - gocyclo
     - misspell
     - prealloc
   settings:
+    exhaustive:
+      default-signifies-exhaustive: true
     gocyclo:
       min-complexity: 15
   exclusions:
