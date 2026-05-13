@@ -899,26 +899,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/health": {
-            "get": {
-                "description": "Returns 200 if the server is running",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "health"
-                ],
-                "summary": "Health check",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/swaggertypes.HealthResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/inbox": {
             "get": {
                 "security": [
@@ -2138,26 +2118,6 @@ const docTemplate = `{
                 }
             }
         },
-        "swaggertypes.HealthData": {
-            "type": "object",
-            "properties": {
-                "status": {
-                    "type": "string",
-                    "example": "ok"
-                }
-            }
-        },
-        "swaggertypes.HealthResponse": {
-            "type": "object",
-            "properties": {
-                "data": {
-                    "$ref": "#/definitions/swaggertypes.HealthData"
-                },
-                "error": {
-                    "$ref": "#/definitions/swaggertypes.ErrorBody"
-                }
-            }
-        },
         "swaggertypes.LoginRequest": {
             "type": "object",
             "properties": {
@@ -2648,25 +2608,17 @@ const docTemplate = `{
                 }
             }
         }
-    },
-    "securityDefinitions": {
-        "BearerAuth": {
-            "description": "Enter: Bearer \u003ctoken\u003e",
-            "type": "apiKey",
-            "name": "Authorization",
-            "in": "header"
-        }
     }
 }`
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "1.0",
-	Host:             "localhost:8080",
-	BasePath:         "/v1",
+	Version:          "",
+	Host:             "",
+	BasePath:         "",
 	Schemes:          []string{},
-	Title:            "Nicoflow API",
-	Description:      "REST API for the Nicoflow productivity platform",
+	Title:            "",
+	Description:      "",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

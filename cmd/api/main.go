@@ -41,9 +41,17 @@ func main() {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
 	if os.Getenv("APP_ENV") != "production" {
 		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+	} else {
+		log.Logger = zerolog.New(os.Stdout).With().Timestamp().Logger()
 	}
 
 	cfg := config.Load()
+
+	level, err := zerolog.ParseLevel(cfg.LogLevel)
+	if err != nil {
+		level = zerolog.InfoLevel
+	}
+	zerolog.SetGlobalLevel(level)
 
 	initValidators()
 
@@ -108,15 +116,9 @@ func main() {
 	}
 	ginEngine := gin.New()
 
-	var ginLogger gin.HandlerFunc
-	if cfg.AppEnv == "production" {
-		ginLogger = ginmiddleware.Logger()
-	} else {
-		ginLogger = gin.Logger()
-	}
+	// Request-ID and structured logging are handled by the outer Chi middleware
+	// chain. Gin only needs CORS and recovery for the routes it owns.
 	ginEngine.Use(
-		ginmiddleware.RequestID(),
-		ginLogger,
 		ginmiddleware.CORS(cfg.CORSOrigins),
 		gin.Recovery(),
 	)
@@ -197,7 +199,8 @@ func main() {
 
 	// Chi top-level router
 	r := chi.NewRouter()
-	r.Use(middleware.RequestID)
+	r.Use(ginmiddleware.RequestID)
+	r.Use(ginmiddleware.Logger)
 	r.Use(middleware.Recoverer)
 
 	// Health — Chi-native, net/http handler

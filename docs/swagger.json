@@ -1,13 +1,8 @@
 {
     "swagger": "2.0",
     "info": {
-        "description": "REST API for the Nicoflow productivity platform",
-        "title": "Nicoflow API",
-        "contact": {},
-        "version": "1.0"
+        "contact": {}
     },
-    "host": "localhost:8080",
-    "basePath": "/v1",
     "paths": {
         "/ai/sessions": {
             "get": {
@@ -888,26 +883,6 @@
                         "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/swaggertypes.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/health": {
-            "get": {
-                "description": "Returns 200 if the server is running",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "health"
-                ],
-                "summary": "Health check",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/swaggertypes.HealthResponse"
                         }
                     }
                 }
@@ -2132,26 +2107,6 @@
                 }
             }
         },
-        "swaggertypes.HealthData": {
-            "type": "object",
-            "properties": {
-                "status": {
-                    "type": "string",
-                    "example": "ok"
-                }
-            }
-        },
-        "swaggertypes.HealthResponse": {
-            "type": "object",
-            "properties": {
-                "data": {
-                    "$ref": "#/definitions/swaggertypes.HealthData"
-                },
-                "error": {
-                    "$ref": "#/definitions/swaggertypes.ErrorBody"
-                }
-            }
-        },
         "swaggertypes.LoginRequest": {
             "type": "object",
             "properties": {
@@ -2641,14 +2596,6 @@
                     "$ref": "#/definitions/swaggertypes.ErrorBody"
                 }
             }
-        }
-    },
-    "securityDefinitions": {
-        "BearerAuth": {
-            "description": "Enter: Bearer \u003ctoken\u003e",
-            "type": "apiKey",
-            "name": "Authorization",
-            "in": "header"
         }
     }
 }

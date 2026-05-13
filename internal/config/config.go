@@ -16,6 +16,7 @@ type Config struct {
 	CORSOrigins     string
 	AppEnv          string
 	Port            string
+	LogLevel        string
 	MinIOEndpoint   string
 	MinIOAccessKey  string
 	MinIOSecretKey  string
@@ -37,6 +38,11 @@ func Load() Config {
 		log.Fatal().Msg("required env var JWT_SECRET is not set")
 	}
 
+	logLevel := os.Getenv("LOG_LEVEL")
+	if logLevel == "" {
+		logLevel = "info"
+	}
+
 	return Config{
 		DatabaseURL:     databaseURL,
 		JWTSecret:       jwtSecret,
@@ -47,6 +53,7 @@ func Load() Config {
 		CORSOrigins:     os.Getenv("CORS_ORIGINS"),
 		AppEnv:          os.Getenv("APP_ENV"),
 		Port:            port,
+		LogLevel:        logLevel,
 		MinIOEndpoint:   os.Getenv("MINIO_ENDPOINT"),
 		MinIOAccessKey:  os.Getenv("MINIO_ACCESS_KEY"),
 		MinIOSecretKey:  os.Getenv("MINIO_SECRET_KEY"),

@@ -1,4 +1,3 @@
-basePath: /v1
 definitions:
   swaggertypes.AIMessageData:
     properties:
@@ -189,19 +188,6 @@ definitions:
     properties:
       data:
         type: object
-      error:
-        $ref: '#/definitions/swaggertypes.ErrorBody'
-    type: object
-  swaggertypes.HealthData:
-    properties:
-      status:
-        example: ok
-        type: string
-    type: object
-  swaggertypes.HealthResponse:
-    properties:
-      data:
-        $ref: '#/definitions/swaggertypes.HealthData'
       error:
         $ref: '#/definitions/swaggertypes.ErrorBody'
     type: object
@@ -539,12 +525,8 @@ definitions:
       error:
         $ref: '#/definitions/swaggertypes.ErrorBody'
     type: object
-host: localhost:8080
 info:
   contact: {}
-  description: REST API for the Nicoflow productivity platform
-  title: Nicoflow API
-  version: "1.0"
 paths:
   /ai/sessions:
     get:
@@ -1111,19 +1093,6 @@ paths:
       summary: Lemon Squeezy webhook
       tags:
       - billing
-  /health:
-    get:
-      description: Returns 200 if the server is running
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/swaggertypes.HealthResponse'
-      summary: Health check
-      tags:
-      - health
   /inbox:
     get:
       description: Returns all unscheduled tasks (project_id IS NULL) for the authenticated
@@ -1720,10 +1689,4 @@ paths:
       summary: WebSocket upgrade
       tags:
       - websocket
-securityDefinitions:
-  BearerAuth:
-    description: 'Enter: Bearer <token>'
-    in: header
-    name: Authorization
-    type: apiKey
 swagger: "2.0"
