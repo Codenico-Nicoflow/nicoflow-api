@@ -3,20 +3,20 @@ package middleware
 import (
 	"net/http"
 
-	"github.com/gin-gonic/gin"
-
-	"github.com/nicoflow/nicoflow-api/internal/response"
+	"github.com/nicoflow/nicoflow-api/internal/apperror"
+	"github.com/nicoflow/nicoflow-api/pkg/respond"
 )
 
-// PlanEnforcer rejects free-tier users from routes that require a paid plan.
-func PlanEnforcer(requiredTier string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		plan := c.GetString(ContextPlan)
-		if plan != requiredTier {
-			response.RespondError(c, http.StatusForbidden, response.ErrPlanLimitExceeded, "plan upgrade required")
-			c.Abort()
-			return
-		}
-		c.Next()
+// PlanEnforcer rejects users whose plan does not match requiredTier.
+// Must be placed after Auth middleware so PlanFromCtx is populated.
+func PlanEnforcer(requiredTier string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if PlanFromCtx(r.Context()) != requiredTier {
+				respond.Error(w, http.StatusForbidden, apperror.ErrPlanLimitExceeded, "plan upgrade required")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
 	}
 }
