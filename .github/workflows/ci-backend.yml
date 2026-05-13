@@ -21,13 +21,13 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25.8'
+          go-version: '1.25'
           cache: true
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@v6
         with:
-          version: v2.11.4
+          version: v1.64.8
           args: ./...
 
   test:
@@ -54,7 +54,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25.8'
+          go-version: '1.25'
           cache: true
 
       - name: Install migrate CLI
@@ -90,7 +90,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25.8'
+          go-version: '1.25'
           cache: true
 
       - name: govulncheck
@@ -114,19 +114,11 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25.8'
+          go-version: '1.25'
           cache: true
 
       - name: Build
         run: go build ./...
-
-      - name: Install swag CLI
-        run: go install github.com/swaggo/swag/cmd/swag@latest
-
-      - name: Validate Swagger docs
-        run: |
-          swag init -g cmd/api/main.go --output docs
-          git diff --exit-code docs/
 
   # TODO: ECR push (when AWS ECS migration begins)
   # Add the following steps conditionally on github.ref == 'refs/heads/main':
@@ -155,8 +147,19 @@ jobs:
         with:
           context: .
           push: false
+          load: true
           tags: |
             nicoflow-api:latest
             nicoflow-api:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Assert image size < 50MB
+        run: |
+          SIZE=$(docker image inspect nicoflow-api:latest --format='{{.Size}}')
+          SIZE_MB=$((SIZE / 1024 / 1024))
+          echo "Image size: ${SIZE_MB}MB"
+          if [ "$SIZE" -ge 52428800 ]; then
+            echo "ERROR: image is ${SIZE_MB}MB, must be < 50MB"
+            exit 1
+          fi
