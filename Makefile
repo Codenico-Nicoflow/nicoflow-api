@@ -1,4 +1,7 @@
-.PHONY: dev build test lint docs migrate-up migrate-down migrate-down-one migrate-version migrate-create migrate-force
+.PHONY: dev build test lint docker-up docker-down docker-migrate-up \
+        migrate-up migrate-down migrate-down-all migrate-version migrate-create migrate-force
+
+DOCKER_DATABASE_URL ?= postgres://nicoflow:nicoflow@localhost:5432/nicoflow?sslmode=disable
 
 ## Development
 
@@ -14,11 +17,16 @@ test:
 lint:
 	golangci-lint run ./...
 
-## Documentation
+## Docker Compose
 
-docs:
-	$(HOME)/go/bin/swag init -g cmd/api/main.go --output docs
-	$(HOME)/go/bin/swag fmt
+docker-up:
+	docker compose up -d
+
+docker-down:
+	docker compose down
+
+docker-migrate-up:
+	migrate -path migrations -database "$(DOCKER_DATABASE_URL)" up
 
 ## Database migrations (requires DATABASE_URL env var, except migrate-create)
 
@@ -26,10 +34,10 @@ migrate-up:
 	migrate -path migrations -database "$$DATABASE_URL" up
 
 migrate-down:
-	migrate -path migrations -database "$$DATABASE_URL" down
-
-migrate-down-one:
 	migrate -path migrations -database "$$DATABASE_URL" down 1
+
+migrate-down-all:
+	migrate -path migrations -database "$$DATABASE_URL" down
 
 migrate-version:
 	migrate -path migrations -database "$$DATABASE_URL" version

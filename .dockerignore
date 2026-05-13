@@ -1,8 +1,9 @@
 .git/
 .env*
+!.env.example
 **/*_test.go
-*.md
 coverage*
 tmp/
 bin/
 .github/
+docs/

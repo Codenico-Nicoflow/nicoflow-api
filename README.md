@@ -1,6 +1,6 @@
 # nicoflow-api
 
-Go + Gin REST API for the Nicoflow platform.
+Go REST API for the Nicoflow platform.
 
 **Base URL:** `https://api.nicoflow.com/v1`
 **WebSocket:** `wss://api.nicoflow.com/v1/ws`
@@ -12,7 +12,7 @@ Go + Gin REST API for the Nicoflow platform.
 | Layer | Technology |
 |---|---|
 | Language | Go 1.25 |
-| Framework | Gin |
+| Router | Chi v5 |
 | Database | PostgreSQL 15 (Render Managed) |
 | Migrations | golang-migrate |
 | File storage | AWS S3 (`nicoflow-attachments`) |
@@ -35,16 +35,22 @@ Go + Gin REST API for the Nicoflow platform.
 
 Copy and fill in before running locally:
 
+Copy `.env.example` to `.env` and fill in secrets:
+
 ```bash
-DB_URL=                  # Postgres connection URL
-JWT_SECRET=              # 256-bit HS256 signing secret
-LS_WEBHOOK_SECRET=       # Lemon Squeezy HMAC webhook secret
-AWS_ACCESS_KEY_ID=       # S3 access
-AWS_SECRET_ACCESS_KEY=   # S3 access
-S3_BUCKET_NAME=nicoflow-attachments
-CORS_ORIGINS=            # Comma-separated allowed origins
-APP_ENV=development      # development | staging | production
+DATABASE_URL=            # Postgres connection URL (pgx DSN)
+JWT_SECRET=              # HS256 signing secret — min 32 bytes
+JWT_EXPIRY=15m
+REFRESH_TOKEN_EXPIRY=168h
 PORT=8080
+APP_ENV=development
+LOG_LEVEL=info
+CORS_ORIGINS=            # Comma-separated allowed origins
+LS_WEBHOOK_SECRET=       # Lemon Squeezy HMAC webhook secret
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=       # S3 access key
+AWS_SECRET_ACCESS_KEY=   # S3 secret key
+S3_BUCKET_NAME=nicoflow-attachments
 ```
 
 ---
@@ -70,23 +76,17 @@ make lint
 
 ## Local Development with Docker
 
-The easiest way to run the full stack locally (API + Postgres):
+The full stack (API + Postgres + MinIO) via Docker Compose:
 
 ```bash
-cp .env.example .env        # fill in secrets
-docker compose up --build   # starts postgres + api on :8080
-docker compose down -v      # tear down including volumes
+cp .env.example .env    # fill in secrets
+make docker-up          # starts postgres + minio + api on :8080
+curl http://localhost:8080/v1/health   # → 200 {"status":"ok"}
+make docker-migrate-up  # apply all migrations against docker postgres
+make docker-down        # tear down
 ```
 
-The `DB_URL` in `.env` should point to the compose postgres service:
-```
-DB_URL=postgres://nicoflow:nicoflow@postgres:5432/nicoflow?sslmode=disable
-```
-
-After the stack is up, run migrations:
-```bash
-make migrate-up
-```
+`DATABASE_URL` inside the container is automatically set to `postgres://nicoflow:nicoflow@postgres:5432/nicoflow?sslmode=disable` by docker-compose.yml — no manual editing required.
 
 ---
 
@@ -96,24 +96,30 @@ make migrate-up
 # Apply all pending migrations
 make migrate-up
 
-# Roll back all (dev)
+# Roll back ONE step (safe for production)
 make migrate-down
 
-# Roll back one step (prod-safe)
-make migrate-down-one
+# Roll back ALL steps (dev/reset only)
+make migrate-down-all
 
-# Show current version
+# Show current version + dirty state
 make migrate-version
 
 # Create new migration pair
 make migrate-create name=add_notes_to_users
 
-# Force-set version (use when a migration fails mid-way)
+# Force-set version (use when a migration fails mid-way in dev)
 make migrate-force version=5
+
+# Run against the local Docker Compose postgres
+make docker-migrate-up
 ```
 
 Migration files live in `migrations/`. Convention: `{seq}_{description}.up.sql` / `.down.sql`.
-**Never modify existing migration files** — always add a new one.
+
+> **Golden Rule: never modify a deployed migration file.**
+> Once a migration has been applied to any environment (staging or production), it is immutable.
+> Always add a new numbered `.up.sql` / `.down.sql` pair — never edit an existing one.
 
 ---
 
@@ -122,88 +128,57 @@ Migration files live in `migrations/`. Convention: `{seq}_{description}.up.sql` 
 ```
 nicoflow-api/
 ├── cmd/
-│   └── server/
-│       ├── main.go          # Entry point — wires repos → services → handlers → router
-│       └── stubs.go         # Nil repo stubs for compilation (replace with pgx impls)
+│   └── api/
+│       └── main.go          # Thin entrypoint — load config, init DB, start server
 │
 ├── internal/
 │   ├── config/
 │   │   └── config.go        # Typed config loaded from env vars
 │   │
-│   ├── model/               # Shared Go structs (1:1 with DB tables)
-│   │   ├── user.go
-│   │   ├── refresh_token.go
-│   │   ├── area.go
-│   │   ├── project.go
-│   │   ├── task.go
-│   │   ├── subtask.go
-│   │   ├── user_plan.go
-│   │   ├── webhook_event.go
-│   │   ├── ai_session.go
-│   │   ├── ai_message.go
-│   │   └── ai_usage_monthly.go
+│   ├── db/                  # pgxpool init
 │   │
-│   ├── repository/          # Data access interfaces (DB only — no business logic)
-│   │   ├── user_repo.go
-│   │   ├── refresh_token_repo.go
-│   │   ├── area_repo.go
-│   │   ├── project_repo.go
-│   │   ├── task_repo.go
-│   │   ├── subtask_repo.go
-│   │   ├── user_plan_repo.go
-│   │   ├── webhook_event_repo.go
-│   │   ├── ai_session_repo.go
-│   │   ├── ai_message_repo.go
-│   │   └── ai_usage_monthly_repo.go
+│   ├── handler/
+│   │   ├── health.go        # GET /v1/health
+│   │   └── router.go        # Chi router wiring — all routes registered here
 │   │
-│   ├── service/             # Business logic (no HTTP, no *gin.Context)
-│   │   ├── auth_service.go
-│   │   ├── area_service.go
-│   │   ├── project_service.go
-│   │   ├── task_service.go
-│   │   ├── subtask_service.go
-│   │   ├── inbox_service.go
-│   │   ├── time_spread_service.go
-│   │   ├── user_plan_service.go
-│   │   ├── billing_service.go
-│   │   ├── attachment_service.go
-│   │   ├── ai_session_service.go
-│   │   ├── ai_message_service.go
-│   │   └── ws_service.go
-│   │
-│   ├── handler/             # HTTP layer only — bind request, call service, return response
-│   │   ├── health.go
-│   │   ├── auth.go
-│   │   ├── areas.go
-│   │   ├── projects.go
-│   │   ├── tasks.go
-│   │   ├── subtasks.go
-│   │   ├── inbox.go
-│   │   ├── time_spread.go
-│   │   ├── user_plan.go
-│   │   ├── billing.go
-│   │   ├── attachments.go
-│   │   ├── ai_session.go
-│   │   ├── ai_message.go
-│   │   └── ws.go
+│   ├── domain/              # Business logic grouped by domain
+│   │   ├── auth/            # handler.go, service.go, repository.go, types.go
+│   │   ├── area/
+│   │   ├── project/
+│   │   ├── task/
+│   │   ├── bucket/
+│   │   ├── ai/
+│   │   └── billing/
 │   │
 │   ├── middleware/
-│   │   ├── request_id.go    # Attach X-Request-ID
-│   │   ├── logger.go        # Structured JSON request log
-│   │   ├── cors.go          # CORS policy per environment
-│   │   ├── auth.go          # JWT validation → inject userID + plan into context
-│   │   └── plan_enforcer.go # Free-tier limit enforcement on write routes
+│   │   ├── auth.go          # JWT → userID + plan into context
+│   │   ├── cors.go
+│   │   ├── logger.go        # zerolog structured request log
+│   │   ├── plan_enforcer.go
+│   │   ├── ratelimit.go     # IP + user token-bucket limiters
+│   │   ├── recover.go       # panic → 500
+│   │   └── request_id.go    # X-Request-ID injection
 │   │
-│   ├── response/
-│   │   └── response.go      # RespondOK, RespondCreated, RespondError + error code constants
+│   ├── apperror/
+│   │   └── errors.go        # AppError type + 30 typed error code constants
 │   │
-│   └── ws/
-│       ├── hub.go           # Connection registry + broadcast loop
-│       └── client.go        # Per-connection read/write pumps
+│   ├── storage/
+│   │   └── s3.go            # S3 presigned URL client (stub until E-024)
+│   │
+│   ├── ws/
+│   │   ├── hub.go
+│   │   ├── client.go
+│   │   └── events.go        # Typed WS event constants + Event envelope
+│   │
+│   └── testutil/            # Shared test helpers + DB setup
 │
-├── migrations/              # golang-migrate SQL files
-├── api/                     # OpenAPI spec
-├── .github/workflows/       # CI — lint + test + security
+├── pkg/
+│   ├── respond/             # JSON envelope helpers (respond.JSON, respond.Error)
+│   ├── jwtutil/             # JWT HS256 sign/verify (stub until E-009)
+│   └── hashutil/            # bcrypt helpers (stub until E-009)
+│
+├── migrations/              # golang-migrate SQL files (001–013)
+├── .github/workflows/       # CI — lint, test, security, build, docker-build
 ├── .golangci.yml
 ├── .air.toml
 ├── Makefile
@@ -231,9 +206,9 @@ nicoflow-api/
 - Repos wrap errors with `fmt.Errorf("RepoName.Method: %w", err)` and return them — they never log
 
 ### Context
-- `gin.Context` — handlers only. Use it for: request body, headers, URL params, writing responses
-- `context.Context` — services and repos. Use it for: DB queries, cancellation, timeouts
-- Bridge between them: `c.Request.Context()` — pass this from handler into service/repo so DB queries abort if the client disconnects
+- `context.Context` — always the first parameter for any function doing I/O
+- Extract from request via `r.Context()` in handlers; propagate down to service and repo
+- DB queries abort automatically if the client disconnects
 
 ### SQL
 - Always list columns explicitly in SELECT — never `SELECT *`
@@ -248,7 +223,7 @@ nicoflow-api/
 | Layer | May call | Never |
 |---|---|---|
 | `handler` | `service` | `repository` directly, `*sql.DB` |
-| `service` | `repository` | `*gin.Context`, HTTP status codes |
+| `service` | `repository` | `http.ResponseWriter`, HTTP status codes |
 | `repository` | DB only | Business logic, call `service` |
 | `middleware` | `service` (sparingly) | Business logic |
 
@@ -410,7 +385,7 @@ GitHub Actions on every push/PR to `staging` and `main`:
 2. `go test ./... -race` — tests with race detector
 3. `gosec` + `govulncheck` — security scans
 4. `go build ./...` — binary compilation
-5. `docker build` — image validation (< 20MB target)
+5. `docker build` — distroless image smoke test (< 50MB assertion)
 
 See `.github/workflows/ci-backend.yml`.
 

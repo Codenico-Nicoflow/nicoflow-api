@@ -35,6 +35,13 @@ services:
   api:
     build: .
     env_file: .env
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      - PORT=8080
+      - AWS_REGION=us-east-1
+      - AWS_ENDPOINT=http://minio:9000
+      - AWS_ACCESS_KEY_ID=${MINIO_ACCESS_KEY}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_SECRET_KEY}
     depends_on:
       postgres:
         condition: service_healthy
