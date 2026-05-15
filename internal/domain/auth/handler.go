@@ -11,10 +11,16 @@ import (
 )
 
 // Handler handles HTTP requests for the auth and user management domain.
-type Handler struct{ svc Service }
+type Handler struct {
+	svc          Service
+	secureCookie bool
+}
 
 // NewHandler creates a new auth Handler.
-func NewHandler(svc Service) *Handler { return &Handler{svc: svc} }
+// secureCookie should be false in development (http://localhost) and true in staging/production.
+func NewHandler(svc Service, secureCookie bool) *Handler {
+	return &Handler{svc: svc, secureCookie: secureCookie}
+}
 
 // POST /v1/auth/register
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
@@ -33,7 +39,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	setRefreshCookie(w, resp.RefreshToken)
+	h.setRefreshCookie(w, resp.RefreshToken)
 	respond.JSON(w, http.StatusCreated, resp)
 }
 
@@ -51,7 +57,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	setRefreshCookie(w, resp.RefreshToken)
+	h.setRefreshCookie(w, resp.RefreshToken)
 	respond.JSON(w, http.StatusOK, resp)
 }
 
@@ -76,7 +82,7 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	setRefreshCookie(w, resp.RefreshToken)
+	h.setRefreshCookie(w, resp.RefreshToken)
 	respond.JSON(w, http.StatusOK, resp)
 }
 
@@ -93,7 +99,7 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clearRefreshCookie(w)
+	h.clearRefreshCookie(w)
 	respond.NoContent(w)
 }
 
@@ -106,7 +112,7 @@ func (h *Handler) LogoutAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clearRefreshCookie(w)
+	h.clearRefreshCookie(w)
 	respond.NoContent(w)
 }
 
@@ -180,7 +186,7 @@ func (h *Handler) DeleteMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clearRefreshCookie(w)
+	h.clearRefreshCookie(w)
 	respond.NoContent(w)
 }
 
@@ -231,27 +237,27 @@ func (h *Handler) UpdateNotificationPreferences(w http.ResponseWriter, r *http.R
 }
 
 // setRefreshCookie sets the HttpOnly refresh token cookie per SPEC §3.5.
-func setRefreshCookie(w http.ResponseWriter, rawToken string) {
+func (h *Handler) setRefreshCookie(w http.ResponseWriter, rawToken string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "refresh_token",
 		Value:    rawToken,
 		Path:     "/v1/auth/refresh-token",
 		MaxAge:   604800,
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   h.secureCookie,
 		SameSite: http.SameSiteStrictMode,
 	})
 }
 
 // clearRefreshCookie expires the refresh token cookie.
-func clearRefreshCookie(w http.ResponseWriter) {
+func (h *Handler) clearRefreshCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "refresh_token",
 		Value:    "",
 		Path:     "/v1/auth/refresh-token",
 		MaxAge:   -1,
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   h.secureCookie,
 		SameSite: http.SameSiteStrictMode,
 	})
 }

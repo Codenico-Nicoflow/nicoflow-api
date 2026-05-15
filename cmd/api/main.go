@@ -52,9 +52,10 @@ func main() {
 	// Auth domain — fully wired.
 	authRepo := auth.NewRepository(pool)
 	authSvc := auth.NewService(authRepo, cfg)
+	secureCookie := cfg.AppEnv == "production" || cfg.AppEnv == "staging"
 
 	handlers := handler.Handlers{
-		Auth:    auth.NewHandler(authSvc),
+		Auth:    auth.NewHandler(authSvc, secureCookie),
 		Area:    area.NewHandler(nil),
 		Project: project.NewHandler(nil),
 		Task:    task.NewHandler(nil),
