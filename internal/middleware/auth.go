@@ -5,24 +5,17 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/golang-jwt/jwt/v5"
-
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
+	"github.com/nicoflow/nicoflow-api/pkg/jwtutil"
 	"github.com/nicoflow/nicoflow-api/pkg/respond"
 )
 
 type ctxKeyUserID struct{}
 type ctxKeyPlan struct{}
+type ctxKeyEmail struct{}
 
-type claims struct {
-	UserID string `json:"userId"`
-	Plan   string `json:"plan"`
-	jwt.RegisteredClaims
-}
-
-// Auth validates the Bearer JWT and injects userID + plan into the request context.
+// Auth validates the Bearer JWT and injects userID, email, and plan into the request context.
 func Auth(jwtSecret string) func(http.Handler) http.Handler {
-	key := []byte(jwtSecret)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			header := r.Header.Get("Authorization")
@@ -32,25 +25,15 @@ func Auth(jwtSecret string) func(http.Handler) http.Handler {
 			}
 			tokenStr := strings.TrimPrefix(header, "Bearer ")
 
-			parsed, err := jwt.ParseWithClaims(tokenStr, &claims{}, func(t *jwt.Token) (interface{}, error) {
-				if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-					return nil, jwt.ErrSignatureInvalid
-				}
-				return key, nil
-			})
-			if err != nil || !parsed.Valid {
+			claims, err := jwtutil.Parse(tokenStr, jwtSecret)
+			if err != nil {
 				respond.Error(w, http.StatusUnauthorized, apperror.ErrInvalidToken, "invalid or expired token")
 				return
 			}
 
-			cl, ok := parsed.Claims.(*claims)
-			if !ok || cl.UserID == "" {
-				respond.Error(w, http.StatusUnauthorized, apperror.ErrInvalidToken, "invalid token claims")
-				return
-			}
-
-			ctx := context.WithValue(r.Context(), ctxKeyUserID{}, cl.UserID)
-			ctx = context.WithValue(ctx, ctxKeyPlan{}, cl.Plan)
+			ctx := context.WithValue(r.Context(), ctxKeyUserID{}, claims.Subject)
+			ctx = context.WithValue(ctx, ctxKeyPlan{}, claims.Plan)
+			ctx = context.WithValue(ctx, ctxKeyEmail{}, claims.Email)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -66,4 +49,10 @@ func UserIDFromCtx(ctx context.Context) string {
 func PlanFromCtx(ctx context.Context) string {
 	plan, _ := ctx.Value(ctxKeyPlan{}).(string)
 	return plan
+}
+
+// EmailFromCtx returns the authenticated user's email from the request context.
+func EmailFromCtx(ctx context.Context) string {
+	email, _ := ctx.Value(ctxKeyEmail{}).(string)
+	return email
 }

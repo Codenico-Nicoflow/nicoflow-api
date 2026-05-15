@@ -49,10 +49,13 @@ func main() {
 	}
 	defer pool.Close()
 
-	// Domain handlers — services and repositories wired per story.
-	// Stubs accept nil service; handler methods return 501 without touching svc.
+	// Auth domain — fully wired.
+	authRepo := auth.NewRepository(pool)
+	authSvc := auth.NewService(authRepo, cfg)
+	secureCookie := cfg.AppEnv == "production" || cfg.AppEnv == "staging"
+
 	handlers := handler.Handlers{
-		Auth:    auth.NewHandler(nil),
+		Auth:    auth.NewHandler(authSvc, secureCookie),
 		Area:    area.NewHandler(nil),
 		Project: project.NewHandler(nil),
 		Task:    task.NewHandler(nil),

@@ -1,12 +1,316 @@
 package auth
 
-import "github.com/jackc/pgx/v5/pgxpool"
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"time"
 
-// Repository defines the auth data access interface.
-// Methods are added per story (E-009).
-type Repository interface{}
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
-type pgRepo struct{ db *pgxpool.Pool }
+	"github.com/nicoflow/nicoflow-api/internal/apperror"
+)
 
-// NewRepository creates a new postgres-backed auth repository.
-func NewRepository(db *pgxpool.Pool) Repository { return &pgRepo{db: db} }
+// Repository is the data-access interface for the auth domain.
+// Defined here (at the consumer boundary) per architecture conventions.
+type Repository interface {
+	CreateUser(ctx context.Context, email, username, passwordHash string) (User, error)
+	GetUserByEmail(ctx context.Context, email string) (User, error)
+	GetUserByID(ctx context.Context, userID string) (User, error)
+	UpdateUser(ctx context.Context, userID string, req UpdateMeRequest) (User, error)
+	SoftDeleteUser(ctx context.Context, userID string) error
+
+	StoreRefreshToken(ctx context.Context, userID, tokenHash, tokenFingerprint string, expiresAt time.Time) error
+	GetRefreshTokenByFingerprint(ctx context.Context, fingerprint string) (RefreshToken, error)
+	DeleteRefreshToken(ctx context.Context, fingerprint string) (int64, error)
+	DeleteAllRefreshTokens(ctx context.Context, userID string) error
+
+	StorePasswordResetToken(ctx context.Context, userID, tokenHash, tokenFingerprint string, expiresAt time.Time) error
+	GetPasswordResetTokenByFingerprint(ctx context.Context, fingerprint string) (PasswordResetToken, error)
+	MarkPasswordResetTokenUsed(ctx context.Context, fingerprint string) error
+	UpdatePassword(ctx context.Context, userID, passwordHash string) error
+}
+
+type pgRepo struct {
+	db *pgxpool.Pool
+}
+
+// NewRepository returns a postgres-backed Repository.
+func NewRepository(db *pgxpool.Pool) Repository {
+	return &pgRepo{db: db}
+}
+
+func (r *pgRepo) CreateUser(ctx context.Context, email, username, passwordHash string) (User, error) {
+	id := uuid.New().String()
+	var u User
+	err := r.db.QueryRow(ctx, `
+		INSERT INTO users (id, email, username, password_hash, theme, status, plan, timezone)
+		VALUES (@id, @email, @username, @passwordHash, 'light', 'regular', 'free', 'UTC')
+		RETURNING id, email, COALESCE(username,''), password_hash,
+		          COALESCE(first_name,''), COALESCE(last_name,''),
+		          theme, COALESCE(image_url,''), status, plan, timezone,
+		          created_at, updated_at`,
+		pgx.NamedArgs{
+			"id":           id,
+			"email":        email,
+			"username":     username,
+			"passwordHash": passwordHash,
+		},
+	).Scan(
+		&u.ID, &u.Email, &u.Username, &u.PasswordHash,
+		&u.FirstName, &u.LastName,
+		&u.Theme, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
+		&u.CreatedAt, &u.UpdatedAt,
+	)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return User{}, apperror.New(http.StatusConflict, apperror.ErrEmailAlreadyExists, "email already in use")
+		}
+		return User{}, fmt.Errorf("auth.CreateUser: %w", err)
+	}
+	return u, nil
+}
+
+func (r *pgRepo) GetUserByEmail(ctx context.Context, email string) (User, error) {
+	var u User
+	err := r.db.QueryRow(ctx, `
+		SELECT id, email, COALESCE(username,''), password_hash,
+		       COALESCE(first_name,''), COALESCE(last_name,''),
+		       theme, COALESCE(image_url,''), status, plan, timezone,
+		       created_at, updated_at
+		FROM users
+		WHERE email = @email AND deleted_at IS NULL`,
+		pgx.NamedArgs{"email": email},
+	).Scan(
+		&u.ID, &u.Email, &u.Username, &u.PasswordHash,
+		&u.FirstName, &u.LastName,
+		&u.Theme, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
+		&u.CreatedAt, &u.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return User{}, apperror.New(http.StatusNotFound, apperror.ErrUserNotFound, "user not found")
+		}
+		return User{}, fmt.Errorf("auth.GetUserByEmail: %w", err)
+	}
+	return u, nil
+}
+
+func (r *pgRepo) GetUserByID(ctx context.Context, userID string) (User, error) {
+	var u User
+	err := r.db.QueryRow(ctx, `
+		SELECT id, email, COALESCE(username,''), password_hash,
+		       COALESCE(first_name,''), COALESCE(last_name,''),
+		       theme, COALESCE(image_url,''), status, plan, timezone,
+		       created_at, updated_at
+		FROM users
+		WHERE id = @userID AND deleted_at IS NULL`,
+		pgx.NamedArgs{"userID": userID},
+	).Scan(
+		&u.ID, &u.Email, &u.Username, &u.PasswordHash,
+		&u.FirstName, &u.LastName,
+		&u.Theme, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
+		&u.CreatedAt, &u.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return User{}, apperror.New(http.StatusNotFound, apperror.ErrUserNotFound, "user not found")
+		}
+		return User{}, fmt.Errorf("auth.GetUserByID: %w", err)
+	}
+	return u, nil
+}
+
+func (r *pgRepo) UpdateUser(ctx context.Context, userID string, req UpdateMeRequest) (User, error) {
+	var u User
+	err := r.db.QueryRow(ctx, `
+		UPDATE users SET
+		  first_name  = COALESCE(@firstName,  first_name),
+		  last_name   = COALESCE(@lastName,   last_name),
+		  email       = COALESCE(@email,       email),
+		  timezone    = COALESCE(@timezone,    timezone),
+		  theme       = COALESCE(@theme,       theme),
+		  updated_at  = NOW()
+		WHERE id = @userID AND deleted_at IS NULL
+		RETURNING id, email, COALESCE(username,''), password_hash,
+		          COALESCE(first_name,''), COALESCE(last_name,''),
+		          theme, COALESCE(image_url,''), status, plan, timezone,
+		          created_at, updated_at`,
+		pgx.NamedArgs{
+			"firstName": req.FirstName,
+			"lastName":  req.LastName,
+			"email":     req.Email,
+			"timezone":  req.Timezone,
+			"theme":     req.Theme,
+			"userID":    userID,
+		},
+	).Scan(
+		&u.ID, &u.Email, &u.Username, &u.PasswordHash,
+		&u.FirstName, &u.LastName,
+		&u.Theme, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
+		&u.CreatedAt, &u.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return User{}, apperror.New(http.StatusNotFound, apperror.ErrUserNotFound, "user not found")
+		}
+		if isUniqueViolation(err) {
+			return User{}, apperror.New(http.StatusConflict, apperror.ErrConflict, "email already in use")
+		}
+		return User{}, fmt.Errorf("auth.UpdateUser: %w", err)
+	}
+	return u, nil
+}
+
+func (r *pgRepo) SoftDeleteUser(ctx context.Context, userID string) error {
+	tag, err := r.db.Exec(ctx,
+		`UPDATE users SET deleted_at = NOW() WHERE id = @userID AND deleted_at IS NULL`,
+		pgx.NamedArgs{"userID": userID},
+	)
+	if err != nil {
+		return fmt.Errorf("auth.SoftDeleteUser: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return apperror.New(http.StatusNotFound, apperror.ErrUserNotFound, "user not found")
+	}
+	return nil
+}
+
+func (r *pgRepo) StoreRefreshToken(ctx context.Context, userID, tokenHash, tokenFingerprint string, expiresAt time.Time) error {
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO refresh_tokens (id, user_id, token_hash, token_fingerprint, expires_at)
+		VALUES (@id, @userID, @tokenHash, @tokenFingerprint, @expiresAt)`,
+		pgx.NamedArgs{
+			"id":               uuid.New().String(),
+			"userID":           userID,
+			"tokenHash":        tokenHash,
+			"tokenFingerprint": tokenFingerprint,
+			"expiresAt":        expiresAt,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("auth.StoreRefreshToken: %w", err)
+	}
+	return nil
+}
+
+func (r *pgRepo) GetRefreshTokenByFingerprint(ctx context.Context, fingerprint string) (RefreshToken, error) {
+	var rt RefreshToken
+	err := r.db.QueryRow(ctx, `
+		SELECT id, user_id, token_hash, token_fingerprint, expires_at, created_at
+		FROM refresh_tokens
+		WHERE token_fingerprint = @fingerprint AND expires_at > NOW()`,
+		pgx.NamedArgs{"fingerprint": fingerprint},
+	).Scan(&rt.ID, &rt.UserID, &rt.TokenHash, &rt.TokenFingerprint, &rt.ExpiresAt, &rt.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return RefreshToken{}, apperror.New(http.StatusUnauthorized, apperror.ErrInvalidToken, "invalid or expired refresh token")
+		}
+		return RefreshToken{}, fmt.Errorf("auth.GetRefreshTokenByFingerprint: %w", err)
+	}
+	return rt, nil
+}
+
+// DeleteRefreshToken deletes a single token by fingerprint and returns rows affected.
+// Caller checks 0 rows to detect token reuse.
+func (r *pgRepo) DeleteRefreshToken(ctx context.Context, fingerprint string) (int64, error) {
+	tag, err := r.db.Exec(ctx,
+		`DELETE FROM refresh_tokens WHERE token_fingerprint = @fingerprint`,
+		pgx.NamedArgs{"fingerprint": fingerprint},
+	)
+	if err != nil {
+		return 0, fmt.Errorf("auth.DeleteRefreshToken: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+func (r *pgRepo) DeleteAllRefreshTokens(ctx context.Context, userID string) error {
+	_, err := r.db.Exec(ctx,
+		`DELETE FROM refresh_tokens WHERE user_id = @userID`,
+		pgx.NamedArgs{"userID": userID},
+	)
+	if err != nil {
+		return fmt.Errorf("auth.DeleteAllRefreshTokens: %w", err)
+	}
+	return nil
+}
+
+func (r *pgRepo) StorePasswordResetToken(ctx context.Context, userID, tokenHash, tokenFingerprint string, expiresAt time.Time) error {
+	// One active reset token per user at a time.
+	_, err := r.db.Exec(ctx,
+		`DELETE FROM password_reset_tokens WHERE user_id = @userID AND used_at IS NULL`,
+		pgx.NamedArgs{"userID": userID},
+	)
+	if err != nil {
+		return fmt.Errorf("auth.StorePasswordResetToken cleanup: %w", err)
+	}
+
+	_, err = r.db.Exec(ctx, `
+		INSERT INTO password_reset_tokens (id, user_id, token_hash, token_fingerprint, expires_at)
+		VALUES (@id, @userID, @tokenHash, @tokenFingerprint, @expiresAt)`,
+		pgx.NamedArgs{
+			"id":               uuid.New().String(),
+			"userID":           userID,
+			"tokenHash":        tokenHash,
+			"tokenFingerprint": tokenFingerprint,
+			"expiresAt":        expiresAt,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("auth.StorePasswordResetToken: %w", err)
+	}
+	return nil
+}
+
+func (r *pgRepo) GetPasswordResetTokenByFingerprint(ctx context.Context, fingerprint string) (PasswordResetToken, error) {
+	var prt PasswordResetToken
+	err := r.db.QueryRow(ctx, `
+		SELECT id, user_id, token_hash, token_fingerprint, expires_at, used_at, created_at
+		FROM password_reset_tokens
+		WHERE token_fingerprint = @fingerprint`,
+		pgx.NamedArgs{"fingerprint": fingerprint},
+	).Scan(&prt.ID, &prt.UserID, &prt.TokenHash, &prt.TokenFingerprint, &prt.ExpiresAt, &prt.UsedAt, &prt.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return PasswordResetToken{}, apperror.New(http.StatusUnauthorized, apperror.ErrInvalidToken, "invalid or expired reset token")
+		}
+		return PasswordResetToken{}, fmt.Errorf("auth.GetPasswordResetToken: %w", err)
+	}
+	return prt, nil
+}
+
+func (r *pgRepo) MarkPasswordResetTokenUsed(ctx context.Context, fingerprint string) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE password_reset_tokens SET used_at = NOW() WHERE token_fingerprint = @fingerprint`,
+		pgx.NamedArgs{"fingerprint": fingerprint},
+	)
+	if err != nil {
+		return fmt.Errorf("auth.MarkPasswordResetTokenUsed: %w", err)
+	}
+	return nil
+}
+
+func (r *pgRepo) UpdatePassword(ctx context.Context, userID, passwordHash string) error {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE users SET password_hash = @passwordHash, updated_at = NOW()
+		WHERE id = @userID AND deleted_at IS NULL`,
+		pgx.NamedArgs{"passwordHash": passwordHash, "userID": userID},
+	)
+	if err != nil {
+		return fmt.Errorf("auth.UpdatePassword: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return apperror.New(http.StatusNotFound, apperror.ErrUserNotFound, "user not found")
+	}
+	return nil
+}
+
+// isUniqueViolation checks for PostgreSQL unique constraint violation (error code 23505).
+func isUniqueViolation(err error) bool {
+	type pgErr interface{ SQLState() string }
+	var pg pgErr
+	return errors.As(err, &pg) && pg.SQLState() == "23505"
+}
