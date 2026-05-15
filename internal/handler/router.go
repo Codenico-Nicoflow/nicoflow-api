@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	chimw "github.com/go-chi/chi/v5/middleware"
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
 	"github.com/nicoflow/nicoflow-api/internal/config"
@@ -55,16 +54,15 @@ func New(cfg config.Config, h Handlers) http.Handler {
 	// Billing webhook — HMAC verified inside handler, no JWT
 	r.Post("/v1/billing/webhook", h.Billing.Webhook)
 
-	// Auth — stricter IP rate limit
+	// Auth — stricter per-endpoint IP rate limits
 	r.Route("/v1/auth", func(r chi.Router) {
-		r.Use(chimw.Maybe(mw.RateLimitIP(10, 5), func(r *http.Request) bool {
-			return r.Method == http.MethodPost
-		}))
-		r.Post("/register", h.Auth.Register)
-		r.Post("/login", h.Auth.Login)
+		r.With(mw.RateLimitIP(5, 5)).Post("/register", h.Auth.Register)
+		r.With(mw.RateLimitIP(10, 10)).Post("/login", h.Auth.Login)
 		r.Post("/refresh-token", h.Auth.Refresh)
-		r.Post("/forgot-password", h.Auth.ForgotPassword)
+		r.With(mw.RateLimitIP(3, 3)).Post("/forgot-password", h.Auth.ForgotPassword)
 		r.Post("/reset-password", h.Auth.ResetPassword)
+		// Biometric stubs — FIDO2/WebAuthn in v2
+		r.Post("/biometric/verify", h.Auth.BiometricVerify)
 	})
 
 	// ── Protected routes ───────────────────────────────────────────────────────
@@ -72,9 +70,10 @@ func New(cfg config.Config, h Handlers) http.Handler {
 		r.Use(mw.Auth(cfg.JWTSecret))
 		r.Use(mw.RateLimitUser(1000, 100))
 
-		// Auth — session management
+		// Auth — session management + biometric stub
 		r.Post("/auth/logout", h.Auth.Logout)
 		r.Post("/auth/logout-all", h.Auth.LogoutAll)
+		r.Post("/auth/biometric/register", h.Auth.BiometricRegister)
 
 		// User profile & settings
 		r.Get("/users/profile", h.Auth.GetProfile)

@@ -15,63 +15,45 @@ Keep replies concise. No fluff. For any third-party library, use the DocsExplore
 
 ## Tech Stack
 
-| Layer      | Choice                                       |
-| ---------- | -------------------------------------------- |
-| Language   | Go (latest stable)                           |
-| Router     | `gin` → migrating to `chi` (pending refactor) |
-| Database   | PostgreSQL 15 via `pgx/v5` + `pgxpool`       |
-| Migrations | `golang-migrate` — files in `migrations/`    |
-| Auth       | JWT HS256 (15 min) + bcrypt refresh tokens   |
-| Logging    | `zerolog`                                    |
-| Config     | env vars (loaded at startup)                 |
-| Hosting    | Render.com (port `3001` via `PORT` env var)  |
+| Layer      | Choice                                                    |
+| ---------- | --------------------------------------------------------- |
+| Language   | Go (latest stable)                                        |
+| Router     | `chi` v5                                                  |
+| Database   | PostgreSQL 15 via `pgx/v5` + `pgxpool`                    |
+| Migrations | `golang-migrate` — files in `migrations/`                 |
+| Auth       | JWT HS256 (15 min) + bcrypt refresh tokens + dual-hash    |
+| Email      | stdlib `net/smtp` via `SMTP_DSN` env var (Mailtrap)       |
+| Logging    | `zerolog`                                                 |
+| Config     | env vars (loaded at startup via `internal/config/`)       |
+| Hosting    | Render.com (port `3001` via `PORT` env var)               |
 
 ---
 
-## Current Package Structure (pre-refactor flat layout)
+## Package Structure (SPEC §8.2.1)
 
-The repo currently uses a **flat layout** under `internal/`:
-
-```
-internal/
-├── config/
-├── db/
-├── dto/          ← request/response DTOs
-├── handler/      ← HTTP handlers (one file per domain)
-├── middleware/   ← auth, cors, ratelimit, logging, requestid, recover
-├── model/        ← DB models / domain types
-├── repository/   ← SQL queries (one file per domain)
-├── response/     ← respond.JSON / respond.Error helpers
-├── service/      ← business logic (one file per domain)
-├── validations/  ← reusable input validation helpers
-└── ws/           ← WebSocket hub + client
-```
-
-## Target Package Structure (SPEC §8.2.1)
-
-The refactor will move to a **domain-grouped layout**:
+Domain-grouped layout — **currently active**:
 
 ```
 internal/
-├── config/
-├── db/
-├── middleware/
+├── config/         ← env-based Config struct (JWTExpiry, RefreshTokenExpiry, SMTPDsn, AppBaseURL, …)
+├── db/             ← pgxpool setup
+├── middleware/     ← auth, cors, ratelimit, logging, requestid, recover
 ├── domain/
-│   ├── auth/       (handler, service, repository, types)
-│   ├── user/
-│   ├── area/
-│   ├── project/
-│   ├── task/
-│   ├── bucket/
-│   ├── ai/
-│   └── billing/
-├── ws/
-├── storage/        ← S3 presigned URL logic
+│   ├── auth/       ← handler, service, repository, types (FULLY IMPLEMENTED — E-009)
+│   ├── area/       ← stub
+│   ├── project/    ← stub
+│   ├── task/       ← stub
+│   ├── bucket/     ← stub
+│   ├── ai/         ← stub
+│   └── billing/    ← stub
+├── ws/             ← WebSocket hub + client (stub)
+├── storage/        ← S3 presigned URL logic (stub)
 └── apperror/       ← AppError type + error code constants
 pkg/
-├── jwtutil/
-├── hashutil/
-└── respond/
+├── jwtutil/        ← Issue / Parse JWT HS256 (IMPLEMENTED)
+├── hashutil/       ← Hash / Compare bcrypt cost 12 (IMPLEMENTED)
+├── emailutil/      ← SendPasswordReset via SMTP (IMPLEMENTED)
+└── respond/        ← JSON response envelope
 ```
 
 ---
@@ -124,12 +106,19 @@ Never return raw Go errors to the client. Never use HTTP status codes directly a
 
 ## Auth & Security
 
-- JWT HS256, 15-min TTL, signed with `JWT_SECRET` env var (min 32 bytes).
-- Refresh tokens: 32-byte crypto/rand → hex string → **bcrypt hash stored** (cost 12). Raw token returned to client; hash stored in DB. Token rotation on every refresh; reuse detection revokes all tokens for the user.
+- JWT HS256, TTL from `JWT_EXPIRY` env (default 15 min), signed with `JWT_SECRET` env var (min 32 bytes).
+- JWT Claims: `{ sub: userID (string), email, plan ("free"|"pro"), iss: "nicoflow-api", exp, iat }`. Plan is read from the claim — **no DB call per request**.
+- **Refresh tokens — dual-hash pattern:**
+  - Generate 32-byte `crypto/rand` → hex string (64 chars) = raw token.
+  - `token_fingerprint` = `SHA-256(rawToken)` hex — stored in DB for O(1) lookup.
+  - `token_hash` = `bcrypt(rawToken, cost=12)` — stored in DB for tamper verification.
+  - Raw token returned to client in `AuthResponse.refreshToken` and as HttpOnly cookie.
+  - On refresh: lookup by fingerprint, bcrypt-compare, atomic delete-old/insert-new. 0 rows deleted → reuse detected → revoke all tokens for user.
+- **Password reset tokens** — same dual-hash pattern. 1-hour TTL. Marked `used_at` after consumption. Storing a new token purges prior unused tokens for the user.
 - Refresh cookie: `HttpOnly; Secure; SameSite=Strict; Path=/v1/auth/refresh-token; Max-Age=604800`.
-- JWT Claims: `{ sub: userID (string), email, plan ("free"|"pro"), iss: "nicoflow-api", exp, iat }`.
-- Plan is read from the JWT `plan` claim — **no DB call per request**.
-- Row-level isolation: every repo query that touches user data must filter by `user_id`.
+- Password change (`reset-password`) revokes all active refresh tokens.
+- Soft delete (`DELETE /v1/users/me`) sets `deleted_at` and revokes all refresh tokens.
+- Row-level isolation: every repo query that touches user data must filter by `user_id` or `deleted_at IS NULL`.
 
 ### Middleware chain order
 
@@ -191,6 +180,28 @@ Check via `COUNT(*)` before insert. Plan is read from `ctx` Claims — no DB cal
 
 ---
 
+## Per-Endpoint Security Checklist (apply to every story)
+
+Every endpoint — public or protected — must go through this before it ships:
+
+| Check | Detail |
+| ----- | ------ |
+| **Rate limiting** | Public write endpoints: `r.With(mw.RateLimitIP(n, n)).Post(...)`. Protected: `RateLimitUser` is global already. |
+| **Input validation** | Validate before any DB call. Return typed `apperror` code, never raw errors. |
+| **No user enumeration** | Login / forgot-password return the same 401/200 regardless of whether the user exists. |
+| **SQL injection** | All queries use `pgx.NamedArgs{}` — never string-concatenate SQL. |
+| **No raw errors to client** | Always `respond.Error(w, status, apperror.ErrXxx, msg)`. |
+| **Context propagation** | `ctx context.Context` is always the first param on every I/O function. |
+| **Row-level isolation** | Every repo query that touches user data must include `WHERE user_id = @userID`. |
+| **Bcrypt cost** | All passwords and opaque tokens hashed at cost 12. |
+| **Dual-hash pattern** | Opaque tokens (refresh, reset): SHA-256 fingerprint for DB lookup + bcrypt hash for verification. |
+| **Refresh token rotation** | On every refresh: delete old row, insert new. 0 rows deleted = reuse → revoke all. |
+| **Cookie security** | Refresh cookie: `HttpOnly; Secure; SameSite=Strict; Path=/v1/auth/refresh-token`. |
+| **Password change** | Must revoke all active refresh tokens. |
+| **Soft delete** | `deleted_at IS NULL` in all user queries. |
+
+---
+
 ## Go Conventions
 
 - No `any` type — ever. Use typed structs or generics.
@@ -204,20 +215,23 @@ Check via `COUNT(*)` before insert. Plan is read from `ctx` Claims — no DB cal
 
 ## Environment Variables
 
-| Variable                       | Description                                   |
-| ------------------------------ | --------------------------------------------- |
-| `DATABASE_URL`                 | PostgreSQL connection string                  |
-| `JWT_SECRET`                   | HS256 signing secret (min 32 bytes)           |
-| `JWT_EXPIRY`                   | e.g. `15m`                                    |
-| `REFRESH_TOKEN_EXPIRY`         | e.g. `168h`                                   |
-| `ALLOWED_ORIGINS`              | Comma-separated CORS origins                  |
-| `AWS_REGION`                   | S3 region                                     |
-| `AWS_ACCESS_KEY_ID`            | IAM key                                       |
-| `AWS_SECRET_ACCESS_KEY`        | IAM secret                                    |
-| `S3_BUCKET`                    | `nicoflow-attachments`                        |
-| `LEMON_SQUEEZY_WEBHOOK_SECRET` | HMAC secret for billing webhook               |
-| `APP_ENV`                      | `staging` \| `production`                     |
-| `PORT`                         | `3001` (set by Render automatically)          |
+| Variable               | Required | Description                                                                 |
+| ---------------------- | -------- | --------------------------------------------------------------------------- |
+| `DATABASE_URL`         | Yes      | PostgreSQL connection string                                                |
+| `JWT_SECRET`           | Yes      | HS256 signing secret (min 32 bytes, cryptographically random)               |
+| `PORT`                 | Yes      | HTTP port (set by Render automatically, e.g. `3001`)                        |
+| `JWT_EXPIRY`           | No       | Access token TTL (default `15m`)                                            |
+| `REFRESH_TOKEN_EXPIRY` | No       | Refresh token TTL (default `168h` = 7 days)                                 |
+| `SMTP_DSN`             | No       | SMTP connection string for password-reset email, e.g. `smtp://user:pass@smtp.mailtrap.io:587` |
+| `APP_BASE_URL`         | No       | Frontend URL for reset-password links, e.g. `https://app.nicoflow.app`     |
+| `CORS_ORIGINS`         | No       | Comma-separated allowed CORS origins                                        |
+| `APP_ENV`              | No       | `development` \| `staging` \| `production`                                  |
+| `LOG_LEVEL`            | No       | `debug` \| `info` \| `warn` \| `error` (default `info`)                     |
+| `AWS_REGION`           | No       | S3 region                                                                   |
+| `AWS_ACCESS_KEY_ID`    | No       | IAM key for S3                                                              |
+| `AWS_SECRET_ACCESS_KEY`| No       | IAM secret for S3                                                           |
+| `S3_BUCKET_NAME`       | No       | S3 bucket name (`nicoflow-attachments`)                                     |
+| `LS_WEBHOOK_SECRET`    | No       | HMAC-SHA256 secret for Lemon Squeezy webhook                                |
 
 ---
 

@@ -1628,21 +1628,38 @@ CREATE TABLE users (
   email         VARCHAR(255) NOT NULL UNIQUE,
   password_hash VARCHAR(255) NOT NULL,
   name          VARCHAR(255),
+  username      VARCHAR(20)  UNIQUE,
+  first_name    VARCHAR(100),
+  last_name     VARCHAR(100),
+  theme         VARCHAR(20)  NOT NULL DEFAULT 'light',
+  image_url     TEXT,
+  status        VARCHAR(20)  NOT NULL DEFAULT 'regular',
+  plan          VARCHAR(20)  NOT NULL DEFAULT 'free',
   timezone      VARCHAR(63)  NOT NULL DEFAULT 'UTC',
   created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
   updated_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
   deleted_at    TIMESTAMPTZ
 );
+
+CREATE INDEX idx_users_username ON users(username) WHERE username IS NOT NULL;
 ```
 
-| Field           | Notes                                                            |
-| --------------- | ---------------------------------------------------------------- |
-| `id`            | Application-generated ID (UUID / NanoID)                         |
-| `email`         | Unique login email — `UNIQUE` constraint provides implicit index |
-| `password_hash` | bcrypt-hashed (cost 12)                                          |
-| `name`          | Display name (nullable)                                          |
-| `timezone`      | IANA timezone string (e.g. `America/New_York`) for scheduling    |
-| `deleted_at`    | Soft-delete — `NULL` means active                                |
+| Field           | Notes                                                                    |
+| --------------- | ------------------------------------------------------------------------ |
+| `id`            | Application-generated UUID                                               |
+| `email`         | Unique login email — `UNIQUE` constraint provides implicit index          |
+| `password_hash` | bcrypt-hashed (cost 12)                                                  |
+| `username`      | 3–20 alphanumeric chars, unique across all users (added migration 014)   |
+| `first_name`    | Optional given name                                                      |
+| `last_name`     | Optional family name                                                     |
+| `theme`         | UI theme preference: `light` \| `dark`                                   |
+| `image_url`     | Avatar URL (nullable)                                                    |
+| `status`        | Account status: `regular` \| `premium`                                   |
+| `plan`          | Denormalised plan: `free` \| `pro` — kept in sync by billing webhook     |
+| `timezone`      | IANA timezone string (e.g. `America/New_York`) for scheduling            |
+| `deleted_at`    | Soft-delete — `NULL` means active                                        |
+
+> **`plan` denormalisation:** `users.plan` mirrors `user_plans.plan`. It is updated by the billing webhook handler alongside `user_plans`. The JWT `plan` claim is read from this column at token-issue time, avoiding a join to `user_plans` on every login/refresh.
 
 ---
 
@@ -1650,27 +1667,87 @@ CREATE TABLE users (
 
 ```sql
 CREATE TABLE refresh_tokens (
-  id         TEXT         NOT NULL PRIMARY KEY,
-  user_id    TEXT         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  token_hash VARCHAR(255) NOT NULL UNIQUE,
-  expires_at TIMESTAMPTZ  NOT NULL,
-  created_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+  id                TEXT         NOT NULL PRIMARY KEY,
+  user_id           TEXT         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash        VARCHAR(255) NOT NULL UNIQUE,
+  token_fingerprint VARCHAR(64)  UNIQUE,
+  expires_at        TIMESTAMPTZ  NOT NULL,
+  created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_refresh_tokens_user_id    ON refresh_tokens(user_id);
 CREATE INDEX idx_refresh_tokens_expires_at ON refresh_tokens(expires_at);
 ```
 
-| Field        | Notes                                                           |
-| ------------ | --------------------------------------------------------------- |
-| `token_hash` | SHA-256 hash of the raw token (raw token is never stored)       |
-| `expires_at` | 7-day TTL — explicit index for future expired-token cleanup job |
+| Field               | Notes                                                                        |
+| ------------------- | ---------------------------------------------------------------------------- |
+| `token_hash`        | bcrypt hash (cost 12) of the raw 32-byte hex token — used for verification   |
+| `token_fingerprint` | SHA-256 hex of the raw token — used for O(1) DB lookup (added migration 014) |
+| `expires_at`        | 7-day TTL — explicit index for expired-token cleanup                         |
 
-> **Rotation:** On `POST /v1/auth/refresh`, the old row is deleted and a new one is inserted. On logout, the row is deleted. Reuse detection: if the presented hash is not found (already rotated), all tokens for the user are revoked.
+> **Dual-hash pattern:** The raw token is never stored. Lookup uses `token_fingerprint` (SHA-256, fast). Verification uses `token_hash` (bcrypt, tamper-proof). This allows O(1) row lookup without scanning every hash.
+>
+> **Rotation:** On `POST /v1/auth/refresh-token`, the old row is atomically deleted (rows affected checked) and a new one inserted in the same request. If delete returns 0 rows the token was already consumed — reuse detected — all tokens for the user are revoked and 401 is returned. On logout, the fingerprint row is deleted. On `logout-all`, all rows for the user are deleted.
 
 ---
 
-#### 8.1.3 `areas`
+#### 8.1.3 `password_reset_tokens`
+
+```sql
+CREATE TABLE password_reset_tokens (
+  id                TEXT         NOT NULL PRIMARY KEY,
+  user_id           TEXT         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash        VARCHAR(255) NOT NULL UNIQUE,
+  token_fingerprint VARCHAR(64)  NOT NULL UNIQUE,
+  expires_at        TIMESTAMPTZ  NOT NULL,
+  used_at           TIMESTAMPTZ,
+  created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_prt_user_id    ON password_reset_tokens(user_id);
+CREATE INDEX idx_prt_expires_at ON password_reset_tokens(expires_at);
+```
+
+| Field               | Notes                                                               |
+| ------------------- | ------------------------------------------------------------------- |
+| `token_hash`        | bcrypt hash of the raw 32-byte hex token — used for verification    |
+| `token_fingerprint` | SHA-256 hex of the raw token — used for O(1) lookup                 |
+| `expires_at`        | 1-hour TTL from generation time                                     |
+| `used_at`           | Set when the token is consumed — prevents reuse                     |
+
+> **Flow:** `POST /v1/auth/forgot-password` generates a raw 32-byte token, hashes it, and stores the row. The raw token is embedded in the reset link emailed via SMTP (`SMTP_DSN` env var). `POST /v1/auth/reset-password` looks up by fingerprint, bcrypt-verifies, checks `used_at IS NULL` and `expires_at > NOW()`, updates the password, marks the token used, and revokes all refresh tokens for the user.
+>
+> **No user enumeration:** `forgot-password` always returns `200 OK` regardless of whether the email exists.
+>
+> **One active token per user:** Storing a new reset token deletes any existing unused tokens for that user.
+
+---
+
+#### 8.1.4 `biometric_credentials` (v2 stub)
+
+```sql
+-- Reserved for FIDO2/WebAuthn biometric authentication (v2).
+-- Routes POST /v1/auth/biometric/register and POST /v1/auth/biometric/verify
+-- are registered but return 501 until this is active.
+CREATE TABLE biometric_credentials (
+  id            TEXT        NOT NULL PRIMARY KEY,
+  user_id       TEXT        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  credential_id TEXT        NOT NULL UNIQUE,
+  public_key    BYTEA       NOT NULL,
+  counter       BIGINT      NOT NULL DEFAULT 0,
+  platform      VARCHAR(20) NOT NULL DEFAULT 'web',
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_used_at  TIMESTAMPTZ
+);
+
+CREATE INDEX idx_biometric_user_id ON biometric_credentials(user_id);
+```
+
+> **Status:** Migration exists (016), routes are registered returning `501 Not Implemented`. Full FIDO2/WebAuthn implementation is deferred to v2.
+
+---
+
+#### 8.1.6 `areas`
 
 ```sql
 CREATE TABLE areas (
@@ -1696,7 +1773,7 @@ CREATE UNIQUE INDEX idx_areas_user_name ON areas(user_id, name);
 
 ---
 
-#### 8.1.4 `projects`
+#### 8.1.7 `projects`
 
 ```sql
 CREATE TABLE projects (
@@ -1724,7 +1801,7 @@ CREATE UNIQUE INDEX idx_projects_user_name ON projects(user_id, name);
 
 ---
 
-#### 8.1.5 `tasks`
+#### 8.1.8 `tasks`
 
 ```sql
 CREATE TABLE tasks (
@@ -1757,7 +1834,7 @@ CREATE INDEX idx_tasks_user_due       ON tasks(user_id, due_date);
 
 ---
 
-#### 8.1.6 `subtasks`
+#### 8.1.9 `subtasks`
 
 ```sql
 CREATE TABLE subtasks (
@@ -1775,7 +1852,7 @@ CREATE INDEX idx_subtasks_task_id ON subtasks(task_id);
 
 ---
 
-#### 8.1.7 `user_plans`
+#### 8.1.10 `user_plans`
 
 ```sql
 CREATE TABLE user_plans (
@@ -1803,7 +1880,7 @@ CREATE INDEX idx_user_plans_user_id ON user_plans(user_id);
 
 ---
 
-#### 8.1.8 `webhook_events`
+#### 8.1.11 `webhook_events`
 
 ```sql
 CREATE TABLE webhook_events (
@@ -1825,7 +1902,7 @@ CREATE TABLE webhook_events (
 
 ---
 
-#### 8.1.9 `ai_sessions`
+#### 8.1.12 `ai_sessions`
 
 ```sql
 CREATE TABLE ai_sessions (
@@ -1842,7 +1919,7 @@ CREATE INDEX idx_ai_sessions_user_id ON ai_sessions(user_id);
 
 ---
 
-#### 8.1.10 `ai_messages`
+#### 8.1.13 `ai_messages`
 
 ```sql
 CREATE TABLE ai_messages (
@@ -1860,7 +1937,7 @@ CREATE INDEX idx_ai_messages_session_id ON ai_messages(session_id);
 
 ---
 
-#### 8.1.11 `ai_usage_monthly`
+#### 8.1.14 `ai_usage_monthly`
 
 ```sql
 CREATE TABLE ai_usage_monthly (
@@ -1881,43 +1958,50 @@ CREATE INDEX idx_ai_usage_user_month ON ai_usage_monthly(user_id, month);
 #### Relationships Overview
 
 ```
-users (1) ──── (many) areas              [cascade delete]
-users (1) ──── (many) projects           [area_id nullable → SET NULL on area delete]
-users (1) ──── (many) tasks              [project_id nullable → SET NULL on project delete; NULL = inbox]
-tasks (1) ──── (many) subtasks           [cascade delete]
-users (1) ──── (1)    user_plans         [UNIQUE user_id; cascade delete]
-users (1) ──── (many) refresh_tokens     [cascade delete]
-users (1) ──── (many) ai_sessions        [cascade delete]
-ai_sessions (1) ── (many) ai_messages   [cascade delete]
-users (1) ──── (many) ai_usage_monthly  [cascade delete]
-webhook_events                           [standalone — no FK to users]
+users (1) ──── (many) areas                    [cascade delete]
+users (1) ──── (many) projects                 [area_id nullable → SET NULL on area delete]
+users (1) ──── (many) tasks                    [project_id nullable → SET NULL on project delete; NULL = inbox]
+tasks (1) ──── (many) subtasks                 [cascade delete]
+users (1) ──── (1)    user_plans               [UNIQUE user_id; cascade delete]
+users (1) ──── (many) refresh_tokens           [cascade delete]
+users (1) ──── (many) password_reset_tokens    [cascade delete]
+users (1) ──── (many) biometric_credentials    [cascade delete — v2 stub]
+users (1) ──── (many) ai_sessions              [cascade delete]
+ai_sessions (1) ── (many) ai_messages          [cascade delete]
+users (1) ──── (many) ai_usage_monthly         [cascade delete]
+webhook_events                                  [standalone — no FK to users]
 ```
 
 #### Cascade Rules
 
-| Delete       | Effect                                                                                                  |
-| ------------ | ------------------------------------------------------------------------------------------------------- |
-| `user`       | Cascades to areas, projects, tasks, subtasks, user_plans, refresh_tokens, ai_sessions, ai_usage_monthly |
-| `area`       | Sets `area_id = NULL` on child projects                                                                 |
-| `project`    | Sets `project_id = NULL` on child tasks (they become inbox tasks)                                       |
-| `task`       | Cascades to subtasks                                                                                    |
-| `ai_session` | Cascades to ai_messages                                                                                 |
+| Delete       | Effect                                                                                                                               |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `user`       | Cascades to areas, projects, tasks, subtasks, user_plans, refresh_tokens, password_reset_tokens, ai_sessions, ai_usage_monthly       |
+| `area`       | Sets `area_id = NULL` on child projects                                                                                              |
+| `project`    | Sets `project_id = NULL` on child tasks (they become inbox tasks)                                                                    |
+| `task`       | Cascades to subtasks                                                                                                                 |
+| `ai_session` | Cascades to ai_messages                                                                                                              |
 
 #### Migration File Convention
 
 ```
 migrations/
-  001_create_users.up.sql            001_create_users.down.sql
-  002_create_refresh_tokens.up.sql   002_create_refresh_tokens.down.sql
-  003_create_areas.up.sql            003_create_areas.down.sql
-  004_create_projects.up.sql         004_create_projects.down.sql
-  005_create_tasks.up.sql            005_create_tasks.down.sql
-  006_create_subtasks.up.sql         006_create_subtasks.down.sql
-  007_create_user_plans.up.sql       007_create_user_plans.down.sql
-  008_create_webhook_events.up.sql   008_create_webhook_events.down.sql
-  009_create_ai_sessions.up.sql      009_create_ai_sessions.down.sql
-  010_create_ai_messages.up.sql      010_create_ai_messages.down.sql
-  011_create_ai_usage_monthly.up.sql 011_create_ai_usage_monthly.down.sql
+  001_create_users.up.sql                        001_create_users.down.sql
+  002_create_refresh_tokens.up.sql               002_create_refresh_tokens.down.sql
+  003_create_areas.up.sql                        003_create_areas.down.sql
+  004_create_projects.up.sql                     004_create_projects.down.sql
+  005_create_tasks.up.sql                        005_create_tasks.down.sql
+  006_create_subtasks.up.sql                     006_create_subtasks.down.sql
+  007_create_user_plans.up.sql                   007_create_user_plans.down.sql
+  008_create_webhook_events.up.sql               008_create_webhook_events.down.sql
+  009_create_ai_sessions.up.sql                  009_create_ai_sessions.down.sql
+  010_create_ai_messages.up.sql                  010_create_ai_messages.down.sql
+  011_create_ai_usage_monthly.up.sql             011_create_ai_usage_monthly.down.sql
+  012_users_soft_delete.up.sql                   012_users_soft_delete.down.sql
+  013_folder_icons_project.up.sql                013_folder_icons_project.down.sql
+  014_alter_users_add_profile_fields.up.sql      014_alter_users_add_profile_fields.down.sql
+  015_create_password_reset_tokens.up.sql        015_create_password_reset_tokens.down.sql
+  016_create_biometric_credentials.up.sql        016_create_biometric_credentials.down.sql
 ```
 
 Rules: never modify deployed migration files — always add a new one. Roll back with `make rollback`.
@@ -2130,29 +2214,39 @@ type Service interface {
 
 // internal/domain/auth/repository.go
 type Repository interface {
-    CreateUser(ctx context.Context, req CreateUserRequest) (User, error)
+    // User CRUD
+    CreateUser(ctx context.Context, email, username, passwordHash string) (User, error)
     GetUserByEmail(ctx context.Context, email string) (User, error)
-    GetUserByID(ctx context.Context, userID int64) (User, error)
-    UpdateUser(ctx context.Context, userID int64, req UpdateUserRequest) (User, error)
-    StoreRefreshToken(ctx context.Context, userID int64, tokenHash string, expiresAt time.Time) error
-    GetRefreshToken(ctx context.Context, tokenHash string) (RefreshToken, error)
-    DeleteRefreshToken(ctx context.Context, tokenHash string) error
-    DeleteAllRefreshTokens(ctx context.Context, userID int64) error
-    StorePasswordResetToken(ctx context.Context, userID int64, tokenHash string, expiresAt time.Time) error
-    GetPasswordResetToken(ctx context.Context, tokenHash string) (PasswordResetToken, error)
-    DeletePasswordResetToken(ctx context.Context, tokenHash string) error
+    GetUserByID(ctx context.Context, userID string) (User, error)
+    UpdateUser(ctx context.Context, userID string, req UpdateMeRequest) (User, error)
+    SoftDeleteUser(ctx context.Context, userID string) error
+    UpdatePassword(ctx context.Context, userID, passwordHash string) error
+
+    // Refresh tokens — dual-hash (fingerprint for lookup, bcrypt hash for verify)
+    StoreRefreshToken(ctx context.Context, userID, tokenHash, tokenFingerprint string, expiresAt time.Time) error
+    GetRefreshTokenByFingerprint(ctx context.Context, fingerprint string) (RefreshToken, error)
+    DeleteRefreshToken(ctx context.Context, fingerprint string) (int64, error) // returns rows affected for reuse detection
+    DeleteAllRefreshTokens(ctx context.Context, userID string) error
+
+    // Password reset tokens — dual-hash (fingerprint for lookup, bcrypt hash for verify)
+    StorePasswordResetToken(ctx context.Context, userID, tokenHash, tokenFingerprint string, expiresAt time.Time) error
+    GetPasswordResetTokenByFingerprint(ctx context.Context, fingerprint string) (PasswordResetToken, error)
+    MarkPasswordResetTokenUsed(ctx context.Context, fingerprint string) error
 }
 
 // internal/domain/auth/service.go
 type Service interface {
-    Login(ctx context.Context, req LoginRequest) (AuthResponse, error)
     Register(ctx context.Context, req RegisterRequest) (AuthResponse, error)
-    Logout(ctx context.Context, userID int64, refreshToken string) error
-    LogoutAll(ctx context.Context, userID int64) error
-    RefreshToken(ctx context.Context, refreshToken string) (AuthResponse, error)
+    Login(ctx context.Context, req LoginRequest) (AuthResponse, error)
+    Logout(ctx context.Context, userID, rawRefreshToken string) error
+    LogoutAll(ctx context.Context, userID string) error
+    RefreshToken(ctx context.Context, rawRefreshToken string) (AuthResponse, error)
     ForgotPassword(ctx context.Context, email string) error
-    ResetPassword(ctx context.Context, token, newPassword string) error
-    GetCurrentUser(ctx context.Context, userID int64) (User, error)
+    ResetPassword(ctx context.Context, req ResetPasswordRequest) error
+    GetProfile(ctx context.Context, userID string) (UserView, error)
+    UpdateMe(ctx context.Context, userID string, req UpdateMeRequest) (UserView, error)
+    DeleteMe(ctx context.Context, userID string) error
+    RegisterPushToken(ctx context.Context, userID string, req RegisterPushTokenRequest) error
 }
 ```
 
@@ -2322,14 +2416,14 @@ func Error(w http.ResponseWriter, err *apperror.AppError) {
 
 #### 8.3.1 Overview
 
-| Component      | Provider      | Details                                                               |
-| -------------- | ------------- | --------------------------------------------------------------------- |
-| Go API         | Render.com    | Web Service, Go buildpack, port `3001` (env: `PORT`)                  |
-| PostgreSQL 15  | Render.com    | Managed PostgreSQL 15, internal hostname only (no public access)      |
-| Frontend       | Vercel        | React 19 SPA; `staging` auto-deploy, `main` manual deploy             |
-| File storage   | AWS S3        | Bucket `nicoflow-attachments`, presigned URLs only (no public access) |
-| Billing        | Lemon Squeezy | Subscription webhooks → `POST /v1/billing/webhook`                    |
-| Email (future) | Resend / SES  | Password reset & task notifications — not in v1 scope                 |
+| Component     | Provider      | Details                                                               |
+| ------------- | ------------- | --------------------------------------------------------------------- |
+| Go API        | Render.com    | Web Service, Go buildpack, port `3001` (env: `PORT`)                  |
+| PostgreSQL 15 | Render.com    | Managed PostgreSQL 15, internal hostname only (no public access)      |
+| Frontend      | Vercel        | React 19 SPA; `staging` auto-deploy, `main` manual deploy             |
+| File storage  | AWS S3        | Bucket `nicoflow-attachments`, presigned URLs only (no public access) |
+| Billing       | Lemon Squeezy | Subscription webhooks → `POST /v1/billing/webhook`                    |
+| Email         | Mailtrap SMTP | Password reset emails via stdlib `net/smtp`; configured via `SMTP_DSN` env var |
 
 ---
 
@@ -2338,20 +2432,22 @@ func Error(w http.ResponseWriter, err *apperror.AppError) {
 - **Health check:** `GET /health` — returns `200 OK` with `{"status":"ok","version":"<git_sha>"}`
 - **Required environment variables:**
 
-| Variable                       | Description                                       |
-| ------------------------------ | ------------------------------------------------- |
-| `DATABASE_URL`                 | PostgreSQL connection string (provided by Render) |
-| `JWT_SECRET`                   | HS256 signing secret, min 32 bytes                |
-| `JWT_EXPIRY`                   | Access token TTL, e.g. `15m`                      |
-| `REFRESH_TOKEN_EXPIRY`         | Refresh token TTL, e.g. `168h` (7 days)           |
-| `ALLOWED_ORIGINS`              | Comma-separated CORS origins                      |
-| `AWS_REGION`                   | S3 region                                         |
-| `AWS_ACCESS_KEY_ID`            | IAM key for S3                                    |
-| `AWS_SECRET_ACCESS_KEY`        | IAM secret for S3                                 |
-| `S3_BUCKET`                    | `nicoflow-attachments`                            |
-| `LEMON_SQUEEZY_WEBHOOK_SECRET` | HMAC secret for billing webhook verification      |
-| `APP_ENV`                      | `staging` or `production`                         |
-| `PORT`                         | `3001` (set by Render automatically)              |
+| Variable                       | Description                                                     |
+| ------------------------------ | --------------------------------------------------------------- |
+| `DATABASE_URL`                 | PostgreSQL connection string (provided by Render)               |
+| `JWT_SECRET`                   | HS256 signing secret, min 32 bytes, cryptographically random    |
+| `JWT_EXPIRY`                   | Access token TTL, e.g. `15m` (default: `15m`)                   |
+| `REFRESH_TOKEN_EXPIRY`         | Refresh token TTL, e.g. `168h` (default: `168h` = 7 days)      |
+| `SMTP_DSN`                     | SMTP connection string for password reset email, e.g. `smtp://user:pass@smtp.mailtrap.io:587` |
+| `APP_BASE_URL`                 | Frontend base URL used to build reset-password links, e.g. `https://app.nicoflow.app` |
+| `CORS_ORIGINS`                 | Comma-separated allowed CORS origins                            |
+| `AWS_REGION`                   | S3 region                                                       |
+| `AWS_ACCESS_KEY_ID`            | IAM key for S3                                                  |
+| `AWS_SECRET_ACCESS_KEY`        | IAM secret for S3                                               |
+| `S3_BUCKET_NAME`               | `nicoflow-attachments`                                          |
+| `LS_WEBHOOK_SECRET`            | HMAC-SHA256 secret for Lemon Squeezy webhook verification       |
+| `APP_ENV`                      | `staging` \| `production`                                       |
+| `PORT`                         | `3001` (set by Render automatically)                            |
 
 ---
 
