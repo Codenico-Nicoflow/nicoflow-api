@@ -2,124 +2,241 @@
 
 Go REST API for the Nicoflow platform.
 
-**Base URL:** `https://api.nicoflow.com/v1`
+**Base URL:** `https://api.nicoflow.com/v1`  
 **WebSocket:** `wss://api.nicoflow.com/v1/ws`
 
 ---
 
-## Stack
+## Table of Contents
 
-| Layer | Technology |
-|---|---|
-| Language | Go 1.25 |
-| Router | Chi v5 |
-| Database | PostgreSQL 15 (Render Managed) |
-| Migrations | golang-migrate |
-| File storage | AWS S3 (`nicoflow-attachments`) |
-| Billing | Lemon Squeezy |
-| Hosting | Render Web Service |
+- [Prerequisites](#prerequisites)
+- [Local Development (recommended — Docker)](#local-development-recommended--docker)
+- [Local Development (no Docker)](#local-development-no-docker)
+- [Staging](#staging)
+- [Production](#production)
+- [Migrations](#migrations)
+- [Make Targets](#make-targets)
+- [Project Structure](#project-structure)
+- [API Reference](#api-reference)
 
 ---
 
 ## Prerequisites
 
-- Go 1.25+
-- PostgreSQL 15
-- [Air](https://github.com/air-verse/air) for hot-reload (`go install github.com/air-verse/air@latest`)
-- [golangci-lint](https://golangci-lint.run) v2.11.4+
-- [golang-migrate CLI](https://github.com/golang-migrate/migrate)
+| Tool | Install |
+|---|---|
+| Go 1.25+ | https://go.dev/dl |
+| Docker + Docker Compose | https://docs.docker.com/get-docker |
+| Air (hot-reload) | `go install github.com/air-verse/air@latest` |
+| golang-migrate CLI | `brew install golang-migrate` |
+| golangci-lint | `brew install golangci-lint` |
 
 ---
 
-## Environment Variables
+## Local Development (recommended — Docker)
 
-Copy and fill in before running locally:
+Docker Compose spins up **Postgres 16** and **MinIO** (local S3-compatible storage) for you. You run the API binary directly on your machine with hot-reload via Air. You do **not** need a local Postgres installation.
 
-Copy `.env.example` to `.env` and fill in secrets:
+**Step 1 — Copy the env file**
 
 ```bash
-DATABASE_URL=            # Postgres connection URL (pgx DSN)
-JWT_SECRET=              # HS256 signing secret — min 32 bytes
-JWT_EXPIRY=15m
-REFRESH_TOKEN_EXPIRY=168h
-PORT=8080
-APP_ENV=development
-LOG_LEVEL=info
-CORS_ORIGINS=            # Comma-separated allowed origins
-LS_WEBHOOK_SECRET=       # Lemon Squeezy HMAC webhook secret
-AWS_REGION=us-east-1
-AWS_ACCESS_KEY_ID=       # S3 access key
-AWS_SECRET_ACCESS_KEY=   # S3 secret key
-S3_BUCKET_NAME=nicoflow-attachments
+cp .env.example .env
 ```
 
----
-
-## Running Locally
+Open `.env` and fill in the two values that have no usable default:
 
 ```bash
-# Hot-reload (recommended)
-make dev
-
-# Single build + run
-make build
-./bin/server
-
-# Run tests
-make test
-
-# Lint
-make lint
+JWT_SECRET=any-32-char-random-string-for-local-dev!!
+SMTP_DSN=smtp://your-mailtrap-user:your-mailtrap-pass@smtp.mailtrap.io:587
 ```
 
----
+Everything else already has working defaults for local dev (ports, DB credentials, MinIO keys).
 
-## Local Development with Docker
-
-The full stack (API + Postgres + MinIO) via Docker Compose:
+**Step 2 — Start Postgres + MinIO**
 
 ```bash
-cp .env.example .env    # fill in secrets
-make docker-up          # starts postgres + minio + api on :8080
-curl http://localhost:8080/v1/health   # → 200 {"status":"ok"}
-make docker-migrate-up  # apply all migrations against docker postgres
-make docker-down        # tear down
+make docker-up
 ```
 
-`DATABASE_URL` inside the container is automatically set to `postgres://nicoflow:nicoflow@postgres:5432/nicoflow?sslmode=disable` by docker-compose.yml — no manual editing required.
+This starts:
+- **Postgres 16** on `localhost:5432` — credentials: `nicoflow / nicoflow / nicoflow`
+- **MinIO** on `localhost:9000` — S3-compatible object storage; web console at `localhost:9001` (login: `minioadmin / minioadmin`)
 
----
-
-## Database Migrations
+**Step 3 — Apply all migrations**
 
 ```bash
-# Apply all pending migrations
-make migrate-up
-
-# Roll back ONE step (safe for production)
-make migrate-down
-
-# Roll back ALL steps (dev/reset only)
-make migrate-down-all
-
-# Show current version + dirty state
-make migrate-version
-
-# Create new migration pair
-make migrate-create name=add_notes_to_users
-
-# Force-set version (use when a migration fails mid-way in dev)
-make migrate-force version=5
-
-# Run against the local Docker Compose postgres
 make docker-migrate-up
 ```
 
-Migration files live in `migrations/`. Convention: `{seq}_{description}.up.sql` / `.down.sql`.
+**Step 4 — Start the API with hot-reload**
 
-> **Golden Rule: never modify a deployed migration file.**
-> Once a migration has been applied to any environment (staging or production), it is immutable.
-> Always add a new numbered `.up.sql` / `.down.sql` pair — never edit an existing one.
+```bash
+make dev
+```
+
+The API is now running at `http://localhost:8080`. Air watches for file changes and automatically rebuilds.
+
+```bash
+curl http://localhost:8080/health
+# → {"status":"ok","version":"<git_sha>"}
+```
+
+**Tear down**
+
+```bash
+make docker-down   # stops containers, data volumes are kept
+```
+
+To also wipe the DB and MinIO data (clean slate):
+
+```bash
+docker compose down -v
+```
+
+---
+
+## Local Development (no Docker)
+
+If you already have Postgres running locally (e.g. via Homebrew), you can skip Docker.
+
+**Step 1 — Create the database**
+
+```bash
+createdb nicoflow
+```
+
+**Step 2 — Copy and fill env**
+
+```bash
+cp .env.example .env
+```
+
+Update `DATABASE_URL` to point at your local Postgres:
+
+```bash
+DATABASE_URL=postgres://localhost:5432/nicoflow?sslmode=disable
+JWT_SECRET=any-32-char-random-string-for-local-dev!!
+```
+
+**Step 3 — Apply migrations**
+
+```bash
+make migrate-up
+```
+
+**Step 4 — Start the API**
+
+```bash
+make dev         # hot-reload via Air (recommended)
+# or
+make build && ./bin/api
+```
+
+---
+
+## Staging
+
+Staging runs on **Render** and deploys automatically on every merge to the `staging` branch via GitHub Actions.
+
+**Migrations** are applied as a Render pre-deploy command — no manual step needed. If you ever need to run them manually from your machine:
+
+```bash
+DATABASE_URL=<staging-postgres-url> make migrate-up
+```
+
+**Branch workflow:**
+
+```
+feature/NIC-xxx-description  →  PR to staging  →  review + merge
+staging                      →  PR to main     →  release
+```
+
+Never push directly to `staging` or `main`.
+
+---
+
+## Production
+
+Production runs on **Render** and deploys automatically on every merge from `staging` → `main`.
+
+All configuration is set as environment variables in the Render dashboard:
+
+| Variable | Required | Description |
+|---|---|---|
+| `DATABASE_URL` | Yes | Render Managed Postgres connection string |
+| `JWT_SECRET` | Yes | HS256 signing secret — min 32 bytes, cryptographically random |
+| `PORT` | Auto | Set by Render — do not override |
+| `JWT_EXPIRY` | No | Access token TTL (default `15m`) |
+| `REFRESH_TOKEN_EXPIRY` | No | Refresh token TTL (default `168h`) |
+| `SMTP_DSN` | No | `smtp://user:pass@host:587` — required for password reset emails |
+| `APP_BASE_URL` | No | Frontend URL for reset links, e.g. `https://app.nicoflow.app` |
+| `CORS_ORIGINS` | No | Comma-separated allowed origins, e.g. `https://app.nicoflow.app` |
+| `APP_ENV` | No | `production` |
+| `LOG_LEVEL` | No | `info` |
+| `AWS_REGION` | No | S3 region, e.g. `us-east-1` |
+| `AWS_ACCESS_KEY_ID` | No | IAM key for S3 |
+| `AWS_SECRET_ACCESS_KEY` | No | IAM secret for S3 |
+| `S3_BUCKET_NAME` | No | `nicoflow-attachments` |
+| `LS_WEBHOOK_SECRET` | No | Lemon Squeezy HMAC webhook secret |
+
+Migrations run automatically as a Render pre-deploy command:
+
+```bash
+migrate -path migrations -database "$DATABASE_URL" up
+```
+
+> Never run `migrate down` or `migrate down-all` against staging or production.
+
+---
+
+## Migrations
+
+Migration files live in `migrations/`. Format: `{seq}_{description}.up.sql` / `.down.sql`.
+
+```bash
+# Apply all pending migrations (uses DATABASE_URL env var)
+make migrate-up
+
+# Roll back ONE step — safe for any environment
+make migrate-down
+
+# Roll back ALL steps — dev only, never against staging or prod
+make migrate-down-all
+
+# Show current migration version + dirty state
+make migrate-version
+
+# Create a new migration pair
+make migrate-create name=add_notes_to_tasks
+# → creates migrations/017_add_notes_to_tasks.up.sql + .down.sql
+
+# Force-set version when a migration fails mid-way in dev
+make migrate-force version=5
+
+# Apply migrations against local Docker Compose Postgres
+make docker-migrate-up
+```
+
+> **Golden rule:** Never edit a migration file that has already been applied to any environment. Always add a new numbered pair.
+
+---
+
+## Make Targets
+
+| Target | Description |
+|---|---|
+| `make dev` | Start API with Air hot-reload |
+| `make build` | Compile binary to `bin/api` |
+| `make test` | Run all tests with race detector + coverage |
+| `make lint` | Run golangci-lint |
+| `make docker-up` | Start Postgres + MinIO via Docker Compose |
+| `make docker-down` | Stop containers (keeps data volumes) |
+| `make docker-migrate-up` | Apply migrations against Docker Compose Postgres |
+| `make migrate-up` | Apply all pending migrations (`DATABASE_URL` required) |
+| `make migrate-down` | Roll back one migration |
+| `make migrate-version` | Show current migration version |
+| `make migrate-create name=x` | Create a new migration pair |
+| `make migrate-force version=n` | Force-set migration version (dev only) |
 
 ---
 
@@ -127,123 +244,80 @@ Migration files live in `migrations/`. Convention: `{seq}_{description}.up.sql` 
 
 ```
 nicoflow-api/
-├── cmd/
-│   └── api/
-│       └── main.go          # Thin entrypoint — load config, init DB, start server
+├── cmd/api/main.go          # Entrypoint — load config, init DB, wire deps, start server
 │
 ├── internal/
-│   ├── config/
-│   │   └── config.go        # Typed config loaded from env vars
-│   │
-│   ├── db/                  # pgxpool init
+│   ├── config/              # Typed config loaded from env vars at startup
+│   ├── db/                  # pgxpool connection setup
+│   ├── apperror/            # AppError type + typed error code constants
 │   │
 │   ├── handler/
-│   │   ├── health.go        # GET /v1/health
-│   │   └── router.go        # Chi router wiring — all routes registered here
+│   │   ├── router.go        # Chi router — all routes registered here
+│   │   └── health.go        # GET /health
 │   │
-│   ├── domain/              # Business logic grouped by domain
-│   │   ├── auth/            # handler.go, service.go, repository.go, types.go
-│   │   ├── area/
-│   │   ├── project/
-│   │   ├── task/
-│   │   ├── bucket/
-│   │   ├── ai/
-│   │   └── billing/
+│   ├── domain/              # Business logic grouped by domain (handler + service + repository + types per domain)
+│   │   ├── auth/            # IMPLEMENTED — register, login, logout, refresh, forgot/reset password, profile
+│   │   ├── area/            # stub
+│   │   ├── project/         # stub
+│   │   ├── task/            # stub
+│   │   ├── bucket/          # stub
+│   │   ├── ai/              # stub
+│   │   └── billing/         # stub
 │   │
 │   ├── middleware/
-│   │   ├── auth.go          # JWT → userID + plan into context
-│   │   ├── cors.go
-│   │   ├── logger.go        # zerolog structured request log
-│   │   ├── plan_enforcer.go
-│   │   ├── ratelimit.go     # IP + user token-bucket limiters
+│   │   ├── auth.go          # JWT validation → userID + email + plan into context
+│   │   ├── cors.go          # CORS with credentials, Vary, preflight cache
+│   │   ├── logger.go        # zerolog structured request logging
+│   │   ├── ratelimit.go     # IP + user token-bucket rate limiters
 │   │   ├── recover.go       # panic → 500
-│   │   └── request_id.go    # X-Request-ID injection
+│   │   └── request_id.go    # X-Request-ID header injection
 │   │
-│   ├── apperror/
-│   │   └── errors.go        # AppError type + 30 typed error code constants
-│   │
-│   ├── storage/
-│   │   └── s3.go            # S3 presigned URL client (stub until E-024)
-│   │
-│   ├── ws/
-│   │   ├── hub.go
-│   │   ├── client.go
-│   │   └── events.go        # Typed WS event constants + Event envelope
-│   │
-│   └── testutil/            # Shared test helpers + DB setup
+│   ├── storage/             # S3 presigned URL client (stub)
+│   └── ws/                  # WebSocket hub + client (stub)
 │
 ├── pkg/
-│   ├── respond/             # JSON envelope helpers (respond.JSON, respond.Error)
-│   ├── jwtutil/             # JWT HS256 sign/verify (stub until E-009)
-│   └── hashutil/            # bcrypt helpers (stub until E-009)
+│   ├── respond/             # respond.JSON / respond.Error envelope helpers
+│   ├── jwtutil/             # JWT HS256 Issue / Parse
+│   ├── hashutil/            # bcrypt Hash / Compare (cost 12)
+│   └── emailutil/           # SendPasswordReset via stdlib net/smtp
 │
-├── migrations/              # golang-migrate SQL files (001–013)
-├── .github/workflows/       # CI — lint, test, security, build, docker-build
-├── .golangci.yml
-├── .air.toml
+├── migrations/              # golang-migrate SQL files (001–016)
+├── .github/workflows/       # CI — lint, test, security scan, build, docker build
+├── docker-compose.yml       # Local dev stack (Postgres + MinIO + API)
+├── Dockerfile               # Distroless production image
 ├── Makefile
-├── Dockerfile
-└── go.mod
+├── .air.toml                # Air hot-reload config
+└── .golangci.yml
 ```
 
 ---
 
-## Developer Rules of Thumb
+## API Reference
 
-### Migrations
-- One file per schema change — never edit an existing migration file, always add a new one
-- Model + repo + migration always move together: if you add a column, update the struct, update the scan, run the migration
-- If the column doesn't exist in the DB yet, any query referencing it will error at runtime
+### Public endpoints (no auth required)
 
-### Logging
-- `slog` → application-level events (startup, shutdown, fatal errors — no HTTP request exists yet)
-- `middleware.Logger()` → HTTP request/response lifecycle only (method, path, status, latency)
-- Don't log inside repos/services — return the error and let it bubble up to the HTTP layer
-
-### Error handling
-- `errors.Is(err, pgx.ErrNoRows)` → not found, return `nil, nil` → handler returns 404
-- `err != nil` (after the above check) → real DB error → handler returns 500
-- Repos wrap errors with `fmt.Errorf("RepoName.Method: %w", err)` and return them — they never log
-
-### Context
-- `context.Context` — always the first parameter for any function doing I/O
-- Extract from request via `r.Context()` in handlers; propagate down to service and repo
-- DB queries abort automatically if the client disconnects
-
-### SQL
-- Always list columns explicitly in SELECT — never `SELECT *`
-- Column order in the query must match field order in `rows.Scan(...)` — pgx maps by position not name
-
----
-
-## Layer Rules
-
-**Non-negotiable.** Violating these makes the codebase unmaintainable.
-
-| Layer | May call | Never |
-|---|---|---|
-| `handler` | `service` | `repository` directly, `*sql.DB` |
-| `service` | `repository` | `http.ResponseWriter`, HTTP status codes |
-| `repository` | DB only | Business logic, call `service` |
-| `middleware` | `service` (sparingly) | Business logic |
-
----
-
-## API Routes
-
-### Public
 ```
-GET  /v1/health
+GET  /health
 POST /v1/auth/register
 POST /v1/auth/login
-POST /v1/auth/refresh
+POST /v1/auth/refresh-token
 POST /v1/auth/logout
+POST /v1/auth/forgot-password
+POST /v1/auth/reset-password
+POST /v1/auth/biometric/verify    (501 — reserved for FIDO2/WebAuthn v2)
 POST /v1/billing/webhook
 ```
 
-### Authenticated (`Authorization: Bearer <token>`)
+### Protected endpoints (`Authorization: Bearer <token>`)
+
 ```
-GET  /v1/ws
+GET  /v1/auth/logout-all
+POST /v1/auth/biometric/register  (501 — reserved)
+POST /v1/auth/push-token
+
+GET    /v1/users/me
+PATCH  /v1/users/me
+DELETE /v1/users/me
 
 GET    /v1/areas
 POST   /v1/areas
@@ -260,141 +334,63 @@ POST   /v1/tasks
 PUT    /v1/tasks/:id
 DELETE /v1/tasks/:id
 
-GET    /v1/tasks/:taskId/subtasks
-POST   /v1/tasks/:taskId/subtasks
-PUT    /v1/tasks/:taskId/subtasks/:id
-DELETE /v1/tasks/:taskId/subtasks/:id
-
-POST   /v1/inbox/capture
-GET    /v1/inbox
-
-GET    /v1/time-spread
-
-GET    /v1/user/plan
-
-GET    /v1/ai/sessions
-POST   /v1/ai/sessions
-DELETE /v1/ai/sessions/:id
-GET    /v1/ai/sessions/:sessionId/messages
-POST   /v1/ai/sessions/:sessionId/messages
-
-GET    /v1/billing/checkout-url
-GET    /v1/billing/portal-url
-
-POST   /v1/attachments/upload-url
-POST   /v1/attachments/download-url
+GET    /v1/ws
 ```
 
----
+### Response envelope
 
-## Response Envelope
-
-Every response uses this shape:
+Every response — success or error — uses this shape:
 
 ```json
-// Success
 { "data": { ... }, "error": null }
-
-// Error
-{ "data": null, "error": { "code": "TASK_NOT_FOUND", "message": "..." } }
+{ "data": null, "error": { "code": "RESOURCE_NOT_FOUND", "message": "..." } }
 ```
 
-### Error Codes
+### Auth flow
+
+```
+1. Register / Login
+   POST /v1/auth/register  or  POST /v1/auth/login
+   ← { token, refreshToken, user }
+   ← Set-Cookie: refresh_token=<value>; HttpOnly; Secure; SameSite=Strict; Path=/v1/auth/refresh-token
+
+2. Use the API
+   All protected routes require:  Authorization: Bearer <token>
+   Access token expires in 15 minutes.
+
+3. Refresh the access token (browser sends cookie automatically)
+   POST /v1/auth/refresh-token
+   ← { token, refreshToken, user }
+   Old refresh token is deleted — reuse of a rotated token triggers full session revocation.
+
+4. Logout (current device)
+   POST /v1/auth/logout
+   ← 204 No Content, cookie cleared
+
+5. Logout (all devices)
+   GET /v1/auth/logout-all
+   ← 204 No Content, all refresh tokens for the user are deleted
+```
+
+### Error codes
 
 | HTTP | Code | Meaning |
 |---|---|---|
 | 400 | `INVALID_INPUT` | Validation failure |
-| 401 | `INVALID_TOKEN` | Missing or invalid JWT |
-| 401 | `UNAUTHORIZED` | Authentication required |
-| 403 | `FORBIDDEN` | Authenticated but not authorized |
+| 400 | `INVALID_EMAIL` | Malformed email address |
+| 400 | `WEAK_PASSWORD` | Password does not meet strength requirements |
+| 401 | `UNAUTHORIZED` | Authentication required or credentials invalid |
+| 401 | `INVALID_TOKEN` | JWT or refresh token is missing, expired, or tampered |
+| 403 | `FORBIDDEN` | Authenticated but not authorised |
 | 403 | `PLAN_LIMIT_EXCEEDED` | Free tier limit reached |
 | 404 | `RESOURCE_NOT_FOUND` | Generic not found |
-| 404 | `TASK_NOT_FOUND` | Task-specific |
-| 404 | `PROJECT_NOT_FOUND` | Project-specific |
-| 404 | `AREA_NOT_FOUND` | Area-specific |
-| 409 | `DUPLICATE_NAME` | Name already exists for this user |
-| 409 | `IDEMPOTENCY_CONFLICT` | Webhook already processed |
-| 429 | `RATE_LIMITED` | Too many requests |
-| 500 | `DATABASE_ERROR` | DB or unexpected server error |
-
----
-
-## Authentication
-
-- **Algorithm:** HS256 JWT
-- **Access token TTL:** 15 minutes
-- **Refresh token TTL:** 7 days (single-use rotation — old token deleted on refresh)
-- **JWT payload:** `{ userId, plan, exp, iat }`
-- **Header:** `Authorization: Bearer <token>`
-
----
-
-## Plan Enforcement
-
-```
-Free tier limits:
-  Areas:       max 3
-  Projects:    max 5
-  AI requests: max 10/month
-
-Enforcement:
-  - Plan read from JWT (no extra DB query per request)
-  - PlanEnforcer middleware applied per route
-  - Pro users bypass immediately
-  - Returns 403 PLAN_LIMIT_EXCEEDED
-```
-
----
-
-## Database Tables
-
-| Table | Purpose |
-|---|---|
-| `users` | Email + bcrypt password hash |
-| `refresh_tokens` | Active tokens for rotation/revocation |
-| `areas` | Top-level organisation (Work, Health, etc.) |
-| `projects` | Containers for tasks, linked to an area |
-| `tasks` | Individual tasks (`project_id = NULL` = inbox) |
-| `subtasks` | Checklist items within a task |
-| `user_plans` | Current plan + Lemon Squeezy subscription |
-| `webhook_events` | Idempotency log for LS webhooks |
-| `ai_sessions` | AI conversation sessions |
-| `ai_messages` | Messages within a session |
-| `ai_usage_monthly` | Monthly AI request counter (free tier enforcement) |
-
-Full schema: [Confluence — Database Schema](https://nicoflow.atlassian.net/wiki/spaces/NI/pages/950273)
-
----
-
-## Branching
-
-```
-feature/* → staging (PR)
-staging   → main (release)
-```
-
-Branch from `staging`. PR to `staging`. `staging` → `main` for releases.
-
----
-
-## CI
-
-GitHub Actions on every push/PR to `staging` and `main`:
-
-1. `golangci-lint` — static analysis
-2. `go test ./... -race` — tests with race detector
-3. `gosec` + `govulncheck` — security scans
-4. `go build ./...` — binary compilation
-5. `docker build` — distroless image smoke test (< 50MB assertion)
-
-See `.github/workflows/ci-backend.yml`.
+| 409 | `EMAIL_ALREADY_EXISTS` | Email is already registered |
+| 429 | `RATE_LIMITED` | Too many requests — check `Retry-After` header |
+| 500 | `DATABASE_ERROR` | Unexpected server error |
 
 ---
 
 ## Useful Links
 
 - [Confluence Space](https://nicoflow.atlassian.net/wiki/spaces/NI)
-- [Database Schema](https://nicoflow.atlassian.net/wiki/spaces/NI/pages/950273)
-- [API Design Principles](https://nicoflow.atlassian.net/wiki/spaces/NI/pages/1048577)
-- [Security Architecture](https://nicoflow.atlassian.net/wiki/spaces/NI/pages/589846)
-- [Jira Board](https://nicoflow.atlassian.net) — project key `NIC`
+- [Jira Board](https://nicoflow.atlassian.net/jira/software/projects/NIC/boards/2)
