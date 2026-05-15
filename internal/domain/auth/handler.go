@@ -237,8 +237,9 @@ func (h *Handler) UpdateNotificationPreferences(w http.ResponseWriter, r *http.R
 }
 
 // setRefreshCookie sets the HttpOnly refresh token cookie per SPEC §3.5.
+// Secure is intentionally runtime-controlled (false in dev over HTTP, true in staging/production).
 func (h *Handler) setRefreshCookie(w http.ResponseWriter, rawToken string) {
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124: Secure is set dynamically via h.secureCookie (true in staging/production, false in development)
 		Name:     "refresh_token",
 		Value:    rawToken,
 		Path:     "/v1/auth/refresh-token",
@@ -251,7 +252,7 @@ func (h *Handler) setRefreshCookie(w http.ResponseWriter, rawToken string) {
 
 // clearRefreshCookie expires the refresh token cookie.
 func (h *Handler) clearRefreshCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124: Secure is set dynamically via h.secureCookie (true in staging/production, false in development)
 		Name:     "refresh_token",
 		Value:    "",
 		Path:     "/v1/auth/refresh-token",
