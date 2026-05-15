@@ -15,19 +15,19 @@ import (
 
 // mockRepo implements auth.Repository for testing.
 type mockRepo struct {
-	createUserFn                      func(ctx context.Context, email, username, passwordHash string) (auth.User, error)
-	getUserByEmailFn                   func(ctx context.Context, email string) (auth.User, error)
-	getUserByIDFn                      func(ctx context.Context, userID string) (auth.User, error)
-	updateUserFn                       func(ctx context.Context, userID string, req auth.UpdateMeRequest) (auth.User, error)
-	softDeleteUserFn                   func(ctx context.Context, userID string) error
-	storeRefreshTokenFn                func(ctx context.Context, userID, tokenHash, fp string, expiresAt time.Time) error
-	getRefreshTokenByFingerprintFn     func(ctx context.Context, fingerprint string) (auth.RefreshToken, error)
-	deleteRefreshTokenFn               func(ctx context.Context, fingerprint string) (int64, error)
-	deleteAllRefreshTokensFn           func(ctx context.Context, userID string) error
-	storePasswordResetTokenFn          func(ctx context.Context, userID, tokenHash, fp string, expiresAt time.Time) error
-	getPasswordResetTokenByFpFn        func(ctx context.Context, fingerprint string) (auth.PasswordResetToken, error)
-	markPasswordResetTokenUsedFn       func(ctx context.Context, fingerprint string) error
-	updatePasswordFn                   func(ctx context.Context, userID, passwordHash string) error
+	createUserFn                   func(ctx context.Context, email, username, passwordHash string) (auth.User, error)
+	getUserByEmailFn               func(ctx context.Context, email string) (auth.User, error)
+	getUserByIDFn                  func(ctx context.Context, userID string) (auth.User, error)
+	updateUserFn                   func(ctx context.Context, userID string, req auth.UpdateMeRequest) (auth.User, error)
+	softDeleteUserFn               func(ctx context.Context, userID string) error
+	storeRefreshTokenFn            func(ctx context.Context, userID, tokenHash, fp string, expiresAt time.Time) error
+	getRefreshTokenByFingerprintFn func(ctx context.Context, fingerprint string) (auth.RefreshToken, error)
+	deleteRefreshTokenFn           func(ctx context.Context, fingerprint string) (int64, error)
+	deleteAllRefreshTokensFn       func(ctx context.Context, userID string) error
+	storePasswordResetTokenFn      func(ctx context.Context, userID, tokenHash, fp string, expiresAt time.Time) error
+	getPasswordResetTokenByFpFn    func(ctx context.Context, fingerprint string) (auth.PasswordResetToken, error)
+	markPasswordResetTokenUsedFn   func(ctx context.Context, fingerprint string) error
+	updatePasswordFn               func(ctx context.Context, userID, passwordHash string) error
 }
 
 func (m *mockRepo) CreateUser(ctx context.Context, email, username, passwordHash string) (auth.User, error) {
@@ -107,15 +107,17 @@ func happyRepo() *mockRepo {
 		updateUserFn: func(_ context.Context, _ string, _ auth.UpdateMeRequest) (auth.User, error) {
 			return fixedUser(), nil
 		},
-		softDeleteUserFn:                   func(_ context.Context, _ string) error { return nil },
-		storeRefreshTokenFn:                func(_ context.Context, _, _, _ string, _ time.Time) error { return nil },
-		getRefreshTokenByFingerprintFn:     func(_ context.Context, _ string) (auth.RefreshToken, error) { return auth.RefreshToken{}, nil },
-		deleteRefreshTokenFn:               func(_ context.Context, _ string) (int64, error) { return 1, nil },
-		deleteAllRefreshTokensFn:           func(_ context.Context, _ string) error { return nil },
-		storePasswordResetTokenFn:          func(_ context.Context, _, _, _ string, _ time.Time) error { return nil },
-		getPasswordResetTokenByFpFn:        func(_ context.Context, _ string) (auth.PasswordResetToken, error) { return auth.PasswordResetToken{}, nil },
-		markPasswordResetTokenUsedFn:       func(_ context.Context, _ string) error { return nil },
-		updatePasswordFn:                   func(_ context.Context, _, _ string) error { return nil },
+		softDeleteUserFn:               func(_ context.Context, _ string) error { return nil },
+		storeRefreshTokenFn:            func(_ context.Context, _, _, _ string, _ time.Time) error { return nil },
+		getRefreshTokenByFingerprintFn: func(_ context.Context, _ string) (auth.RefreshToken, error) { return auth.RefreshToken{}, nil },
+		deleteRefreshTokenFn:           func(_ context.Context, _ string) (int64, error) { return 1, nil },
+		deleteAllRefreshTokensFn:       func(_ context.Context, _ string) error { return nil },
+		storePasswordResetTokenFn:      func(_ context.Context, _, _, _ string, _ time.Time) error { return nil },
+		getPasswordResetTokenByFpFn: func(_ context.Context, _ string) (auth.PasswordResetToken, error) {
+			return auth.PasswordResetToken{}, nil
+		},
+		markPasswordResetTokenUsedFn: func(_ context.Context, _ string) error { return nil },
+		updatePasswordFn:             func(_ context.Context, _, _ string) error { return nil },
 	}
 }
 
@@ -318,8 +320,8 @@ func TestResetPassword(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name: "passwords mismatch",
-			req:  auth.ResetPasswordRequest{Token: "tok", NewPassword: "Secret123", ConfirmPassword: "Different1"},
+			name:    "passwords mismatch",
+			req:     auth.ResetPasswordRequest{Token: "tok", NewPassword: "Secret123", ConfirmPassword: "Different1"},
 			wantErr: apperror.ErrInvalidInput,
 		},
 		{
