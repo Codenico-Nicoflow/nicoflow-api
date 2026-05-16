@@ -260,6 +260,63 @@ func TestLogin(t *testing.T) {
 	}
 }
 
+func TestLogin_RememberMe(t *testing.T) {
+	cfg := testCfg() // RefreshTokenExpiry = 7 * 24h
+
+	tests := []struct {
+		name            string
+		remember        bool
+		wantCookieMaxAge int
+		wantMinTTL      time.Duration
+		wantMaxTTL      time.Duration
+	}{
+		{
+			name:            "remember=true uses full RefreshTokenExpiry",
+			remember:        true,
+			wantCookieMaxAge: int(cfg.RefreshTokenExpiry.Seconds()), // 604800
+			wantMinTTL:      cfg.RefreshTokenExpiry - time.Second,
+			wantMaxTTL:      cfg.RefreshTokenExpiry + time.Second,
+		},
+		{
+			name:            "remember=false uses 24h session TTL and zero cookie max-age",
+			remember:        false,
+			wantCookieMaxAge: int((24 * time.Hour).Seconds()), // 86400
+			wantMinTTL:      24*time.Hour - time.Second,
+			wantMaxTTL:      24*time.Hour + time.Second,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var storedExpiresAt time.Time
+			repo := happyRepo()
+			repo.storeRefreshTokenFn = func(_ context.Context, _, _, _ string, expiresAt time.Time) error {
+				storedExpiresAt = expiresAt
+				return nil
+			}
+
+			svc := auth.NewService(repo, cfg)
+			resp, err := svc.Login(context.Background(), auth.LoginRequest{
+				Email:    "user@example.com",
+				Password: "Secret123",
+				Remember: tt.remember,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if resp.CookieMaxAge != tt.wantCookieMaxAge {
+				t.Errorf("CookieMaxAge = %d, want %d", resp.CookieMaxAge, tt.wantCookieMaxAge)
+			}
+
+			actualTTL := time.Until(storedExpiresAt)
+			if actualTTL < tt.wantMinTTL || actualTTL > tt.wantMaxTTL {
+				t.Errorf("stored token TTL = %v, want between %v and %v", actualTTL, tt.wantMinTTL, tt.wantMaxTTL)
+			}
+		})
+	}
+}
+
 func TestRefreshToken_ReuseDetection(t *testing.T) {
 	var revokedAll bool
 	repo := happyRepo()
