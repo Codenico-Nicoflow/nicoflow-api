@@ -462,3 +462,173 @@ func TestLogoutAll(t *testing.T) {
 		t.Error("expected all tokens to be deleted")
 	}
 }
+
+func TestLogout_Success(t *testing.T) {
+	var deletedFP string
+	repo := happyRepo()
+	repo.deleteRefreshTokenFn = func(_ context.Context, fp string) (int64, error) {
+		deletedFP = fp
+		return 1, nil
+	}
+
+	svc := auth.NewService(repo, testCfg())
+	if err := svc.Logout(context.Background(), "usr_abc", "somerawtoken"); err != nil {
+		t.Fatalf("Logout() error = %v", err)
+	}
+	if deletedFP == "" {
+		t.Error("expected DeleteRefreshToken to be called with a fingerprint")
+	}
+}
+
+func TestLogout_EmptyToken_NoOp(t *testing.T) {
+	called := false
+	repo := happyRepo()
+	repo.deleteRefreshTokenFn = func(_ context.Context, _ string) (int64, error) {
+		called = true
+		return 0, nil
+	}
+
+	svc := auth.NewService(repo, testCfg())
+	if err := svc.Logout(context.Background(), "usr_abc", ""); err != nil {
+		t.Fatalf("Logout() with empty token should return nil, got %v", err)
+	}
+	if called {
+		t.Error("expected no DB call when refresh token is empty")
+	}
+}
+
+func TestGetProfile_Success(t *testing.T) {
+	repo := happyRepo()
+	svc := auth.NewService(repo, testCfg())
+
+	view, err := svc.GetProfile(context.Background(), "usr_abc123")
+	if err != nil {
+		t.Fatalf("GetProfile() error = %v", err)
+	}
+	if view.ID != "usr_abc123" {
+		t.Errorf("ID = %q, want %q", view.ID, "usr_abc123")
+	}
+	if view.Email != "user@example.com" {
+		t.Errorf("Email = %q, want %q", view.Email, "user@example.com")
+	}
+}
+
+func TestGetProfile_UserNotFound(t *testing.T) {
+	repo := happyRepo()
+	repo.getUserByIDFn = func(_ context.Context, _ string) (auth.User, error) {
+		return auth.User{}, apperror.New(http.StatusNotFound, apperror.ErrUserNotFound, "not found")
+	}
+
+	svc := auth.NewService(repo, testCfg())
+	_, err := svc.GetProfile(context.Background(), "usr_missing")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	var ae *apperror.AppError
+	if !errors.As(err, &ae) || ae.Code != apperror.ErrUserNotFound {
+		t.Fatalf("expected USER_NOT_FOUND, got %v", err)
+	}
+}
+
+func TestUpdateMe_Success(t *testing.T) {
+	firstName := "Jane"
+	repo := happyRepo()
+	repo.updateUserFn = func(_ context.Context, _ string, req auth.UpdateMeRequest) (auth.User, error) {
+		u := fixedUser()
+		if req.FirstName != nil {
+			u.FirstName = *req.FirstName
+		}
+		return u, nil
+	}
+
+	svc := auth.NewService(repo, testCfg())
+	view, err := svc.UpdateMe(context.Background(), "usr_abc123", auth.UpdateMeRequest{
+		FirstName: &firstName,
+	})
+	if err != nil {
+		t.Fatalf("UpdateMe() error = %v", err)
+	}
+	if view.FirstName != "Jane" {
+		t.Errorf("FirstName = %q, want %q", view.FirstName, "Jane")
+	}
+}
+
+func TestUpdateMe_InvalidEmail(t *testing.T) {
+	bad := "notanemail"
+	svc := auth.NewService(happyRepo(), testCfg())
+
+	_, err := svc.UpdateMe(context.Background(), "usr_abc123", auth.UpdateMeRequest{
+		Email: &bad,
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid email, got nil")
+	}
+	var ae *apperror.AppError
+	if !errors.As(err, &ae) || ae.Code != apperror.ErrInvalidEmail {
+		t.Fatalf("expected INVALID_EMAIL, got %v", err)
+	}
+}
+
+func TestDeleteMe_RevokesAllTokens(t *testing.T) {
+	var softDeleted, revokedAll bool
+	repo := happyRepo()
+	repo.softDeleteUserFn = func(_ context.Context, _ string) error {
+		softDeleted = true
+		return nil
+	}
+	repo.deleteAllRefreshTokensFn = func(_ context.Context, _ string) error {
+		revokedAll = true
+		return nil
+	}
+
+	svc := auth.NewService(repo, testCfg())
+	if err := svc.DeleteMe(context.Background(), "usr_abc123"); err != nil {
+		t.Fatalf("DeleteMe() error = %v", err)
+	}
+	if !softDeleted {
+		t.Error("expected SoftDeleteUser to be called")
+	}
+	if !revokedAll {
+		t.Error("expected DeleteAllRefreshTokens to be called")
+	}
+}
+
+func TestRefreshToken_Success(t *testing.T) {
+	const rawToken = "validrawtoken"
+	repo := happyRepo()
+	repo.getRefreshTokenByFingerprintFn = func(_ context.Context, _ string) (auth.RefreshToken, error) {
+		hash, _ := hashutil.Hash(rawToken)
+		return auth.RefreshToken{
+			UserID:    "usr_abc123",
+			TokenHash: hash,
+			ExpiresAt: time.Now().Add(time.Hour),
+		}, nil
+	}
+	repo.deleteRefreshTokenFn = func(_ context.Context, _ string) (int64, error) {
+		return 1, nil
+	}
+
+	svc := auth.NewService(repo, testCfg())
+	resp, err := svc.RefreshToken(context.Background(), rawToken)
+	if err != nil {
+		t.Fatalf("RefreshToken() error = %v", err)
+	}
+	if resp.Token == "" {
+		t.Error("expected non-empty JWT after refresh")
+	}
+	if resp.RefreshToken == "" {
+		t.Error("expected new refresh token after rotation")
+	}
+}
+
+func TestRefreshToken_EmptyToken(t *testing.T) {
+	svc := auth.NewService(happyRepo(), testCfg())
+	_, err := svc.RefreshToken(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected error for empty refresh token, got nil")
+	}
+	var ae *apperror.AppError
+	if !errors.As(err, &ae) || ae.Code != apperror.ErrInvalidToken {
+		t.Fatalf("expected INVALID_TOKEN, got %v", err)
+	}
+}

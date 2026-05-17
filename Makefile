@@ -14,6 +14,9 @@ build:
 test:
 	go test ./... -race -count=1 -coverprofile=coverage.out -covermode=atomic
 
+test-integration:
+	go test ./... -tags=integration -race -count=1 -v
+
 lint:
 	golangci-lint run ./...
 
