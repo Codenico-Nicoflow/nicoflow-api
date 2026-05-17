@@ -14,6 +14,7 @@ Go REST API for the Nicoflow platform.
 - [Local Development (no Docker)](#local-development-no-docker)
 - [Staging](#staging)
 - [Production](#production)
+- [Testing](#testing)
 - [Migrations](#migrations)
 - [Make Targets](#make-targets)
 - [Project Structure](#project-structure)
@@ -23,13 +24,13 @@ Go REST API for the Nicoflow platform.
 
 ## Prerequisites
 
-| Tool | Install |
-|---|---|
-| Go 1.25+ | https://go.dev/dl |
-| Docker + Docker Compose | https://docs.docker.com/get-docker |
-| Air (hot-reload) | `go install github.com/air-verse/air@latest` |
-| golang-migrate CLI | `brew install golang-migrate` |
-| golangci-lint | `brew install golangci-lint` |
+| Tool                    | Install                                      |
+| ----------------------- | -------------------------------------------- |
+| Go 1.25+                | https://go.dev/dl                            |
+| Docker + Docker Compose | https://docs.docker.com/get-docker           |
+| Air (hot-reload)        | `go install github.com/air-verse/air@latest` |
+| golang-migrate CLI      | `brew install golang-migrate`                |
+| golangci-lint           | `brew install golangci-lint`                 |
 
 ---
 
@@ -59,6 +60,7 @@ make docker-up
 ```
 
 This starts:
+
 - **Postgres 16** on `localhost:5432` — credentials: `nicoflow / nicoflow / nicoflow`
 - **MinIO** on `localhost:9000` — S3-compatible object storage; web console at `localhost:9001` (login: `minioadmin / minioadmin`)
 
@@ -161,23 +163,23 @@ Production runs on **Render** and deploys automatically on every merge from `sta
 
 All configuration is set as environment variables in the Render dashboard:
 
-| Variable | Required | Description |
-|---|---|---|
-| `DATABASE_URL` | Yes | Render Managed Postgres connection string |
-| `JWT_SECRET` | Yes | HS256 signing secret — min 32 bytes, cryptographically random |
-| `PORT` | Auto | Set by Render — do not override |
-| `JWT_EXPIRY` | No | Access token TTL (default `15m`) |
-| `REFRESH_TOKEN_EXPIRY` | No | Refresh token TTL (default `168h`) |
-| `SMTP_DSN` | No | `smtp://user:pass@host:587` — required for password reset emails |
-| `APP_BASE_URL` | No | Frontend URL for reset links, e.g. `https://app.nicoflow.app` |
-| `CORS_ORIGINS` | No | Comma-separated allowed origins, e.g. `https://app.nicoflow.app` |
-| `APP_ENV` | No | `production` |
-| `LOG_LEVEL` | No | `info` |
-| `AWS_REGION` | No | S3 region, e.g. `us-east-1` |
-| `AWS_ACCESS_KEY_ID` | No | IAM key for S3 |
-| `AWS_SECRET_ACCESS_KEY` | No | IAM secret for S3 |
-| `S3_BUCKET_NAME` | No | `nicoflow-attachments` |
-| `LS_WEBHOOK_SECRET` | No | Lemon Squeezy HMAC webhook secret |
+| Variable                | Required | Description                                                      |
+| ----------------------- | -------- | ---------------------------------------------------------------- |
+| `DATABASE_URL`          | Yes      | Render Managed Postgres connection string                        |
+| `JWT_SECRET`            | Yes      | HS256 signing secret — min 32 bytes, cryptographically random    |
+| `PORT`                  | Auto     | Set by Render — do not override                                  |
+| `JWT_EXPIRY`            | No       | Access token TTL (default `15m`)                                 |
+| `REFRESH_TOKEN_EXPIRY`  | No       | Refresh token TTL (default `168h`)                               |
+| `SMTP_DSN`              | No       | `smtp://user:pass@host:587` — required for password reset emails |
+| `APP_BASE_URL`          | No       | Frontend URL for reset links, e.g. `https://app.nicoflow.app`    |
+| `CORS_ORIGINS`          | No       | Comma-separated allowed origins, e.g. `https://app.nicoflow.app` |
+| `APP_ENV`               | No       | `production`                                                     |
+| `LOG_LEVEL`             | No       | `info`                                                           |
+| `AWS_REGION`            | No       | S3 region, e.g. `us-east-1`                                      |
+| `AWS_ACCESS_KEY_ID`     | No       | IAM key for S3                                                   |
+| `AWS_SECRET_ACCESS_KEY` | No       | IAM secret for S3                                                |
+| `S3_BUCKET_NAME`        | No       | `nicoflow-attachments`                                           |
+| `LS_WEBHOOK_SECRET`     | No       | Lemon Squeezy HMAC webhook secret                                |
 
 Migrations run automatically as a Render pre-deploy command:
 
@@ -186,6 +188,81 @@ migrate -path migrations -database "$DATABASE_URL" up
 ```
 
 > Never run `migrate down` or `migrate down-all` against staging or production.
+
+---
+
+## Testing
+
+### Unit tests
+
+Unit tests use mocked dependencies — no database required. Run them any time:
+
+```bash
+make test
+```
+
+This runs all `*_test.go` files (excluding integration), with the race detector and coverage output to `coverage.out`.
+
+To view coverage in the browser:
+
+```bash
+go tool cover -html=coverage.out
+```
+
+---
+
+### Integration tests
+
+Integration tests hit a **real PostgreSQL database**. They are gated behind the `integration` build tag and a separate `TEST_DATABASE_URL` env var so they never run accidentally against your dev or staging DB.
+
+**Step 1 — Create a dedicated test database**
+
+If you're using Docker Compose (recommended):
+
+```bash
+make docker-up   # starts Postgres on localhost:5432
+docker exec -it nicoflow-api-postgres-1 psql -U nicoflow -c "CREATE DATABASE nicoflow_test;"
+```
+
+If you're using a local Postgres (Homebrew / native):
+
+```bash
+createdb nicoflow_test
+```
+
+**Step 2 — Apply migrations to the test database**
+
+Docker Compose Postgres (password is in your `.env` as `POSTGRES_PASSWORD`):
+
+```bash
+migrate -path migrations -database "postgres://nicoflow:<POSTGRES_PASSWORD>@localhost:5432/nicoflow_test?sslmode=disable" up
+```
+
+Local Postgres (no password, trust auth):
+
+```bash
+migrate -path migrations -database "postgres://localhost/nicoflow_test?sslmode=disable" up
+```
+
+**Step 3 — Run integration tests**
+
+Docker Compose Postgres:
+
+```bash
+TEST_DATABASE_URL="postgres://nicoflow:<POSTGRES_PASSWORD>@localhost:5432/nicoflow_test?sslmode=disable" make test-integration
+```
+
+Local Postgres (no password):
+
+```bash
+TEST_DATABASE_URL="postgres://localhost/nicoflow_test?sslmode=disable" make test-integration
+```
+
+Replace `<POSTGRES_PASSWORD>` with the value of `POSTGRES_PASSWORD` from your `.env` file. URL-encode any special characters (e.g. `$` → `%24`).
+
+Each test truncates the tables it needs before and after running — they are fully isolated and safe to re-run repeatedly.
+
+If `TEST_DATABASE_URL` is not set, integration tests are **skipped** (not failed), so `make test` is always safe to run without a test DB.
 
 ---
 
@@ -223,20 +300,20 @@ make docker-migrate-up
 
 ## Make Targets
 
-| Target | Description |
-|---|---|
-| `make dev` | Start API with Air hot-reload |
-| `make build` | Compile binary to `bin/api` |
-| `make test` | Run all tests with race detector + coverage |
-| `make lint` | Run golangci-lint |
-| `make docker-up` | Start Postgres + MinIO via Docker Compose |
-| `make docker-down` | Stop containers (keeps data volumes) |
-| `make docker-migrate-up` | Apply migrations against Docker Compose Postgres |
-| `make migrate-up` | Apply all pending migrations (`DATABASE_URL` required) |
-| `make migrate-down` | Roll back one migration |
-| `make migrate-version` | Show current migration version |
-| `make migrate-create name=x` | Create a new migration pair |
-| `make migrate-force version=n` | Force-set migration version (dev only) |
+| Target                         | Description                                            |
+| ------------------------------ | ------------------------------------------------------ |
+| `make dev`                     | Start API with Air hot-reload                          |
+| `make build`                   | Compile binary to `bin/api`                            |
+| `make test`                    | Run all tests with race detector + coverage            |
+| `make lint`                    | Run golangci-lint                                      |
+| `make docker-up`               | Start Postgres + MinIO via Docker Compose              |
+| `make docker-down`             | Stop containers (keeps data volumes)                   |
+| `make docker-migrate-up`       | Apply migrations against Docker Compose Postgres       |
+| `make migrate-up`              | Apply all pending migrations (`DATABASE_URL` required) |
+| `make migrate-down`            | Roll back one migration                                |
+| `make migrate-version`         | Show current migration version                         |
+| `make migrate-create name=x`   | Create a new migration pair                            |
+| `make migrate-force version=n` | Force-set migration version (dev only)                 |
 
 ---
 
@@ -374,19 +451,19 @@ Every response — success or error — uses this shape:
 
 ### Error codes
 
-| HTTP | Code | Meaning |
-|---|---|---|
-| 400 | `INVALID_INPUT` | Validation failure |
-| 400 | `INVALID_EMAIL` | Malformed email address |
-| 400 | `WEAK_PASSWORD` | Password does not meet strength requirements |
-| 401 | `UNAUTHORIZED` | Authentication required or credentials invalid |
-| 401 | `INVALID_TOKEN` | JWT or refresh token is missing, expired, or tampered |
-| 403 | `FORBIDDEN` | Authenticated but not authorised |
-| 403 | `PLAN_LIMIT_EXCEEDED` | Free tier limit reached |
-| 404 | `RESOURCE_NOT_FOUND` | Generic not found |
-| 409 | `EMAIL_ALREADY_EXISTS` | Email is already registered |
-| 429 | `RATE_LIMITED` | Too many requests — check `Retry-After` header |
-| 500 | `DATABASE_ERROR` | Unexpected server error |
+| HTTP | Code                   | Meaning                                               |
+| ---- | ---------------------- | ----------------------------------------------------- |
+| 400  | `INVALID_INPUT`        | Validation failure                                    |
+| 400  | `INVALID_EMAIL`        | Malformed email address                               |
+| 400  | `WEAK_PASSWORD`        | Password does not meet strength requirements          |
+| 401  | `UNAUTHORIZED`         | Authentication required or credentials invalid        |
+| 401  | `INVALID_TOKEN`        | JWT or refresh token is missing, expired, or tampered |
+| 403  | `FORBIDDEN`            | Authenticated but not authorised                      |
+| 403  | `PLAN_LIMIT_EXCEEDED`  | Free tier limit reached                               |
+| 404  | `RESOURCE_NOT_FOUND`   | Generic not found                                     |
+| 409  | `EMAIL_ALREADY_EXISTS` | Email is already registered                           |
+| 429  | `RATE_LIMITED`         | Too many requests — check `Retry-After` header        |
+| 500  | `DATABASE_ERROR`       | Unexpected server error                               |
 
 ---
 

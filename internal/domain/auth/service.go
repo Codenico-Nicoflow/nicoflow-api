@@ -68,7 +68,7 @@ func (s *service) Register(ctx context.Context, req RegisterRequest) (AuthRespon
 		return AuthResponse{}, err
 	}
 
-	return s.issueAuthResponse(ctx, user)
+	return s.issueAuthResponse(ctx, user, s.cfg.RefreshTokenExpiry)
 }
 
 func (s *service) Login(ctx context.Context, req LoginRequest) (AuthResponse, error) {
@@ -90,7 +90,11 @@ func (s *service) Login(ctx context.Context, req LoginRequest) (AuthResponse, er
 		return AuthResponse{}, apperror.New(http.StatusUnauthorized, apperror.ErrUnauthorized, "invalid credentials")
 	}
 
-	return s.issueAuthResponse(ctx, user)
+	tokenTTL := s.cfg.RefreshTokenExpiry
+	if !req.Remember {
+		tokenTTL = 24 * time.Hour
+	}
+	return s.issueAuthResponse(ctx, user, tokenTTL)
 }
 
 func (s *service) Logout(ctx context.Context, _ string, rawRefreshToken string) error {
@@ -139,7 +143,7 @@ func (s *service) RefreshToken(ctx context.Context, rawRefreshToken string) (Aut
 		return AuthResponse{}, err
 	}
 
-	return s.issueAuthResponse(ctx, user)
+	return s.issueAuthResponse(ctx, user, s.cfg.RefreshTokenExpiry)
 }
 
 func (s *service) ForgotPassword(ctx context.Context, email string) error {
@@ -260,7 +264,8 @@ func (s *service) RegisterPushToken(_ context.Context, _ string, _ RegisterPushT
 }
 
 // issueAuthResponse generates a fresh refresh token + JWT and returns the AuthResponse.
-func (s *service) issueAuthResponse(ctx context.Context, user User) (AuthResponse, error) {
+// tokenTTL controls both the DB expiry and the cookie Max-Age sent to the client.
+func (s *service) issueAuthResponse(ctx context.Context, user User, tokenTTL time.Duration) (AuthResponse, error) {
 	rawToken, err := generateRawToken()
 	if err != nil {
 		return AuthResponse{}, fmt.Errorf("auth: generate refresh token: %w", err)
@@ -272,7 +277,7 @@ func (s *service) issueAuthResponse(ctx context.Context, user User) (AuthRespons
 	}
 
 	fp := fingerprint(rawToken)
-	expiresAt := time.Now().Add(s.cfg.RefreshTokenExpiry)
+	expiresAt := time.Now().Add(tokenTTL)
 	if err := s.repo.StoreRefreshToken(ctx, user.ID, tokenHash, fp, expiresAt); err != nil {
 		return AuthResponse{}, err
 	}
@@ -286,6 +291,7 @@ func (s *service) issueAuthResponse(ctx context.Context, user User) (AuthRespons
 		Token:        jwt,
 		RefreshToken: rawToken,
 		User:         userToView(user),
+		CookieMaxAge: int(tokenTTL.Seconds()),
 	}, nil
 }
 

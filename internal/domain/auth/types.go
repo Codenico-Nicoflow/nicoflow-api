@@ -89,6 +89,7 @@ type AuthResponse struct {
 	Token        string   `json:"token"`
 	RefreshToken string   `json:"refreshToken"`
 	User         UserView `json:"user"`
+	CookieMaxAge int      `json:"-"` // seconds; 0 = session cookie (no Max-Age)
 }
 
 // UserView is the public user shape returned in all auth responses.
