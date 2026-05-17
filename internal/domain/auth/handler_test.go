@@ -23,8 +23,8 @@ func (m *mockService) Register(_ context.Context, _ auth.RegisterRequest) (auth.
 func (m *mockService) Login(ctx context.Context, req auth.LoginRequest) (auth.AuthResponse, error) {
 	return m.loginFn(ctx, req)
 }
-func (m *mockService) Logout(_ context.Context, _, _ string) error             { return nil }
-func (m *mockService) LogoutAll(_ context.Context, _ string) error             { return nil }
+func (m *mockService) Logout(_ context.Context, _, _ string) error { return nil }
+func (m *mockService) LogoutAll(_ context.Context, _ string) error { return nil }
 func (m *mockService) RefreshToken(_ context.Context, _ string) (auth.AuthResponse, error) {
 	return auth.AuthResponse{CookieMaxAge: int(testCfg().RefreshTokenExpiry.Seconds())}, nil
 }
@@ -60,9 +60,9 @@ func TestHandler_Login_RememberMe_Cookie(t *testing.T) {
 	cfg := testCfg()
 
 	tests := []struct {
-		name           string
-		remember       bool
-		svcMaxAge      int
+		name             string
+		remember         bool
+		svcMaxAge        int
 		wantCookieMaxAge int
 	}{
 		{

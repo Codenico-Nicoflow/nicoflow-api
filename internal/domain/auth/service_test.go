@@ -264,25 +264,25 @@ func TestLogin_RememberMe(t *testing.T) {
 	cfg := testCfg() // RefreshTokenExpiry = 7 * 24h
 
 	tests := []struct {
-		name            string
-		remember        bool
+		name             string
+		remember         bool
 		wantCookieMaxAge int
-		wantMinTTL      time.Duration
-		wantMaxTTL      time.Duration
+		wantMinTTL       time.Duration
+		wantMaxTTL       time.Duration
 	}{
 		{
-			name:            "remember=true uses full RefreshTokenExpiry",
-			remember:        true,
+			name:             "remember=true uses full RefreshTokenExpiry",
+			remember:         true,
 			wantCookieMaxAge: int(cfg.RefreshTokenExpiry.Seconds()), // 604800
-			wantMinTTL:      cfg.RefreshTokenExpiry - time.Second,
-			wantMaxTTL:      cfg.RefreshTokenExpiry + time.Second,
+			wantMinTTL:       cfg.RefreshTokenExpiry - time.Second,
+			wantMaxTTL:       cfg.RefreshTokenExpiry + time.Second,
 		},
 		{
-			name:            "remember=false uses 24h session TTL and zero cookie max-age",
-			remember:        false,
+			name:             "remember=false uses 24h session TTL and zero cookie max-age",
+			remember:         false,
 			wantCookieMaxAge: int((24 * time.Hour).Seconds()), // 86400
-			wantMinTTL:      24*time.Hour - time.Second,
-			wantMaxTTL:      24*time.Hour + time.Second,
+			wantMinTTL:       24*time.Hour - time.Second,
+			wantMaxTTL:       24*time.Hour + time.Second,
 		},
 	}
 
