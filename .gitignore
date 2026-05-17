@@ -3,6 +3,7 @@
 build-errors.log
 tmp/
 bin/
+coverage.out
 
 # IDE
 .idea/

@@ -1,7 +1,7 @@
 .PHONY: dev build test lint docker-up docker-down docker-migrate-up \
         migrate-up migrate-down migrate-down-all migrate-version migrate-create migrate-force
 
-DOCKER_DATABASE_URL ?= postgres://nicoflow:nicoflow@localhost:5432/nicoflow?sslmode=disable
+DOCKER_DATABASE_URL ?= postgres://nicoflow:BaNa9406%24@localhost:5432/nicoflow?sslmode=disable
 
 ## Development
 
@@ -13,6 +13,9 @@ build:
 
 test:
 	go test ./... -race -count=1 -coverprofile=coverage.out -covermode=atomic
+
+test-integration:
+	go test ./... -tags=integration -race -count=1 -v
 
 lint:
 	golangci-lint run ./...

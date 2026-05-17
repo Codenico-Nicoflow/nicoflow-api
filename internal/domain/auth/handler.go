@@ -39,7 +39,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.setRefreshCookie(w, resp.RefreshToken)
+	h.setRefreshCookie(w, resp.RefreshToken, resp.CookieMaxAge)
 	respond.JSON(w, http.StatusCreated, resp)
 }
 
@@ -57,7 +57,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.setRefreshCookie(w, resp.RefreshToken)
+	h.setRefreshCookie(w, resp.RefreshToken, resp.CookieMaxAge)
 	respond.JSON(w, http.StatusOK, resp)
 }
 
@@ -82,7 +82,7 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.setRefreshCookie(w, resp.RefreshToken)
+	h.setRefreshCookie(w, resp.RefreshToken, resp.CookieMaxAge)
 	respond.JSON(w, http.StatusOK, resp)
 }
 
@@ -237,13 +237,14 @@ func (h *Handler) UpdateNotificationPreferences(w http.ResponseWriter, r *http.R
 }
 
 // setRefreshCookie sets the HttpOnly refresh token cookie per SPEC §3.5.
+// maxAge=0 produces a session cookie (no Max-Age header, expires on browser close).
 // Secure is intentionally runtime-controlled (false in dev over HTTP, true in staging/production).
-func (h *Handler) setRefreshCookie(w http.ResponseWriter, rawToken string) {
+func (h *Handler) setRefreshCookie(w http.ResponseWriter, rawToken string, maxAge int) {
 	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is intentionally dynamic: true in staging/production, false in development (HTTP)
 		Name:     "refresh_token",
 		Value:    rawToken,
 		Path:     "/v1/auth/refresh-token",
-		MaxAge:   604800,
+		MaxAge:   maxAge,
 		HttpOnly: true,
 		Secure:   h.secureCookie,
 		SameSite: http.SameSiteStrictMode,
