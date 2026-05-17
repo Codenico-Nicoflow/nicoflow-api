@@ -43,7 +43,7 @@ func Issue(userID, email, plan, secret string, ttl time.Duration) (string, error
 // Returns an error if the signature, expiry, or issuer is invalid.
 func Parse(tokenStr, secret string) (*Claims, error) {
 	parsed, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+		if t.Method != jwt.SigningMethodHS256 {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
 		return []byte(secret), nil
