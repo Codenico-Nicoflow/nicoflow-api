@@ -72,6 +72,15 @@ jobs:
           TEST_DATABASE_URL: postgres://nicoflow:nicoflow@localhost:5432/nicoflow_test?sslmode=disable
         run: go test ./... -tags=integration -race -count=1 -coverprofile=coverage.out -covermode=atomic
 
+      - name: Coverage gate (auth service ≥ 50%, utils ≥ 75%)
+        run: |
+          go tool cover -func=coverage.out | tee /tmp/cover.txt
+          SVC=$(grep 'internal/domain/auth' /tmp/cover.txt | awk '{sum+=$3; n++} END {if(n>0) printf "%.1f", sum/n}' | tr -d '%')
+          UTIL=$(grep 'pkg/hashutil\|pkg/jwtutil' /tmp/cover.txt | awk '{sum+=$3; n++} END {if(n>0) printf "%.1f", sum/n}' | tr -d '%')
+          echo "Auth service avg: ${SVC:-0}%, Tested utils avg: ${UTIL:-0}%"
+          awk "BEGIN {if (${SVC:-0}+0 < 50) {print \"FAIL: auth service coverage ${SVC}% < 50%\"; exit 1}}"
+          awk "BEGIN {if (${UTIL:-0}+0 < 75) {print \"FAIL: utils coverage ${UTIL}% < 75%\"; exit 1}}"
+
       - name: Upload coverage
         uses: actions/upload-artifact@v4
         if: always()
@@ -102,6 +111,11 @@ jobs:
         run: |
           go install github.com/securego/gosec/v2/cmd/gosec@v2.26.1
           gosec ./...
+
+      - name: gitleaks (secret scanning)
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz | tar -xz gitleaks
+          ./gitleaks detect --source . --redact --no-git --exit-code 1
 
   build:
     name: Build
@@ -166,3 +180,11 @@ jobs:
             echo "ERROR: image is ${SIZE_MB}MB, must be < 50MB"
             exit 1
           fi
+
+      - name: Trivy image scan (HIGH + CRITICAL)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: nicoflow-api:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true

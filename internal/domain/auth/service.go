@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/mail"
 	"regexp"
 	"sync"
 	"time"
-	"unicode"
+
+	"github.com/rs/zerolog/log"
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
 	"github.com/nicoflow/nicoflow-api/internal/config"
@@ -20,7 +22,6 @@ import (
 	"github.com/nicoflow/nicoflow-api/pkg/jwtutil"
 )
 
-var emailRE = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
 var usernameRE = regexp.MustCompile(`^[a-zA-Z0-9]{3,20}$`)
 
 // dummyHash is computed once at first login attempt against a nonexistent email.
@@ -104,9 +105,18 @@ func (s *service) Login(ctx context.Context, req LoginRequest) (AuthResponse, er
 		return AuthResponse{}, err
 	}
 
+	// Account lockout check.
+	if user.LockedUntil != nil && time.Now().Before(*user.LockedUntil) {
+		return AuthResponse{}, apperror.New(http.StatusTooManyRequests, apperror.ErrRateLimited, "account temporarily locked due to too many failed attempts")
+	}
+
 	if !hashutil.Compare(user.PasswordHash, req.Password) {
+		_ = s.repo.IncrementFailedLogin(ctx, user.ID)
 		return AuthResponse{}, apperror.New(http.StatusUnauthorized, apperror.ErrUnauthorized, "invalid credentials")
 	}
+
+	// Successful login — reset counter.
+	_ = s.repo.ResetFailedLogin(ctx, user.ID)
 
 	tokenTTL := s.cfg.RefreshTokenExpiry
 	if !req.Remember {
@@ -186,9 +196,10 @@ func (s *service) ForgotPassword(ctx context.Context, email string) error {
 	}
 
 	resetURL := s.cfg.AppBaseURL + "/reset-password?token=" + rawToken
-	// Best-effort email send — log failure but don't surface to caller.
 	if s.cfg.SMTPDsn != "" {
-		_ = emailutil.SendPasswordReset(email, resetURL, s.cfg.SMTPDsn)
+		if err := emailutil.SendPasswordReset(email, resetURL, s.cfg.SMTPDsn); err != nil {
+			log.Error().Err(err).Str("user_id", user.ID).Msg("failed to send password reset email")
+		}
 	}
 
 	return nil
@@ -268,9 +279,7 @@ func (s *service) DeleteMe(ctx context.Context, userID string) error {
 }
 
 func (s *service) RegisterPushToken(_ context.Context, _ string, _ RegisterPushTokenRequest) error {
-	// Push notification tokens are stored in a future story (E-push).
-	// Accept the request and return 201 without error.
-	return nil
+	return apperror.New(http.StatusNotImplemented, apperror.ErrInternalServerError, "push notifications are not yet available")
 }
 
 // issueAuthResponse generates a fresh refresh token + JWT and returns the AuthResponse.
@@ -321,29 +330,20 @@ func fingerprint(rawToken string) string {
 }
 
 func validateEmail(email string) error {
-	if !emailRE.MatchString(email) {
+	if _, err := mail.ParseAddress(email); err != nil {
 		return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidEmail, "invalid email address")
 	}
 	return nil
 }
 
 func validatePassword(password string) error {
-	if len(password) < 8 || len(password) > 20 {
-		return apperror.New(http.StatusBadRequest, apperror.ErrWeakPassword, "password must be 8-20 characters")
+	// NIST SP 800-63B: min 8, max 72 (bcrypt silently truncates beyond 72 bytes).
+	// No mandatory composition rules — length is the primary strength signal.
+	if len(password) < 8 {
+		return apperror.New(http.StatusBadRequest, apperror.ErrWeakPassword, "password must be at least 8 characters")
 	}
-	var hasUpper, hasLower, hasDigit bool
-	for _, c := range password {
-		switch {
-		case unicode.IsUpper(c):
-			hasUpper = true
-		case unicode.IsLower(c):
-			hasLower = true
-		case unicode.IsDigit(c):
-			hasDigit = true
-		}
-	}
-	if !hasUpper || !hasLower || !hasDigit {
-		return apperror.New(http.StatusBadRequest, apperror.ErrWeakPassword, "password must contain at least 1 uppercase letter, 1 lowercase letter, and 1 digit")
+	if len(password) > 72 {
+		return apperror.New(http.StatusBadRequest, apperror.ErrWeakPassword, "password must be at most 72 characters")
 	}
 	return nil
 }

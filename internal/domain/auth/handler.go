@@ -67,7 +67,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	// Cookie takes priority; fall back to JSON body.
 	rawToken := ""
-	if cookie, err := r.Cookie("refresh_token"); err == nil {
+	if cookie, err := r.Cookie(h.refreshCookieName()); err == nil {
 		rawToken = cookie.Value
 	} else {
 		var body struct {
@@ -92,7 +92,7 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())
 	rawToken := ""
-	if cookie, err := r.Cookie("refresh_token"); err == nil {
+	if cookie, err := r.Cookie(h.refreshCookieName()); err == nil {
 		rawToken = cookie.Value
 	}
 
@@ -238,12 +238,21 @@ func (h *Handler) UpdateNotificationPreferences(w http.ResponseWriter, r *http.R
 	notImplemented(w, r)
 }
 
+// refreshCookieName returns the cookie name: "__Secure-refresh_token" in secure environments
+// (staging/production) to block subdomain overwrite attacks, "refresh_token" in development.
+func (h *Handler) refreshCookieName() string {
+	if h.secureCookie {
+		return "__Secure-refresh_token"
+	}
+	return "refresh_token"
+}
+
 // setRefreshCookie sets the HttpOnly refresh token cookie per SPEC §3.5.
 // maxAge=0 produces a session cookie (no Max-Age header, expires on browser close).
 // Secure is intentionally runtime-controlled (false in dev over HTTP, true in staging/production).
 func (h *Handler) setRefreshCookie(w http.ResponseWriter, rawToken string, maxAge int) {
 	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is intentionally dynamic: true in staging/production, false in development (HTTP)
-		Name:     "refresh_token",
+		Name:     h.refreshCookieName(),
 		Value:    rawToken,
 		Path:     "/v1/auth",
 		MaxAge:   maxAge,
@@ -256,7 +265,7 @@ func (h *Handler) setRefreshCookie(w http.ResponseWriter, rawToken string, maxAg
 // clearRefreshCookie expires the refresh token cookie.
 func (h *Handler) clearRefreshCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is intentionally dynamic: true in staging/production, false in development (HTTP)
-		Name:     "refresh_token",
+		Name:     h.refreshCookieName(),
 		Value:    "",
 		Path:     "/v1/auth",
 		MaxAge:   -1,

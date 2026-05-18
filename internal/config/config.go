@@ -76,6 +76,12 @@ func Load() Config {
 	}
 }
 
+// String returns a safe representation that redacts secrets.
+// Prevents JWTSecret and LSWebhookSecret leaking into debug logs.
+func (c Config) String() string {
+	return "config{env=" + c.AppEnv + " port=" + c.Port + " jwt_secret=[REDACTED] webhook_secret=[REDACTED]}"
+}
+
 func parseDuration(s string, fallback time.Duration) time.Duration {
 	if s == "" {
 		return fallback

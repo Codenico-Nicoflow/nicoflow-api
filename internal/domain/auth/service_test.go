@@ -25,6 +25,8 @@ type mockRepo struct {
 	deleteRefreshTokenFn           func(ctx context.Context, fingerprint string) (int64, error)
 	deleteRefreshTokenReturningFn  func(ctx context.Context, fingerprint string) (auth.RefreshToken, error)
 	deleteAllRefreshTokensFn       func(ctx context.Context, userID string) error
+	incrementFailedLoginFn         func(ctx context.Context, userID string) error
+	resetFailedLoginFn             func(ctx context.Context, userID string) error
 	storePasswordResetTokenFn      func(ctx context.Context, userID, tokenHash, fp string, expiresAt time.Time) error
 	getPasswordResetTokenByFpFn    func(ctx context.Context, fingerprint string) (auth.PasswordResetToken, error)
 	markPasswordResetTokenUsedFn   func(ctx context.Context, fingerprint string) error
@@ -60,6 +62,12 @@ func (m *mockRepo) DeleteRefreshTokenReturning(ctx context.Context, fingerprint 
 }
 func (m *mockRepo) DeleteAllRefreshTokens(ctx context.Context, userID string) error {
 	return m.deleteAllRefreshTokensFn(ctx, userID)
+}
+func (m *mockRepo) IncrementFailedLogin(ctx context.Context, userID string) error {
+	return m.incrementFailedLoginFn(ctx, userID)
+}
+func (m *mockRepo) ResetFailedLogin(ctx context.Context, userID string) error {
+	return m.resetFailedLoginFn(ctx, userID)
 }
 func (m *mockRepo) StorePasswordResetToken(ctx context.Context, userID, tokenHash, fp string, expiresAt time.Time) error {
 	return m.storePasswordResetTokenFn(ctx, userID, tokenHash, fp, expiresAt)
@@ -120,6 +128,8 @@ func happyRepo() *mockRepo {
 			return auth.RefreshToken{UserID: "usr_abc123", TokenHash: hash, ExpiresAt: time.Now().Add(time.Hour)}, nil
 		},
 		deleteAllRefreshTokensFn:  func(_ context.Context, _ string) error { return nil },
+		incrementFailedLoginFn:    func(_ context.Context, _ string) error { return nil },
+		resetFailedLoginFn:        func(_ context.Context, _ string) error { return nil },
 		storePasswordResetTokenFn: func(_ context.Context, _, _, _ string, _ time.Time) error { return nil },
 		getPasswordResetTokenByFpFn: func(_ context.Context, _ string) (auth.PasswordResetToken, error) {
 			return auth.PasswordResetToken{}, nil
@@ -151,13 +161,8 @@ func TestRegister(t *testing.T) {
 			wantErr: apperror.ErrWeakPassword,
 		},
 		{
-			name:    "weak password - no digit",
-			req:     auth.RegisterRequest{Email: "user@example.com", Password: "NoDigitPass", Username: "johndoe"},
-			wantErr: apperror.ErrWeakPassword,
-		},
-		{
-			name:    "weak password - no uppercase",
-			req:     auth.RegisterRequest{Email: "user@example.com", Password: "nouppercas1", Username: "johndoe"},
+			name:    "weak password - too long",
+			req:     auth.RegisterRequest{Email: "user@example.com", Password: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Username: "johndoe"},
 			wantErr: apperror.ErrWeakPassword,
 		},
 		{
