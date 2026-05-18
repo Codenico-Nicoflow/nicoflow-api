@@ -4,19 +4,21 @@ import "time"
 
 // User is the domain model for an authenticated user.
 type User struct {
-	ID           string
-	Email        string
-	Username     string
-	PasswordHash string
-	FirstName    string
-	LastName     string
-	Theme        string
-	ImageURL     string
-	Status       string
-	Plan         string
-	Timezone     string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID               string
+	Email            string
+	Username         string
+	PasswordHash     string
+	FirstName        string
+	LastName         string
+	Theme            string
+	ImageURL         string
+	Status           string
+	Plan             string
+	Timezone         string
+	FailedLoginCount int
+	LockedUntil      *time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 // RefreshToken is a stored refresh token row.

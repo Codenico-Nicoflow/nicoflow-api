@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog/log"
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
 )
@@ -28,6 +29,9 @@ type Repository interface {
 	DeleteRefreshToken(ctx context.Context, fingerprint string) (int64, error)
 	DeleteRefreshTokenReturning(ctx context.Context, fingerprint string) (RefreshToken, error)
 	DeleteAllRefreshTokens(ctx context.Context, userID string) error
+
+	IncrementFailedLogin(ctx context.Context, userID string) error
+	ResetFailedLogin(ctx context.Context, userID string) error
 
 	StorePasswordResetToken(ctx context.Context, userID, tokenHash, tokenFingerprint string, expiresAt time.Time) error
 	GetPasswordResetTokenByFingerprint(ctx context.Context, fingerprint string) (PasswordResetToken, error)
@@ -81,6 +85,7 @@ func (r *pgRepo) GetUserByEmail(ctx context.Context, email string) (User, error)
 		SELECT id, email, COALESCE(username,''), password_hash,
 		       COALESCE(first_name,''), COALESCE(last_name,''),
 		       theme, COALESCE(image_url,''), status, plan, timezone,
+		       failed_login_count, locked_until,
 		       created_at, updated_at
 		FROM users
 		WHERE email = @email AND deleted_at IS NULL`,
@@ -89,6 +94,7 @@ func (r *pgRepo) GetUserByEmail(ctx context.Context, email string) (User, error)
 		&u.ID, &u.Email, &u.Username, &u.PasswordHash,
 		&u.FirstName, &u.LastName,
 		&u.Theme, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
+		&u.FailedLoginCount, &u.LockedUntil,
 		&u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
@@ -260,8 +266,14 @@ func (r *pgRepo) DeleteAllRefreshTokens(ctx context.Context, userID string) erro
 }
 
 func (r *pgRepo) StorePasswordResetToken(ctx context.Context, userID, tokenHash, tokenFingerprint string, expiresAt time.Time) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("auth.StorePasswordResetToken begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
 	// One active reset token per user at a time.
-	_, err := r.db.Exec(ctx,
+	_, err = tx.Exec(ctx,
 		`DELETE FROM password_reset_tokens WHERE user_id = @userID AND used_at IS NULL`,
 		pgx.NamedArgs{"userID": userID},
 	)
@@ -269,7 +281,7 @@ func (r *pgRepo) StorePasswordResetToken(ctx context.Context, userID, tokenHash,
 		return fmt.Errorf("auth.StorePasswordResetToken cleanup: %w", err)
 	}
 
-	_, err = r.db.Exec(ctx, `
+	_, err = tx.Exec(ctx, `
 		INSERT INTO password_reset_tokens (id, user_id, token_hash, token_fingerprint, expires_at)
 		VALUES (@id, @userID, @tokenHash, @tokenFingerprint, @expiresAt)`,
 		pgx.NamedArgs{
@@ -282,6 +294,10 @@ func (r *pgRepo) StorePasswordResetToken(ctx context.Context, userID, tokenHash,
 	)
 	if err != nil {
 		return fmt.Errorf("auth.StorePasswordResetToken: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("auth.StorePasswordResetToken commit: %w", err)
 	}
 	return nil
 }
@@ -329,6 +345,62 @@ func (r *pgRepo) UpdatePassword(ctx context.Context, userID, passwordHash string
 		return apperror.New(http.StatusNotFound, apperror.ErrUserNotFound, "user not found")
 	}
 	return nil
+}
+
+// IncrementFailedLogin bumps the failed_login_count and sets locked_until using
+// exponential back-off: lock duration = 2^(count-1) minutes, capped at 60 minutes.
+func (r *pgRepo) IncrementFailedLogin(ctx context.Context, userID string) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE users
+		SET failed_login_count = failed_login_count + 1,
+		    locked_until = CASE
+		        WHEN failed_login_count + 1 >= 5
+		        THEN NOW() + (LEAST(POWER(2, failed_login_count - 3), 60) || ' minutes')::INTERVAL
+		        ELSE NULL
+		    END
+		WHERE id = @userID AND deleted_at IS NULL`,
+		pgx.NamedArgs{"userID": userID},
+	)
+	if err != nil {
+		return fmt.Errorf("auth.IncrementFailedLogin: %w", err)
+	}
+	return nil
+}
+
+// ResetFailedLogin clears the failed login counter and lock after a successful login.
+func (r *pgRepo) ResetFailedLogin(ctx context.Context, userID string) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE users SET failed_login_count = 0, locked_until = NULL
+		WHERE id = @userID AND deleted_at IS NULL`,
+		pgx.NamedArgs{"userID": userID},
+	)
+	if err != nil {
+		return fmt.Errorf("auth.ResetFailedLogin: %w", err)
+	}
+	return nil
+}
+
+// StartTokenGC launches a background goroutine that deletes expired refresh tokens
+// and expired/used password reset tokens once per hour.
+// Call it once at server startup; it runs until the process exits.
+func StartTokenGC(ctx context.Context, db *pgxpool.Pool) {
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if _, err := db.Exec(ctx, `DELETE FROM refresh_tokens WHERE expires_at < NOW()`); err != nil {
+					log.Error().Err(err).Msg("token GC: failed to purge expired refresh tokens")
+				}
+				if _, err := db.Exec(ctx, `DELETE FROM password_reset_tokens WHERE expires_at < NOW() OR used_at IS NOT NULL`); err != nil {
+					log.Error().Err(err).Msg("token GC: failed to purge expired reset tokens")
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 }
 
 // isUniqueViolation checks for PostgreSQL unique constraint violation (error code 23505).

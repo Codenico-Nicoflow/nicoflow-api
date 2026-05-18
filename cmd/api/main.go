@@ -52,6 +52,7 @@ func main() {
 	// Auth domain — fully wired.
 	authRepo := auth.NewRepository(pool)
 	authSvc := auth.NewService(authRepo, cfg)
+	auth.StartTokenGC(ctx, pool)
 	secureCookie := cfg.AppEnv == "production" || cfg.AppEnv == "staging"
 
 	handlers := handler.Handlers{
