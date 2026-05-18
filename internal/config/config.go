@@ -19,6 +19,7 @@ type Config struct {
 	AWSSecretKey       string
 	S3Bucket           string
 	CORSOrigins        string
+	TrustedProxyCIDRs  string
 	AppEnv             string
 	Port               string
 	LogLevel           string
@@ -37,6 +38,9 @@ func Load() Config {
 	}
 	if jwtSecret == "" {
 		log.Fatal().Msg("required env var JWT_SECRET is not set")
+	}
+	if len(jwtSecret) < 32 {
+		log.Fatal().Msg("JWT_SECRET must be at least 32 bytes — generate one with: openssl rand -base64 48")
 	}
 	if port == "" {
 		log.Fatal().Msg("required env var PORT is not set")
@@ -62,6 +66,7 @@ func Load() Config {
 		AWSSecretKey:       os.Getenv("AWS_SECRET_ACCESS_KEY"),
 		S3Bucket:           os.Getenv("S3_BUCKET_NAME"),
 		CORSOrigins:        os.Getenv("CORS_ORIGINS"),
+		TrustedProxyCIDRs:  os.Getenv("TRUSTED_PROXY"),
 		AppEnv:             os.Getenv("APP_ENV"),
 		Port:               port,
 		LogLevel:           logLevel,

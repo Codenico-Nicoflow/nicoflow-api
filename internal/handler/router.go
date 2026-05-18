@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -43,7 +44,8 @@ func New(cfg config.Config, h Handlers) http.Handler {
 	// 4. CORS — Allow-Origin headers
 	r.Use(mw.CORS(cfg.CORSOrigins))
 	// 5. Rate limit by IP (global)
-	r.Use(mw.RateLimitIP(100, 20))
+	trustedProxies := splitCSV(cfg.TrustedProxyCIDRs)
+	r.Use(mw.RateLimitIP(100, 20, trustedProxies))
 
 	// ── Public routes ──────────────────────────────────────────────────────────
 	r.Get("/v1/health", Health)
@@ -56,10 +58,10 @@ func New(cfg config.Config, h Handlers) http.Handler {
 
 	// Auth — stricter per-endpoint IP rate limits
 	r.Route("/v1/auth", func(r chi.Router) {
-		r.With(mw.RateLimitIP(5, 5)).Post("/register", h.Auth.Register)
-		r.With(mw.RateLimitIP(10, 10)).Post("/login", h.Auth.Login)
+		r.With(mw.RateLimitIP(5, 5, trustedProxies)).Post("/register", h.Auth.Register)
+		r.With(mw.RateLimitIP(10, 10, trustedProxies)).Post("/login", h.Auth.Login)
 		r.Post("/refresh-token", h.Auth.Refresh)
-		r.With(mw.RateLimitIP(3, 3)).Post("/forgot-password", h.Auth.ForgotPassword)
+		r.With(mw.RateLimitIP(3, 3, trustedProxies)).Post("/forgot-password", h.Auth.ForgotPassword)
 		r.Post("/reset-password", h.Auth.ResetPassword)
 		// Biometric stubs — FIDO2/WebAuthn in v2
 		r.Post("/biometric/verify", h.Auth.BiometricVerify)
@@ -156,4 +158,20 @@ func New(cfg config.Config, h Handlers) http.Handler {
 // stub is a placeholder for routes not yet assigned to a domain handler.
 func stub(w http.ResponseWriter, _ *http.Request) {
 	respond.Error(w, http.StatusNotImplemented, apperror.ErrInternalServerError, "not implemented")
+}
+
+// splitCSV splits a comma-separated string into a trimmed, non-empty slice.
+func splitCSV(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

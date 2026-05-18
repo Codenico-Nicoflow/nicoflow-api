@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/nicoflow/nicoflow-api/pkg/jwtutil"
 )
 
@@ -59,5 +60,23 @@ func TestParse_MalformedToken(t *testing.T) {
 	_, err := jwtutil.Parse("not.a.jwt", testSecret)
 	if err == nil {
 		t.Fatal("Parse() expected error for malformed token, got nil")
+	}
+}
+
+func TestParse_RejectsHS384(t *testing.T) {
+	// Manually construct a token signed with HS384 — Parse must reject it.
+	token := jwt.NewWithClaims(jwt.SigningMethodHS384, jwt.RegisteredClaims{
+		Subject:   "usr_123",
+		Issuer:    "nicoflow-api",
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)),
+	})
+	signed, err := token.SignedString([]byte(testSecret))
+	if err != nil {
+		t.Fatalf("failed to sign HS384 token: %v", err)
+	}
+
+	_, err = jwtutil.Parse(signed, testSecret)
+	if err == nil {
+		t.Fatal("Parse() expected error for HS384 token, got nil")
 	}
 }
