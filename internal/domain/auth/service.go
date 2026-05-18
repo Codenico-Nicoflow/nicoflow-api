@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"sync"
 	"time"
 	"unicode"
 
@@ -21,6 +22,21 @@ import (
 
 var emailRE = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
 var usernameRE = regexp.MustCompile(`^[a-zA-Z0-9]{3,20}$`)
+
+// dummyHash is computed once at first login attempt against a nonexistent email.
+// Running bcrypt on the not-found path makes response time uniform, preventing timing-based
+// email enumeration (an attacker cannot distinguish "no such user" from "wrong password").
+var (
+	dummyHashOnce sync.Once
+	dummyHash     string
+)
+
+func getDummyHash() string {
+	dummyHashOnce.Do(func() {
+		dummyHash, _ = hashutil.Hash("dummy-constant-for-timing-safety")
+	})
+	return dummyHash
+}
 
 // Service defines auth and user management business logic.
 type Service interface {
@@ -81,6 +97,8 @@ func (s *service) Login(ctx context.Context, req LoginRequest) (AuthResponse, er
 		// Return 401 regardless of whether user exists (no enumeration).
 		var ae *apperror.AppError
 		if errors.As(err, &ae) && ae.Code == apperror.ErrUserNotFound {
+			// Constant-time: run bcrypt so response time matches the "wrong password" path.
+			hashutil.Compare(getDummyHash(), req.Password)
 			return AuthResponse{}, apperror.New(http.StatusUnauthorized, apperror.ErrUnauthorized, "invalid credentials")
 		}
 		return AuthResponse{}, err
@@ -117,25 +135,17 @@ func (s *service) RefreshToken(ctx context.Context, rawRefreshToken string) (Aut
 
 	fp := fingerprint(rawRefreshToken)
 
-	rt, err := s.repo.GetRefreshTokenByFingerprint(ctx, fp)
+	// Atomic DELETE RETURNING — eliminates the race window between a prior SELECT and DELETE.
+	// If the token was already consumed (concurrent retry), the row is gone and we get ErrInvalidToken.
+	rt, err := s.repo.DeleteRefreshTokenReturning(ctx, fp)
 	if err != nil {
 		return AuthResponse{}, err
 	}
 
+	// bcrypt-verify the returned hash to detect tampering.
 	if !hashutil.Compare(rt.TokenHash, rawRefreshToken) {
-		// Token tampered — revoke all sessions for the user.
 		_ = s.repo.DeleteAllRefreshTokens(ctx, rt.UserID)
 		return AuthResponse{}, apperror.New(http.StatusUnauthorized, apperror.ErrInvalidToken, "invalid refresh token")
-	}
-
-	// Atomic rotation: delete old token; 0 rows = already consumed (reuse attack).
-	rows, err := s.repo.DeleteRefreshToken(ctx, fp)
-	if err != nil {
-		return AuthResponse{}, err
-	}
-	if rows == 0 {
-		_ = s.repo.DeleteAllRefreshTokens(ctx, rt.UserID)
-		return AuthResponse{}, apperror.New(http.StatusUnauthorized, apperror.ErrInvalidToken, "refresh token already used")
 	}
 
 	user, err := s.repo.GetUserByID(ctx, rt.UserID)

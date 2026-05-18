@@ -25,6 +25,7 @@ type limiterStore struct {
 	entries map[string]*limiterEntry
 	burst   int
 	every   time.Duration
+	stop    chan struct{}
 }
 
 func newLimiterStore(burst, ratePerMin int) *limiterStore {
@@ -32,6 +33,7 @@ func newLimiterStore(burst, ratePerMin int) *limiterStore {
 		entries: make(map[string]*limiterEntry),
 		burst:   burst,
 		every:   time.Minute / time.Duration(ratePerMin),
+		stop:    make(chan struct{}),
 	}
 	go s.cleanup()
 	return s
@@ -50,15 +52,21 @@ func (s *limiterStore) get(key string) *rate.Limiter {
 }
 
 func (s *limiterStore) cleanup() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
 	for {
-		time.Sleep(5 * time.Minute)
-		s.mu.Lock()
-		for k, e := range s.entries {
-			if time.Since(e.lastSeen) > 5*time.Minute {
-				delete(s.entries, k)
+		select {
+		case <-ticker.C:
+			s.mu.Lock()
+			for k, e := range s.entries {
+				if time.Since(e.lastSeen) > 5*time.Minute {
+					delete(s.entries, k)
+				}
 			}
+			s.mu.Unlock()
+		case <-s.stop:
+			return
 		}
-		s.mu.Unlock()
 	}
 }
 
