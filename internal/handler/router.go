@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
 	"github.com/nicoflow/nicoflow-api/internal/config"
@@ -32,7 +33,7 @@ type Handlers struct {
 
 // New builds and returns the fully-wired Chi router.
 // Middleware order matches the Confluence §3.3 canonical chain.
-func New(cfg config.Config, h Handlers) http.Handler {
+func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 	r := chi.NewRouter()
 
 	// 1. Recover — panic → 500 JSON
@@ -41,14 +42,16 @@ func New(cfg config.Config, h Handlers) http.Handler {
 	r.Use(mw.RequestID)
 	// 3. Logger — zerolog structured request log
 	r.Use(mw.Logger)
-	// 4. CORS — Allow-Origin headers
+	// 4. Security headers — HSTS, X-Frame-Options, CSP, etc.
+	r.Use(mw.SecurityHeaders)
+	// 5. CORS — Allow-Origin headers
 	r.Use(mw.CORS(cfg.CORSOrigins))
-	// 5. Rate limit by IP (global)
+	// 6. Rate limit by IP (global)
 	trustedProxies := splitCSV(cfg.TrustedProxyCIDRs)
 	r.Use(mw.RateLimitIP(100, 20, trustedProxies))
 
 	// ── Public routes ──────────────────────────────────────────────────────────
-	r.Get("/v1/health", Health)
+	r.Get("/v1/health", Health(pool))
 
 	// WS — JWT validated inside the handler once implemented (E-022)
 	r.Get("/v1/ws", stub)

@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -42,7 +44,9 @@ func main() {
 	}
 	zerolog.SetGlobalLevel(level)
 
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
 	pool, err := db.New(ctx, cfg.DatabaseURL)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to connect to database")
@@ -67,12 +71,24 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           handler.New(cfg, handlers),
+		Handler:           handler.New(cfg, pool, handlers),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	log.Info().Str("port", cfg.Port).Str("env", cfg.AppEnv).Msg("server starting")
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatal().Err(err).Msg("server stopped")
+	go func() {
+		log.Info().Str("port", cfg.Port).Str("env", cfg.AppEnv).Msg("server starting")
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal().Err(err).Msg("server stopped unexpectedly")
+		}
+	}()
+
+	<-ctx.Done()
+	log.Info().Msg("shutdown signal received — draining connections")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Error().Err(err).Msg("graceful shutdown timed out")
 	}
+	log.Info().Msg("server shut down cleanly")
 }

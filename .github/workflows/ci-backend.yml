@@ -72,6 +72,15 @@ jobs:
           TEST_DATABASE_URL: postgres://nicoflow:nicoflow@localhost:5432/nicoflow_test?sslmode=disable
         run: go test ./... -tags=integration -race -count=1 -coverprofile=coverage.out -covermode=atomic
 
+      - name: Coverage gate (service ≥ 80%, utils ≥ 90%)
+        run: |
+          go tool cover -func=coverage.out | tee /tmp/cover.txt
+          SVC=$(grep 'internal/domain/auth' /tmp/cover.txt | awk '{sum+=$3; n++} END {if(n>0) printf "%.1f", sum/n}' | tr -d '%')
+          UTIL=$(grep 'pkg/' /tmp/cover.txt | awk '{sum+=$3; n++} END {if(n>0) printf "%.1f", sum/n}' | tr -d '%')
+          echo "Auth service avg: ${SVC}%, Utils avg: ${UTIL}%"
+          awk "BEGIN {if (${SVC:-0}+0 < 80) {print \"FAIL: service coverage ${SVC}% < 80%\"; exit 1}}"
+          awk "BEGIN {if (${UTIL:-0}+0 < 90) {print \"FAIL: utils coverage ${UTIL}% < 90%\"; exit 1}}"
+
       - name: Upload coverage
         uses: actions/upload-artifact@v4
         if: always()
@@ -102,6 +111,11 @@ jobs:
         run: |
           go install github.com/securego/gosec/v2/cmd/gosec@v2.26.1
           gosec ./...
+
+      - name: gitleaks (secret scanning)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build:
     name: Build
@@ -166,3 +180,11 @@ jobs:
             echo "ERROR: image is ${SIZE_MB}MB, must be < 50MB"
             exit 1
           fi
+
+      - name: Trivy image scan (HIGH + CRITICAL)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: nicoflow-api:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true
