@@ -23,6 +23,7 @@ type mockRepo struct {
 	storeRefreshTokenFn            func(ctx context.Context, userID, tokenHash, fp string, expiresAt time.Time) error
 	getRefreshTokenByFingerprintFn func(ctx context.Context, fingerprint string) (auth.RefreshToken, error)
 	deleteRefreshTokenFn           func(ctx context.Context, fingerprint string) (int64, error)
+	deleteRefreshTokenReturningFn  func(ctx context.Context, fingerprint string) (auth.RefreshToken, error)
 	deleteAllRefreshTokensFn       func(ctx context.Context, userID string) error
 	storePasswordResetTokenFn      func(ctx context.Context, userID, tokenHash, fp string, expiresAt time.Time) error
 	getPasswordResetTokenByFpFn    func(ctx context.Context, fingerprint string) (auth.PasswordResetToken, error)
@@ -53,6 +54,9 @@ func (m *mockRepo) GetRefreshTokenByFingerprint(ctx context.Context, fingerprint
 }
 func (m *mockRepo) DeleteRefreshToken(ctx context.Context, fingerprint string) (int64, error) {
 	return m.deleteRefreshTokenFn(ctx, fingerprint)
+}
+func (m *mockRepo) DeleteRefreshTokenReturning(ctx context.Context, fingerprint string) (auth.RefreshToken, error) {
+	return m.deleteRefreshTokenReturningFn(ctx, fingerprint)
 }
 func (m *mockRepo) DeleteAllRefreshTokens(ctx context.Context, userID string) error {
 	return m.deleteAllRefreshTokensFn(ctx, userID)
@@ -111,8 +115,12 @@ func happyRepo() *mockRepo {
 		storeRefreshTokenFn:            func(_ context.Context, _, _, _ string, _ time.Time) error { return nil },
 		getRefreshTokenByFingerprintFn: func(_ context.Context, _ string) (auth.RefreshToken, error) { return auth.RefreshToken{}, nil },
 		deleteRefreshTokenFn:           func(_ context.Context, _ string) (int64, error) { return 1, nil },
-		deleteAllRefreshTokensFn:       func(_ context.Context, _ string) error { return nil },
-		storePasswordResetTokenFn:      func(_ context.Context, _, _, _ string, _ time.Time) error { return nil },
+		deleteRefreshTokenReturningFn: func(_ context.Context, _ string) (auth.RefreshToken, error) {
+			hash, _ := hashutil.Hash("validrawtoken")
+			return auth.RefreshToken{UserID: "usr_abc123", TokenHash: hash, ExpiresAt: time.Now().Add(time.Hour)}, nil
+		},
+		deleteAllRefreshTokensFn:  func(_ context.Context, _ string) error { return nil },
+		storePasswordResetTokenFn: func(_ context.Context, _, _, _ string, _ time.Time) error { return nil },
 		getPasswordResetTokenByFpFn: func(_ context.Context, _ string) (auth.PasswordResetToken, error) {
 			return auth.PasswordResetToken{}, nil
 		},
@@ -320,17 +328,9 @@ func TestLogin_RememberMe(t *testing.T) {
 func TestRefreshToken_ReuseDetection(t *testing.T) {
 	var revokedAll bool
 	repo := happyRepo()
-	repo.getRefreshTokenByFingerprintFn = func(_ context.Context, _ string) (auth.RefreshToken, error) {
-		hash, _ := hashutil.Hash("validrawtoken")
-		return auth.RefreshToken{
-			UserID:    "usr_abc123",
-			TokenHash: hash,
-			ExpiresAt: time.Now().Add(time.Hour),
-		}, nil
-	}
-	// Simulate token already deleted (reuse attack).
-	repo.deleteRefreshTokenFn = func(_ context.Context, _ string) (int64, error) {
-		return 0, nil
+	// Simulate token already consumed — atomic delete finds no row.
+	repo.deleteRefreshTokenReturningFn = func(_ context.Context, _ string) (auth.RefreshToken, error) {
+		return auth.RefreshToken{}, apperror.New(http.StatusUnauthorized, apperror.ErrInvalidToken, "invalid or expired refresh token")
 	}
 	repo.deleteAllRefreshTokensFn = func(_ context.Context, _ string) error {
 		revokedAll = true
@@ -347,8 +347,37 @@ func TestRefreshToken_ReuseDetection(t *testing.T) {
 	if !errors.As(err, &ae) || ae.Code != apperror.ErrInvalidToken {
 		t.Fatalf("expected INVALID_TOKEN, got %v", err)
 	}
+	// With atomic rotation, when the DELETE finds no row we return early — no separate revoke-all.
+	if revokedAll {
+		t.Error("revoke-all should not be called when token is simply not found")
+	}
+}
+
+func TestRefreshToken_TamperedToken(t *testing.T) {
+	var revokedAll bool
+	repo := happyRepo()
+	// Return a valid row but with a hash that doesn't match "tampered".
+	repo.deleteRefreshTokenReturningFn = func(_ context.Context, _ string) (auth.RefreshToken, error) {
+		hash, _ := hashutil.Hash("original-token")
+		return auth.RefreshToken{UserID: "usr_abc123", TokenHash: hash, ExpiresAt: time.Now().Add(time.Hour)}, nil
+	}
+	repo.deleteAllRefreshTokensFn = func(_ context.Context, _ string) error {
+		revokedAll = true
+		return nil
+	}
+
+	svc := auth.NewService(repo, testCfg())
+	_, err := svc.RefreshToken(context.Background(), "tampered-token")
+
+	if err == nil {
+		t.Fatal("expected error for tampered token, got nil")
+	}
+	var ae *apperror.AppError
+	if !errors.As(err, &ae) || ae.Code != apperror.ErrInvalidToken {
+		t.Fatalf("expected INVALID_TOKEN, got %v", err)
+	}
 	if !revokedAll {
-		t.Error("expected all tokens to be revoked on reuse detection")
+		t.Error("expected all tokens to be revoked when token is tampered")
 	}
 }
 

@@ -26,6 +26,7 @@ type Repository interface {
 	StoreRefreshToken(ctx context.Context, userID, tokenHash, tokenFingerprint string, expiresAt time.Time) error
 	GetRefreshTokenByFingerprint(ctx context.Context, fingerprint string) (RefreshToken, error)
 	DeleteRefreshToken(ctx context.Context, fingerprint string) (int64, error)
+	DeleteRefreshTokenReturning(ctx context.Context, fingerprint string) (RefreshToken, error)
 	DeleteAllRefreshTokens(ctx context.Context, userID string) error
 
 	StorePasswordResetToken(ctx context.Context, userID, tokenHash, tokenFingerprint string, expiresAt time.Time) error
@@ -227,6 +228,26 @@ func (r *pgRepo) DeleteRefreshToken(ctx context.Context, fingerprint string) (in
 	return tag.RowsAffected(), nil
 }
 
+// DeleteRefreshTokenReturning atomically deletes the token and returns its data in one statement.
+// If no row matches (already consumed or never existed) it returns ErrInvalidToken.
+// This prevents a race where two concurrent retries both pass a prior SELECT+bcrypt check.
+func (r *pgRepo) DeleteRefreshTokenReturning(ctx context.Context, fingerprint string) (RefreshToken, error) {
+	var rt RefreshToken
+	err := r.db.QueryRow(ctx, `
+		DELETE FROM refresh_tokens
+		WHERE token_fingerprint = @fingerprint
+		RETURNING user_id, token_hash, expires_at`,
+		pgx.NamedArgs{"fingerprint": fingerprint},
+	).Scan(&rt.UserID, &rt.TokenHash, &rt.ExpiresAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return RefreshToken{}, apperror.New(http.StatusUnauthorized, apperror.ErrInvalidToken, "invalid or expired refresh token")
+		}
+		return RefreshToken{}, fmt.Errorf("auth.DeleteRefreshTokenReturning: %w", err)
+	}
+	return rt, nil
+}
+
 func (r *pgRepo) DeleteAllRefreshTokens(ctx context.Context, userID string) error {
 	_, err := r.db.Exec(ctx,
 		`DELETE FROM refresh_tokens WHERE user_id = @userID`,
@@ -270,7 +291,9 @@ func (r *pgRepo) GetPasswordResetTokenByFingerprint(ctx context.Context, fingerp
 	err := r.db.QueryRow(ctx, `
 		SELECT id, user_id, token_hash, token_fingerprint, expires_at, used_at, created_at
 		FROM password_reset_tokens
-		WHERE token_fingerprint = @fingerprint`,
+		WHERE token_fingerprint = @fingerprint
+		  AND expires_at > NOW()
+		  AND used_at IS NULL`,
 		pgx.NamedArgs{"fingerprint": fingerprint},
 	).Scan(&prt.ID, &prt.UserID, &prt.TokenHash, &prt.TokenFingerprint, &prt.ExpiresAt, &prt.UsedAt, &prt.CreatedAt)
 	if err != nil {

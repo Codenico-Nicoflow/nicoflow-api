@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/rs/zerolog/log"
+
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
 	mw "github.com/nicoflow/nicoflow-api/internal/middleware"
 	"github.com/nicoflow/nicoflow-api/pkg/respond"
@@ -35,7 +37,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.svc.Register(r.Context(), req)
 	if err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 
@@ -53,7 +55,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.svc.Login(r.Context(), req)
 	if err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 
@@ -78,7 +80,7 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.svc.RefreshToken(r.Context(), rawToken)
 	if err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 
@@ -95,7 +97,7 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.Logout(r.Context(), userID, rawToken); err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 
@@ -108,7 +110,7 @@ func (h *Handler) LogoutAll(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())
 
 	if err := h.svc.LogoutAll(r.Context(), userID); err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 
@@ -138,7 +140,7 @@ func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.ResetPassword(r.Context(), req); err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 
@@ -151,7 +153,7 @@ func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request) {
 
 	view, err := h.svc.GetProfile(r.Context(), userID)
 	if err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 
@@ -170,7 +172,7 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 
 	view, err := h.svc.UpdateMe(r.Context(), userID, req)
 	if err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 
@@ -182,7 +184,7 @@ func (h *Handler) DeleteMe(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())
 
 	if err := h.svc.DeleteMe(r.Context(), userID); err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 
@@ -205,7 +207,7 @@ func (h *Handler) RegisterPushToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.RegisterPushToken(r.Context(), userID, req); err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 
@@ -243,7 +245,7 @@ func (h *Handler) setRefreshCookie(w http.ResponseWriter, rawToken string, maxAg
 	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is intentionally dynamic: true in staging/production, false in development (HTTP)
 		Name:     "refresh_token",
 		Value:    rawToken,
-		Path:     "/v1/auth/refresh-token",
+		Path:     "/v1/auth",
 		MaxAge:   maxAge,
 		HttpOnly: true,
 		Secure:   h.secureCookie,
@@ -256,7 +258,7 @@ func (h *Handler) clearRefreshCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is intentionally dynamic: true in staging/production, false in development (HTTP)
 		Name:     "refresh_token",
 		Value:    "",
-		Path:     "/v1/auth/refresh-token",
+		Path:     "/v1/auth",
 		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   h.secureCookie,
@@ -269,11 +271,13 @@ func notImplemented(w http.ResponseWriter, _ *http.Request) {
 }
 
 // writeAppError converts an AppError to the correct HTTP response.
-func writeAppError(w http.ResponseWriter, err error) {
+// Unexpected (non-AppError) errors are logged with the request ID before returning a generic 500.
+func writeAppError(w http.ResponseWriter, r *http.Request, err error) {
 	var ae *apperror.AppError
 	if errors.As(err, &ae) {
 		respond.Error(w, ae.Status, ae.Code, ae.Message)
 		return
 	}
+	log.Error().Err(err).Str("request_id", mw.GetRequestID(r.Context())).Msg("unexpected internal error")
 	respond.Error(w, http.StatusInternalServerError, apperror.ErrInternalServerError, "an unexpected error occurred")
 }
