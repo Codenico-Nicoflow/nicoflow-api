@@ -86,20 +86,23 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		r.Delete("/users/me", h.Auth.DeleteMe)
 		r.Post("/users/push-token", h.Auth.RegisterPushToken)
 
-		// Areas
+		// Areas — static routes before parameterised
 		r.Get("/areas", h.Area.List)
 		r.Post("/areas", h.Area.Create)
 		r.Get("/areas/with-projects", h.Area.ListWithProjects)
+		r.Patch("/areas/reorder", h.Area.Reorder)
 		r.Get("/areas/{id}", h.Area.Get)
 		r.Patch("/areas/{id}", h.Area.Update)
 		r.Delete("/areas/{id}", h.Area.Delete)
 
-		// Projects
-		r.Get("/areas/{areaId}/projects", h.Project.ListByArea)
-		r.Post("/areas/{areaId}/projects", h.Project.Create)
+		// Projects — static routes before parameterised
+		r.Get("/projects", h.Project.List)
+		r.Patch("/projects/reorder", h.Project.Reorder)
 		r.Get("/projects/{id}", h.Project.Get)
 		r.Patch("/projects/{id}", h.Project.Update)
 		r.Delete("/projects/{id}", h.Project.Delete)
+		r.Get("/areas/{areaId}/projects", h.Project.ListByArea)
+		r.Post("/areas/{areaId}/projects", h.Project.Create)
 
 		// Tasks + Subtasks
 		r.Get("/projects/{projectId}/tasks", h.Task.ListByProject)
