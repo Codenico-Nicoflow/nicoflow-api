@@ -13,14 +13,14 @@ import (
 // ── mock repository ───────────────────────────────────────────────────────────
 
 type mockAreaRepo struct {
-	countByUser   func(ctx context.Context, userID string) (int, error)
-	create        func(ctx context.Context, a area.Area) (area.Area, error)
-	list          func(ctx context.Context, userID string, f area.ListAreasFilter) ([]area.Area, string, error)
-	listWP        func(ctx context.Context, userID string) ([]area.AreaWithProjects, error)
-	getByID       func(ctx context.Context, userID, id string) (*area.Area, error)
-	update        func(ctx context.Context, userID, id string, req area.UpdateAreaRequest) (area.Area, error)
-	delete        func(ctx context.Context, userID, id string) error
-	reorder       func(ctx context.Context, userID string, items []area.ReorderItem) (int, error)
+	countByUser func(ctx context.Context, userID string) (int, error)
+	create      func(ctx context.Context, a area.Area) (area.Area, error)
+	list        func(ctx context.Context, userID string, f area.ListAreasFilter) ([]area.Area, string, error)
+	listWP      func(ctx context.Context, userID string) ([]area.AreaWithProjects, error)
+	getByID     func(ctx context.Context, userID, id string) (*area.Area, error)
+	update      func(ctx context.Context, userID, id string, req area.UpdateAreaRequest) (area.Area, error)
+	delete      func(ctx context.Context, userID, id string) error
+	reorder     func(ctx context.Context, userID string, items []area.ReorderItem) (int, error)
 }
 
 func (m *mockAreaRepo) CountByUser(ctx context.Context, userID string) (int, error) {
