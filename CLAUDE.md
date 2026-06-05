@@ -19,7 +19,7 @@ Keep replies concise. No fluff. For any third-party library, fetch current docs 
 
 | Layer      | Choice                                                    |
 | ---------- | --------------------------------------------------------- |
-| Language   | Go 1.25                                                   |
+| Language   | Go 1.26.4                                                 |
 | Router     | `chi` v5                                                  |
 | Database   | PostgreSQL 15/16 via `pgx/v5` + `pgxpool`                |
 | Migrations | `golang-migrate` — files in `migrations/`                 |
