@@ -1,15 +1,17 @@
 # CLAUDE.md — nicoflow-api
 
-We're building the backend described in `SPEC.md`. Read §8 (Backend Architecture) for canonical decisions. Read §3 (API Endpoint Reference) for exact contract shapes. Read §4 for error codes.
+Go REST API + WebSocket for the Nicoflow platform. We're building the backend described in `SPEC.md`. Read §8 (Backend Architecture) for canonical decisions, §3 (API Endpoint Reference) for exact contract shapes, §4 for error codes.
 
-Keep replies concise. No fluff. For any third-party library, use the DocsExplorer subagent to fetch current docs before writing code.
+> **Umbrella context:** this repo sits under `../CLAUDE.md` (the Nicoflow workspace root), which owns the **cross-repo contract** with the frontend (`nicoflow-monorepo`). When something here affects the API↔frontend contract (response shape, endpoint, error code, entity field), update the root file and `SPEC.md` §3/§4 too.
+
+Keep replies concise. No fluff. For any third-party library, fetch current docs via **Context7 MCP** before writing code.
 
 ---
 
 ## Branching
 
 - Branch from `staging`. PR to `staging`. `staging` → `main` for releases.
-- Branch naming: `NIC-<ticket>-<short-description>` (e.g. `NIC-945-auth-tests`).
+- Branch naming (unified with the frontend repo): `<type>/NIC-<ticket>-<short-desc>`, `<type>` ∈ `feature | bugfix | hotfix | chore | refactor` (e.g. `feature/NIC-945-auth-tests`). `hotfix/*` branches from `main`; the rest from `staging`. Multiple tickets allowed (`feature/NIC-1073-1074-...`). Note: older branches used bare `NIC-...` with no prefix — new branches use the prefixed form.
 
 ---
 
@@ -17,44 +19,53 @@ Keep replies concise. No fluff. For any third-party library, use the DocsExplore
 
 | Layer      | Choice                                                    |
 | ---------- | --------------------------------------------------------- |
-| Language   | Go (latest stable)                                        |
+| Language   | Go 1.26.4                                                 |
 | Router     | `chi` v5                                                  |
-| Database   | PostgreSQL 15 via `pgx/v5` + `pgxpool`                    |
+| Database   | PostgreSQL 15/16 via `pgx/v5` + `pgxpool`                |
 | Migrations | `golang-migrate` — files in `migrations/`                 |
 | Auth       | JWT HS256 (15 min) + bcrypt refresh tokens + dual-hash    |
 | Email      | stdlib `net/smtp` via `SMTP_DSN` env var (Mailtrap)       |
 | Logging    | `zerolog`                                                 |
 | Config     | env vars (loaded at startup via `internal/config/`)       |
-| Hosting    | Render.com (port `3001` via `PORT` env var)               |
+| Storage    | AWS S3 in prod; **MinIO** locally via docker compose      |
+| Hot reload | `air` (`make dev`)                                        |
+| Hosting    | Render.com (port `8080` via `PORT` env var)               |
 
 ---
 
 ## Package Structure (SPEC §8.2.1)
 
-Domain-grouped layout — **currently active**:
+Domain-grouped layout — **currently active** (verified against the tree):
 
 ```
+cmd/
+└── api/main.go     ← entrypoint; wires config, pool, hub, handlers
 internal/
-├── config/         ← env-based Config struct (JWTExpiry, RefreshTokenExpiry, SMTPDsn, AppBaseURL, …)
+├── config/         ← env-based Config struct (see Environment Variables below)
 ├── db/             ← pgxpool setup
-├── middleware/     ← auth, cors, ratelimit, logging, requestid, recover
+├── apperror/       ← AppError type + error code constants  (NOTE: internal/, not pkg/)
+├── handler/        ← router.go (the chi mux + middleware chain) + health.go
+├── middleware/     ← recover, request_id, logger, security_headers, cors,
+│                     ratelimit (IP + user), auth, plan_enforcer
 ├── domain/
-│   ├── auth/       ← handler, service, repository, types (FULLY IMPLEMENTED — E-009)
-│   ├── area/       ← stub
-│   ├── project/    ← stub
-│   ├── task/       ← stub
-│   ├── bucket/     ← stub
-│   ├── ai/         ← stub
-│   └── billing/    ← stub
-├── ws/             ← WebSocket hub + client (stub)
-├── storage/        ← S3 presigned URL logic (stub)
-└── apperror/       ← AppError type + error code constants
+│   ├── auth/       ← handler, service, repository, types (most complete; has handler_test + integration_test + service_test)
+│   ├── area/       ← handler, service, repository, types (+ service_test)
+│   ├── project/    ← handler, service, repository, types (+ service_test)
+│   ├── task/       ← handler, service, repository, types (also serves subtasks, attachments, time-spread, search)
+│   ├── bucket/     ← handler, service, repository, types
+│   ├── ai/         ← handler, service, repository, types (also serves nlp/parse)
+│   └── billing/    ← handler, service, repository, types
+├── ws/             ← hub.go, client.go, events.go (route /v1/ws is still a stub in router.go)
+├── storage/        ← s3.go (presigned URLs)
+└── testutil/       ← db.go (shared test DB helpers)
 pkg/
-├── jwtutil/        ← Issue / Parse JWT HS256 (IMPLEMENTED)
-├── hashutil/       ← Hash / Compare bcrypt cost 12 (IMPLEMENTED)
-├── emailutil/      ← SendPasswordReset via SMTP (IMPLEMENTED)
-└── respond/        ← JSON response envelope
+├── jwtutil/        ← Issue / Parse JWT HS256
+├── hashutil/       ← Hash / Compare bcrypt cost 12
+├── emailutil/      ← SendPasswordReset via SMTP
+└── respond/        ← JSON response envelope (respond.JSON / respond.Error)
 ```
+
+> **Implementation reality:** every domain has handler/service/repository/types wired and routed in `internal/handler/router.go` — none are bare stubs. Test coverage is uneven (auth richest; ai/bucket/billing/task have no `*_test.go` yet). The **WebSocket route is the main stub** (`/v1/ws` returns a placeholder; the `ws` package exists but isn't wired into a live hub yet — that's E-022). Always confirm a given handler's depth against the code before assuming it's done.
 
 ---
 
@@ -62,140 +73,165 @@ pkg/
 
 **Handler** — parse & validate request, extract Claims from ctx, call Service, write response via `respond.JSON` / `respond.Error`. No business logic.
 
-**Service** — all business logic, plan limit enforcement, WS event emission. Depends on Repository **interface**, never concrete type.
+**Service** — all business logic, plan limit enforcement, (future) WS event emission. Depends on Repository **interface**, never the concrete type.
 
-**Repository** — SQL only via parameterised pgx queries. Returns domain structs or `*apperror.AppError`. Zero business logic. Every user-scoped query must include `AND user_id = $1`.
+**Repository** — SQL only via parameterised pgx queries. Returns domain structs or `*apperror.AppError`. Zero business logic. Every user-scoped query must filter by `user_id`.
 
-Dependency direction: Handler → Service interface → Repository interface. Outer layers never import concrete inner types.
+Dependency direction: Handler → Service interface → Repository interface. Interfaces are defined in the **consumer's** package (handler defines its `ServiceInterface`; service defines its `RepositoryInterface`). Outer layers never import concrete inner types.
 
 ---
 
 ## Database
 
-- All PKs are `TEXT NOT NULL PRIMARY KEY` (application-generated UUIDs/NanoIDs). Go uses `string`, never `int64`.
+- All PKs are `TEXT NOT NULL PRIMARY KEY` — **application-generated string IDs** (UUID/NanoID). Go uses `string`, never `int64`. ⚠️ The frontend interfaces currently type these as `number` — that's known drift (see `../CLAUDE.md` §3). IDs over the wire are strings.
 - All timestamps are `TIMESTAMPTZ`. Never `TIMESTAMP WITHOUT TIME ZONE`.
-- `deleted_at` soft-delete exists **only** on `users`. Everything else uses hard delete with FK cascade/set-null per SPEC §8.1.
+- `deleted_at` soft-delete exists **only** on `users` (migration `012_users_soft_delete`). Everything else uses hard delete with FK cascade/set-null per SPEC §8.1.
 - Never modify a deployed migration — always add a new numbered `.up.sql` / `.down.sql` pair.
-- `display_order` / `position` use `INT DEFAULT 0`. Sparse ordering is intentional.
+- `display_order` / `sort_order` use `INT DEFAULT 0`. Sparse ordering is intentional.
 
-### Migration naming
+### Migrations (001–019 applied)
 
 ```
-migrations/
-  001_create_users.up.sql / .down.sql
-  002_create_refresh_tokens.up.sql / .down.sql
-  ...
+001 create_users                     011 create_ai_usage_monthly
+002 create_refresh_tokens            012 users_soft_delete
+003 create_areas                     013 folder_icons_project
+004 create_projects                  014 alter_users_add_profile_fields
+005 create_tasks                     015 create_password_reset_tokens
+006 create_subtasks                  016 create_biometric_credentials
+007 create_user_plans                017 users_login_lockout
+008 create_webhook_events            018 users_email_partial_unique
+009 create_ai_sessions               019 enrich_areas_projects
+010 create_ai_messages
 ```
 
-Run with `make migrate-up` / `make rollback`.
+Run with `make migrate-up` / `make migrate-down` (one step) / `make docker-migrate-up` (against the docker Postgres). New pair: `make migrate-create name=<desc>`.
+
+---
+
+## SQL Style — IMPORTANT (matches the actual code)
+
+Repositories use **positional placeholders** (`$1`, `$2`, …) with `pgx`, not named args. `pgx.NamedArgs` appears in only a couple of places. Whichever you use:
+
+- **Never string-concatenate SQL.** Always parameterise.
+- Every user-scoped query must include `user_id = $N` (or equivalent) for row-level isolation.
+- Soft-deleted users: include `deleted_at IS NULL` where relevant.
+
+(The older revision of this file claimed "always NamedArgs / never positional" — that was wrong. Positional `$N` is the prevailing style.)
 
 ---
 
 ## Error Handling
 
-All errors use constants from `internal/apperror/errors.go` (or `pkg/apperror/errors.go` after refactor). Return `*apperror.AppError` from service/repo; handlers convert via `respond.Error(w, err)`.
+All errors use constants from `internal/apperror/errors.go`. Service/repo return `*apperror.AppError{ Code, Message, Status }`; handlers convert via `respond.Error(w, status, code, message)`.
 
-Standard envelope:
+Standard envelope (`pkg/respond`):
 ```json
+// success
+{ "data": <T>, "error": null }
+// error
 { "data": null, "error": { "code": "RESOURCE_NOT_FOUND", "message": "..." } }
 ```
 
-Never return raw Go errors to the client. Never use HTTP status codes directly as the error signal — always pair with a typed code string.
+`error` is a **structured object** `{ code, message }` — not a string. (The frontend's `ApiEnvelope.error` is still typed `string | null`; that's a contract bug to fix on the frontend, tracked in `../CLAUDE.md` §3.)
+
+Never return raw Go errors to the client. Never use the HTTP status alone as the error signal — always pair it with a typed `code` string from §4.
 
 ---
 
 ## Auth & Security
 
-- JWT HS256, TTL from `JWT_EXPIRY` env (default 15 min), signed with `JWT_SECRET` env var (min 32 bytes).
+- JWT HS256, TTL from `JWT_EXPIRY` (default 15 min), signed with `JWT_SECRET` (min 32 bytes).
 - JWT Claims: `{ sub: userID (string), email, plan ("free"|"pro"), iss: "nicoflow-api", exp, iat }`. Plan is read from the claim — **no DB call per request**.
 - **Refresh tokens — dual-hash pattern:**
-  - Generate 32-byte `crypto/rand` → hex string (64 chars) = raw token.
-  - `token_fingerprint` = `SHA-256(rawToken)` hex — stored in DB for O(1) lookup.
-  - `token_hash` = `bcrypt(rawToken, cost=12)` — stored in DB for tamper verification.
-  - Raw token returned to client in `AuthResponse.refreshToken` and as HttpOnly cookie.
-  - On refresh: lookup by fingerprint, bcrypt-compare, atomic delete-old/insert-new. 0 rows deleted → reuse detected → revoke all tokens for user.
-- **Password reset tokens** — same dual-hash pattern. 1-hour TTL. Marked `used_at` after consumption. Storing a new token purges prior unused tokens for the user.
+  - 32-byte `crypto/rand` → 64-char hex = raw token (returned to client + HttpOnly cookie).
+  - `token_fingerprint = SHA-256(rawToken)` hex — stored for O(1) lookup.
+  - `token_hash = bcrypt(rawToken, cost 12)` — stored for tamper verification.
+  - On refresh: lookup by fingerprint → bcrypt-compare → atomic delete-old/insert-new. 0 rows deleted ⇒ reuse detected ⇒ revoke all of the user's tokens.
+- **Password reset tokens** (`015_create_password_reset_tokens`) — same dual-hash pattern, 1-hour TTL, single-use (`used_at`). Storing a new token purges prior unused tokens for the user.
 - Refresh cookie: `HttpOnly; Secure; SameSite=Strict; Path=/v1/auth/refresh-token; Max-Age=604800`.
 - Password change (`reset-password`) revokes all active refresh tokens.
 - Soft delete (`DELETE /v1/users/me`) sets `deleted_at` and revokes all refresh tokens.
-- Row-level isolation: every repo query that touches user data must filter by `user_id` or `deleted_at IS NULL`.
+- **Login lockout** (`017_users_login_lockout`): failed-attempt tracking / lockout fields on `users`.
+- **Biometric credentials** (`016_create_biometric_credentials`): supports `POST /v1/auth/biometric/register` + `/v1/biometric/verify` (mobile phase).
+- Row-level isolation: every repo query touching user data filters by `user_id` (and `deleted_at IS NULL` for users).
 
-### Middleware chain order
+### Middleware chain order (as wired in `internal/handler/router.go`)
 
 ```
-recover → logging → request_id → cors → ratelimit_ip
-  ├─ public routes (no JWT): login, register, forgot-password, reset-password, refresh-token, billing/webhook, /v1/ws, /health
-  └─ protected routes: auth → ratelimit_user → all /v1/* handlers
+recover → request_id → logger → security_headers → cors → ratelimit_ip(100,20)
+  ├─ public (no JWT): register, login, refresh-token, forgot-password, reset-password,
+  │                    biometric/verify, billing/webhook, /v1/ws, /v1/health
+  └─ protected:        auth(JWT) → ratelimit_user(1000,100) → all other /v1/* handlers
 ```
+
+(`plan_enforcer` middleware exists for plan-gating; plan limits are also enforced in the service layer.)
 
 ---
 
-## Rate Limits
+## Rate Limits (per `router.go`)
 
-| Limiter    | Scope   | Limit        | Burst |
-| ---------- | ------- | ------------ | ----- |
-| IP-based   | IP      | 100 req/min  | 20    |
-| User-based | UserID  | 1000 req/min | 100   |
+| Limiter             | Scope  | Limit         | Burst |
+| ------------------- | ------ | ------------- | ----- |
+| IP-based (global)   | IP     | 100 req/min   | 20    |
+| User-based (global) | UserID | 1000 req/min  | 100   |
 
-Auth-specific (stricter per-IP buckets):
-- `POST /v1/auth/login` — 10 req/min/IP
-- `POST /v1/auth/register` — 5 req/min/IP
-- `POST /v1/auth/forgot-password` — 3 req/min/IP
+Auth-specific stricter per-IP buckets (via `r.With(mw.RateLimitIP(n, n, trustedProxies))`):
+- `POST /v1/register` — 5
+- `POST /v1/login` — 10
+- `POST /v1/forgot-password` — 3
+- `POST /v1/reset-password` — 5
 
-Exceeded → 429 with `RATE_LIMITED` + `Retry-After` header.
+Client IP is resolved through `TRUSTED_PROXY` / `TrustedProxyCIDRs`. Exceeded → 429 with `RATE_LIMITED` + `Retry-After`.
 
 ---
 
 ## Plan Limits (enforced in Service layer)
 
-| Resource     | Free      | Pro       | Error on exceed      |
-| ------------ | --------- | --------- | -------------------- |
+| Resource     | Free      | Pro       | Error on exceed       |
+| ------------ | --------- | --------- | --------------------- |
 | Areas        | 3         | Unlimited | `PLAN_LIMIT_EXCEEDED` |
 | Projects     | 5 total   | Unlimited | `PLAN_LIMIT_EXCEEDED` |
-| AI requests  | 10/month  | Unlimited | `AI_LIMIT_REACHED`   |
+| AI requests  | 10/month  | Unlimited | `AI_LIMIT_REACHED`    |
 | File uploads | 5/task    | 20/task   | `PLAN_LIMIT_EXCEEDED` |
+| NLP parse    | ❌        | ✅        | `PLAN_LIMIT_EXCEEDED` |
 
-Check via `COUNT(*)` before insert. Plan is read from `ctx` Claims — no DB call.
+Check via `COUNT(*)` before insert. Plan is read from `ctx` Claims — no DB call. Downgrade is graceful (excess resources read-only, never deleted). Canonical numbers: `SPEC.md` §5.
 
 ---
 
-## WebSocket
+## WebSocket (E-022 — route is currently a stub)
 
-- Hub is in-process (no Redis in v1). Single Render instance.
-- Auth: JWT from `?token=` query param (browsers can't set headers on WS upgrade).
-- Invalid JWT → close with code `1008 Policy Violation`.
+Target design (the `ws` package exists; the route isn't live yet):
+- Hub in-process (no Redis in v1). Single Render instance.
+- Auth: JWT from `?token=` query param. Invalid JWT → close `1008 Policy Violation`.
 - Heartbeat: server pings every 30s; pong timeout 10s; write timeout 10s; read timeout 60s.
 - Events are full-payload (no diffs), broadcast only to the owning user's connections.
-- Services emit events via `hub.BroadcastToUser(userID, event)` after every successful mutation.
+- Services emit via `hub.BroadcastToUser(userID, event)` after every successful mutation.
 
 ---
 
 ## Testing
 
-- Table-driven tests for all service + repository layers.
-- Use `testutil/` for shared test helpers and DB setup.
-- Coverage targets: 90%+ utility functions, 80%+ service layer.
-- Never test HTTP status codes in isolation — assert on the `error.code` string in the response body.
-- Integration tests must use a real DB (no mocks for the DB layer).
+- Table-driven tests for service + repository layers. Real DB for integration (no DB mocks); helpers in `internal/testutil/db.go`. Integration tests are behind the `integration` build tag (`make test-integration`).
+- Coverage targets: 90%+ utilities, 80%+ service. Current coverage is uneven — `ai`, `bucket`, `billing`, `task` lack `*_test.go`; closing those is open work (E-018).
+- Never assert HTTP status in isolation — assert on the `error.code` string in the body.
 
 ---
 
 ## Per-Endpoint Security Checklist (apply to every story)
 
-Every endpoint — public or protected — must go through this before it ships:
-
 | Check | Detail |
 | ----- | ------ |
-| **Rate limiting** | Public write endpoints: `r.With(mw.RateLimitIP(n, n)).Post(...)`. Protected: `RateLimitUser` is global already. |
+| **Rate limiting** | Public write endpoints wrap with `r.With(mw.RateLimitIP(n, n, trustedProxies))`. Protected: `RateLimitUser` is global. |
 | **Input validation** | Validate before any DB call. Return typed `apperror` code, never raw errors. |
-| **No user enumeration** | Login / forgot-password return the same 401/200 regardless of whether the user exists. |
-| **SQL injection** | All queries use `pgx.NamedArgs{}` — never string-concatenate SQL. |
+| **No user enumeration** | Login / forgot-password return the same response regardless of whether the user exists. |
+| **SQL injection** | Always parameterise (`$N`). Never string-concatenate SQL. |
 | **No raw errors to client** | Always `respond.Error(w, status, apperror.ErrXxx, msg)`. |
 | **Context propagation** | `ctx context.Context` is always the first param on every I/O function. |
-| **Row-level isolation** | Every repo query that touches user data must include `WHERE user_id = @userID`. |
+| **Row-level isolation** | Every repo query touching user data filters by `user_id`. |
 | **Bcrypt cost** | All passwords and opaque tokens hashed at cost 12. |
-| **Dual-hash pattern** | Opaque tokens (refresh, reset): SHA-256 fingerprint for DB lookup + bcrypt hash for verification. |
-| **Refresh token rotation** | On every refresh: delete old row, insert new. 0 rows deleted = reuse → revoke all. |
+| **Dual-hash pattern** | Opaque tokens (refresh, reset): SHA-256 fingerprint for lookup + bcrypt hash for verification. |
+| **Refresh token rotation** | On refresh: delete old row, insert new. 0 rows deleted = reuse → revoke all. |
 | **Cookie security** | Refresh cookie: `HttpOnly; Secure; SameSite=Strict; Path=/v1/auth/refresh-token`. |
 | **Password change** | Must revoke all active refresh tokens. |
 | **Soft delete** | `deleted_at IS NULL` in all user queries. |
@@ -204,50 +240,69 @@ Every endpoint — public or protected — must go through this before it ships:
 
 ## Go Conventions
 
-- No `any` type — ever. Use typed structs or generics.
+- **No `any` type — ever.** Use typed structs or generics.
 - All errors must be handled — no blank `_` on error returns.
-- Context must flow through every function that does I/O: `ctx context.Context` is always the first param.
-- Use `pgx/v5` named arguments (`@param_name`) for all queries — never positional `$1` in complex multi-param queries where it reduces clarity.
-- No global state except the DB pool and the WS hub (both wired at startup in `main.go`).
-- Interfaces are defined in the **consumer's** package (handler defines `ServiceInterface`; service defines `RepositoryInterface`).
+- `ctx context.Context` is always the first param on every I/O function.
+- Parameterised pgx queries only (positional `$N` is the prevailing style).
+- No global state except the DB pool and the WS hub (wired at startup in `cmd/api/main.go`).
+- Interfaces are defined in the **consumer's** package.
 
 ---
 
-## Environment Variables
+## Environment Variables (from `.env.example` / `internal/config`)
 
 | Variable               | Required | Description                                                                 |
 | ---------------------- | -------- | --------------------------------------------------------------------------- |
 | `DATABASE_URL`         | Yes      | PostgreSQL connection string                                                |
 | `JWT_SECRET`           | Yes      | HS256 signing secret (min 32 bytes, cryptographically random)               |
-| `PORT`                 | Yes      | HTTP port (set by Render automatically, e.g. `3001`)                        |
+| `PORT`                 | Yes      | HTTP port (Render sets it; **8080** locally)                                |
 | `JWT_EXPIRY`           | No       | Access token TTL (default `15m`)                                            |
 | `REFRESH_TOKEN_EXPIRY` | No       | Refresh token TTL (default `168h` = 7 days)                                 |
-| `SMTP_DSN`             | No       | SMTP connection string for password-reset email, e.g. `smtp://user:pass@smtp.mailtrap.io:587` |
-| `APP_BASE_URL`         | No       | Frontend URL for reset-password links, e.g. `https://app.nicoflow.app`     |
-| `CORS_ORIGINS`         | No       | Comma-separated allowed CORS origins                                        |
 | `APP_ENV`              | No       | `development` \| `staging` \| `production`                                  |
 | `LOG_LEVEL`            | No       | `debug` \| `info` \| `warn` \| `error` (default `info`)                     |
+| `CORS_ORIGINS`         | No       | Comma-separated allowed CORS origins (e.g. `http://localhost:5173`)         |
+| `APP_BASE_URL`         | No       | Frontend URL for reset-password links (e.g. `http://localhost:5173`)        |
+| `TRUSTED_PROXY`        | No       | Trusted proxy CIDR(s) for client-IP resolution behind a proxy              |
+| `SMTP_DSN`             | No       | SMTP DSN for password-reset email, e.g. `smtp://user:pass@smtp.mailtrap.io:587` |
+| `TEST_DATABASE_URL`    | No       | DB connection string for integration tests                                  |
+| `LS_WEBHOOK_SECRET`    | No       | HMAC-SHA256 secret for Lemon Squeezy webhook                                |
 | `AWS_REGION`           | No       | S3 region                                                                   |
 | `AWS_ACCESS_KEY_ID`    | No       | IAM key for S3                                                              |
 | `AWS_SECRET_ACCESS_KEY`| No       | IAM secret for S3                                                           |
 | `S3_BUCKET_NAME`       | No       | S3 bucket name (`nicoflow-attachments`)                                     |
-| `LS_WEBHOOK_SECRET`    | No       | HMAC-SHA256 secret for Lemon Squeezy webhook                                |
+| `AWS_ENDPOINT`         | No       | Override S3 endpoint to point at local MinIO (`http://localhost:9000`)      |
+
+Docker-compose-only vars (`POSTGRES_*`, `MINIO_*`) are **not** read by the API binary.
 
 ---
 
-## Makefile Targets
+## Makefile Targets (actual)
 
-| Target          | Action                             |
-| --------------- | ---------------------------------- |
-| `make run`      | Start dev server with air (hot reload) |
-| `make migrate-up` | Apply all pending migrations     |
-| `make rollback` | Roll back one migration step       |
-| `make test`     | Run all Go tests                   |
-| `make lint`     | Run golangci-lint                  |
-| `make build`    | Compile binary to `bin/`           |
+| Target                  | Action                                              |
+| ----------------------- | --------------------------------------------------- |
+| `make dev`              | Start dev server with **air** (hot reload) → :8080  |
+| `make build`            | Compile binary to `bin/api`                         |
+| `make test`             | Run all Go tests with `-race` + coverage            |
+| `make test-integration` | Run tests with `-tags=integration`                  |
+| `make lint`             | Run golangci-lint                                   |
+| `make docker-up` / `docker-down` | Start/stop Postgres 16 + MinIO            |
+| `make docker-migrate-up`| Apply migrations against the docker Postgres        |
+| `make migrate-up` / `migrate-down` / `migrate-down-all` | Apply / roll back (1 / all) — needs `DATABASE_URL` |
+| `make migrate-version`  | Print current migration version                     |
+| `make migrate-create name=<x>` | Scaffold a new `.up/.down.sql` pair          |
+| `make migrate-force version=<n>` | Force the migration version (recovery)     |
 
 ---
+
+## Local Dev (recommended path)
+
+```bash
+cp .env.example .env       # set JWT_SECRET (≥32 chars) + SMTP_DSN
+make docker-up             # Postgres 16 (:5432) + MinIO (:9000, console :9001)
+make docker-migrate-up     # apply migrations
+make dev                   # air hot-reload → http://localhost:8080
+```
 
 ## Health Check
 
-`GET /health` → `200 OK` with `{"status":"ok","version":"<git_sha>"}`. No auth required.
+`GET /v1/health` → `200 OK`. No auth required.

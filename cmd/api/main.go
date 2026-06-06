@@ -59,10 +59,18 @@ func main() {
 	auth.StartTokenGC(ctx, pool)
 	secureCookie := cfg.AppEnv == "production" || cfg.AppEnv == "staging"
 
+	// Area domain.
+	areaRepo := area.NewRepository(pool)
+	areaSvc := area.NewService(areaRepo)
+
+	// Project domain.
+	projectRepo := project.NewRepository(pool)
+	projectSvc := project.NewService(projectRepo)
+
 	handlers := handler.Handlers{
 		Auth:    auth.NewHandler(authSvc, secureCookie),
-		Area:    area.NewHandler(nil),
-		Project: project.NewHandler(nil),
+		Area:    area.NewHandler(areaSvc),
+		Project: project.NewHandler(projectSvc),
 		Task:    task.NewHandler(nil),
 		Bucket:  bucket.NewHandler(nil),
 		AI:      ai.NewHandler(nil),
