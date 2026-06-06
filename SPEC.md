@@ -31,7 +31,7 @@ Nicoflow is a task management platform inspired by GTD (Getting Things Done) pri
 | Web App      | React 19, Vite 7, TypeScript 5.8, Tailwind 4 | Vercel           |
 | Mobile App   | Expo ~52, React Native (planned)             | EAS / App Stores |
 | API          | Go (REST)                                    | Render.com       |
-| Database     | PostgreSQL 15                                | Render.com       |
+| Database     | PostgreSQL 16                                | Render.com       |
 | File Storage | AWS S3                                       | AWS              |
 | Auth Tokens  | JWT (Bearer) + HttpOnly refresh cookie       | —                |
 | Billing      | Lemon Squeezy                                | —                |
@@ -471,37 +471,45 @@ Register a device push notification token.
 
 ### 3.2 Areas
 
+> **`IArea` shape** — all IDs are strings (UUID). Fields: `id: string`, `name: string`, `color: string`, `icon?: IconId`, `displayOrder?: number`, `createdAt: string`, `updatedAt: string`. `userId` is not returned on the wire.
+
 #### GET /v1/areas
 
-List all areas for the authenticated user.
+List areas for the authenticated user. Cursor-paginated.
 
 - **Auth required:** Yes
+- **Query params:** `q` (search), `limit` (1–100, default 50), `cursor` (opaque base64 page token)
 
 **Response — 200 OK**
 
 ```json
-[
-  {
-    "id": 1,
-    "name": "Work",
-    "icon": "briefcase",
-    "sortOrder": 0,
-    "userId": 1,
-    "createdAt": "...",
-    "updatedAt": "..."
-  }
-]
+{
+  "items": [
+    {
+      "id": "01J...",
+      "name": "Work",
+      "color": "#3B82F6",
+      "icon": "folder",
+      "displayOrder": 0,
+      "createdAt": "2026-01-01T00:00:00Z",
+      "updatedAt": "2026-01-01T00:00:00Z"
+    }
+  ],
+  "nextCursor": "MTo..."
+}
 ```
+
+`nextCursor` is `""` when there are no more pages.
 
 ---
 
 #### GET /v1/areas/with-projects
 
-List all areas with their nested projects.
+List all areas with their nested projects (no pagination — returns full set).
 
 - **Auth required:** Yes
 
-**Response — 200 OK** — `IArea[]` each with a populated `projects: IProject[]` array.
+**Response — 200 OK** — `AreaWithProjects[]` where each entry is `IArea & { projects: IProject[] }`.
 
 ---
 
@@ -513,7 +521,7 @@ Retrieve a single area.
 
 **Response — 200 OK** — `IArea`
 
-**Errors:** `RESOURCE_NOT_FOUND` (404), `PERMISSION_DENIED` (403)
+**Errors:** `AREA_NOT_FOUND` (404)
 
 ---
 
@@ -527,63 +535,121 @@ Create a new area.
 **Request body**
 
 ```json
-{ "name": "Personal", "icon": "home" }
+{ "name": "Personal", "color": "#3B82F6", "icon": "folder" }
 ```
 
-| Field  | Type   | Required | Constraints                            |
-| ------ | ------ | -------- | -------------------------------------- |
-| `name` | string | Yes      | 1–30 characters                        |
-| `icon` | string | No       | Valid `IconId` — default `"briefcase"` |
+| Field   | Type   | Required | Constraints                                   |
+| ------- | ------ | -------- | --------------------------------------------- |
+| `name`  | string | Yes      | 1–255 characters                              |
+| `color` | string | No       | Hex colour e.g. `#3B82F6` — default `#3B82F6` |
+| `icon`  | string | No       | Valid `IconId` — default `"folder"`           |
 
 **Response — 201 Created** — `IArea`
 
-**Errors:** `PLAN_LIMIT_EXCEEDED` (403), `INVALID_INPUT` (422)
+**Errors:** `PLAN_LIMIT_EXCEEDED` (403), `INVALID_INPUT` (422), `DUPLICATE_NAME` (409)
 
 ---
 
 #### PATCH /v1/areas/:id
 
-Update an area.
+Update an area. All fields optional.
 
 - **Auth required:** Yes
 
-**Request body** (all fields optional)
+**Request body**
 
 ```json
-{ "name": "Personal Life", "icon": "home", "sortOrder": 2 }
+{ "name": "Personal Life", "color": "#10B981", "icon": "sprout" }
 ```
 
 **Response — 200 OK** — Updated `IArea`
 
-**Errors:** `RESOURCE_NOT_FOUND` (404), `PERMISSION_DENIED` (403), `INVALID_INPUT` (422)
+**Errors:** `AREA_NOT_FOUND` (404), `INVALID_INPUT` (422), `DUPLICATE_NAME` (409)
+
+---
+
+#### PATCH /v1/areas/reorder
+
+Batch-update `displayOrder` for a set of areas (transactional).
+
+- **Auth required:** Yes
+
+**Request body**
+
+```json
+{
+  "items": [
+    { "id": "01J...", "displayOrder": 0 },
+    { "id": "01K...", "displayOrder": 1 }
+  ]
+}
+```
+
+**Response — 200 OK**
+
+```json
+{ "updated": 2 }
+```
+
+**Errors:** `AREA_NOT_FOUND` (404), `INVALID_INPUT` (422)
 
 ---
 
 #### DELETE /v1/areas/:id
 
-Delete an area. All contained projects are also deleted.
+Delete an area. All contained projects (and their tasks) are cascade-deleted.
 
 - **Auth required:** Yes
 
-**Response — 200 OK**
+**Response — 204 No Content**
 
-```json
-{ "message": "Area deleted successfully" }
-```
-
-**Errors:** `RESOURCE_NOT_FOUND` (404), `PERMISSION_DENIED` (403)
+**Errors:** `AREA_NOT_FOUND` (404)
 
 ---
 
 ### 3.3 Projects
 
+> **`IProject` shape** — all IDs are strings (UUID). Fields: `id: string`, `areaId: string | null`, `name: string`, `status: "active"|"completed"|"archived"`, `folderIcon: string`, `dueDate?: string | null` (RFC 3339), `isFavorite?: boolean`, `description?: string | null`, `displayOrder?: number`, `createdAt: string`, `updatedAt: string`. No embedded `area` object is returned.
+
+#### GET /v1/projects
+
+List all projects for the authenticated user. Cursor-paginated.
+
+- **Auth required:** Yes
+- **Query params:** `q` (search), `limit` (1–100, default 50), `cursor`, `areaId`, `status`, `isFavorite`
+
+**Response — 200 OK**
+
+```json
+{
+  "items": [
+    {
+      "id": "01J...",
+      "areaId": "01K...",
+      "name": "Q3 Launch",
+      "status": "active",
+      "folderIcon": "folder",
+      "dueDate": "2026-09-30T00:00:00Z",
+      "isFavorite": false,
+      "description": null,
+      "displayOrder": 0,
+      "createdAt": "2026-01-01T00:00:00Z",
+      "updatedAt": "2026-01-01T00:00:00Z"
+    }
+  ],
+  "nextCursor": ""
+}
+```
+
+---
+
 #### GET /v1/areas/:areaId/projects
 
-List all projects within an area.
+List projects within a specific area. Same cursor-pagination and query params as `GET /v1/projects`.
 
 - **Auth required:** Yes
 
-**Response — 200 OK** — `IProject[]`
+**Response — 200 OK** — same paginated envelope as above.
 
 ---
 
@@ -595,7 +661,7 @@ Retrieve a single project.
 
 **Response — 200 OK** — `IProject`
 
-**Errors:** `RESOURCE_NOT_FOUND` (404), `PERMISSION_DENIED` (403)
+**Errors:** `PROJECT_NOT_FOUND` (404)
 
 ---
 
@@ -611,50 +677,79 @@ Create a new project inside an area.
 ```json
 {
   "name": "Q3 Launch",
-  "icon": "rocket",
+  "folderIcon": "folder",
   "status": "active",
-  "dueDate": "2026-09-30",
-  "isFavorite": false
+  "dueDate": "2026-09-30T00:00:00Z",
+  "isFavorite": false,
+  "description": "Launch plan for Q3."
 }
 ```
 
-| Field        | Type    | Required | Constraints                                                      |
-| ------------ | ------- | -------- | ---------------------------------------------------------------- |
-| `name`       | string  | Yes      | 1–50 characters                                                  |
-| `icon`       | string  | No       | Valid `IconId`                                                   |
-| `status`     | string  | No       | `"active"` \| `"completed"` \| `"archived"` — default `"active"` |
-| `dueDate`    | string  | No       | ISO 8601 date, must not be in the past                           |
-| `isFavorite` | boolean | No       | Default `false`                                                  |
+| Field         | Type    | Required | Constraints                                                      |
+| ------------- | ------- | -------- | ---------------------------------------------------------------- |
+| `name`        | string  | Yes      | 1–255 characters                                                 |
+| `folderIcon`  | string  | No       | Valid `IconId` — default `"folder"`                              |
+| `status`      | string  | No       | `"active"` \| `"completed"` \| `"archived"` — default `"active"` |
+| `dueDate`     | string  | No       | RFC 3339 timestamp                                               |
+| `isFavorite`  | boolean | No       | Default `false`                                                  |
+| `description` | string  | No       | Max 2000 characters                                              |
 
 **Response — 201 Created** — `IProject`
 
-**Errors:** `PLAN_LIMIT_EXCEEDED` (403), `RESOURCE_NOT_FOUND` (404 — area not found), `INVALID_INPUT` (422)
+**Errors:** `PLAN_LIMIT_EXCEEDED` (403), `PROJECT_NOT_FOUND` (404 — area not found), `INVALID_INPUT` (422), `DUPLICATE_NAME` (409)
 
 ---
 
 #### PATCH /v1/projects/:id
 
-Update a project. Use `areaId` to move the project to a different area.
+Update a project. All fields optional. Pass `areaId` to move the project to a different area; pass `areaId: null` to detach it from any area.
 
 - **Auth required:** Yes
 
-**Request body** (all fields optional)
+**Request body**
 
 ```json
 {
   "name": "Q3 Launch — Updated",
-  "icon": "star",
+  "folderIcon": "zap",
   "status": "completed",
-  "dueDate": "2026-09-30",
+  "dueDate": "2026-09-30T00:00:00Z",
   "isFavorite": true,
-  "areaId": 2,
-  "sortOrder": 1
+  "areaId": "01K...",
+  "description": "Updated description."
 }
 ```
 
 **Response — 200 OK** — Updated `IProject`
 
-**Errors:** `RESOURCE_NOT_FOUND` (404), `PERMISSION_DENIED` (403), `INVALID_INPUT` (422)
+**Errors:** `PROJECT_NOT_FOUND` (404), `INVALID_INPUT` (422), `INVALID_STATUS` (422), `DUPLICATE_NAME` (409)
+
+---
+
+#### PATCH /v1/projects/reorder
+
+Batch-update `displayOrder` for a set of projects (transactional).
+
+- **Auth required:** Yes
+
+**Request body**
+
+```json
+{
+  "items": [
+    { "id": "01J...", "displayOrder": 0 },
+    { "id": "01K...", "displayOrder": 1 }
+  ]
+}
+```
+
+**Response — 200 OK**
+
+```json
+{ "updated": 2 }
+```
+
+**Errors:** `PROJECT_NOT_FOUND` (404), `INVALID_INPUT` (422)
 
 ---
 
@@ -666,7 +761,7 @@ Delete a project and all its tasks.
 
 **Response — 204 No Content**
 
-**Errors:** `RESOURCE_NOT_FOUND` (404), `PERMISSION_DENIED` (403)
+**Errors:** `PROJECT_NOT_FOUND` (404)
 
 ---
 
@@ -1606,7 +1701,7 @@ Critical updates that require a native rebuild (e.g., new native dependency) fol
 
 ---
 
-### 8.1 Database Schema (PostgreSQL 15)
+### 8.1 Database Schema (PostgreSQL 16)
 
 #### Design Principles
 
@@ -1644,20 +1739,20 @@ CREATE TABLE users (
 CREATE INDEX idx_users_username ON users(username) WHERE username IS NOT NULL;
 ```
 
-| Field           | Notes                                                                    |
-| --------------- | ------------------------------------------------------------------------ |
-| `id`            | Application-generated UUID                                               |
-| `email`         | Unique login email — `UNIQUE` constraint provides implicit index          |
-| `password_hash` | bcrypt-hashed (cost 12)                                                  |
-| `username`      | 3–20 alphanumeric chars, unique across all users (added migration 014)   |
-| `first_name`    | Optional given name                                                      |
-| `last_name`     | Optional family name                                                     |
-| `theme`         | UI theme preference: `light` \| `dark`                                   |
-| `image_url`     | Avatar URL (nullable)                                                    |
-| `status`        | Account status: `regular` \| `premium`                                   |
-| `plan`          | Denormalised plan: `free` \| `pro` — kept in sync by billing webhook     |
-| `timezone`      | IANA timezone string (e.g. `America/New_York`) for scheduling            |
-| `deleted_at`    | Soft-delete — `NULL` means active                                        |
+| Field           | Notes                                                                  |
+| --------------- | ---------------------------------------------------------------------- |
+| `id`            | Application-generated UUID                                             |
+| `email`         | Unique login email — `UNIQUE` constraint provides implicit index       |
+| `password_hash` | bcrypt-hashed (cost 12)                                                |
+| `username`      | 3–20 alphanumeric chars, unique across all users (added migration 014) |
+| `first_name`    | Optional given name                                                    |
+| `last_name`     | Optional family name                                                   |
+| `theme`         | UI theme preference: `light` \| `dark`                                 |
+| `image_url`     | Avatar URL (nullable)                                                  |
+| `status`        | Account status: `regular` \| `premium`                                 |
+| `plan`          | Denormalised plan: `free` \| `pro` — kept in sync by billing webhook   |
+| `timezone`      | IANA timezone string (e.g. `America/New_York`) for scheduling          |
+| `deleted_at`    | Soft-delete — `NULL` means active                                      |
 
 > **`plan` denormalisation:** `users.plan` mirrors `user_plans.plan`. It is updated by the billing webhook handler alongside `user_plans`. The JWT `plan` claim is read from this column at token-issue time, avoiding a join to `user_plans` on every login/refresh.
 
@@ -1708,12 +1803,12 @@ CREATE INDEX idx_prt_user_id    ON password_reset_tokens(user_id);
 CREATE INDEX idx_prt_expires_at ON password_reset_tokens(expires_at);
 ```
 
-| Field               | Notes                                                               |
-| ------------------- | ------------------------------------------------------------------- |
-| `token_hash`        | bcrypt hash of the raw 32-byte hex token — used for verification    |
-| `token_fingerprint` | SHA-256 hex of the raw token — used for O(1) lookup                 |
-| `expires_at`        | 1-hour TTL from generation time                                     |
-| `used_at`           | Set when the token is consumed — prevents reuse                     |
+| Field               | Notes                                                            |
+| ------------------- | ---------------------------------------------------------------- |
+| `token_hash`        | bcrypt hash of the raw 32-byte hex token — used for verification |
+| `token_fingerprint` | SHA-256 hex of the raw token — used for O(1) lookup              |
+| `expires_at`        | 1-hour TTL from generation time                                  |
+| `used_at`           | Set when the token is consumed — prevents reuse                  |
 
 > **Flow:** `POST /v1/auth/forgot-password` generates a raw 32-byte token, hashes it, and stores the row. The raw token is embedded in the reset link emailed via SMTP (`SMTP_DSN` env var). `POST /v1/auth/reset-password` looks up by fingerprint, bcrypt-verifies, checks `used_at IS NULL` and `expires_at > NOW()`, updates the password, marks the token used, and revokes all refresh tokens for the user.
 >
@@ -1974,13 +2069,13 @@ webhook_events                                  [standalone — no FK to users]
 
 #### Cascade Rules
 
-| Delete       | Effect                                                                                                                               |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `user`       | Cascades to areas, projects, tasks, subtasks, user_plans, refresh_tokens, password_reset_tokens, ai_sessions, ai_usage_monthly       |
-| `area`       | Sets `area_id = NULL` on child projects                                                                                              |
-| `project`    | Sets `project_id = NULL` on child tasks (they become inbox tasks)                                                                    |
-| `task`       | Cascades to subtasks                                                                                                                 |
-| `ai_session` | Cascades to ai_messages                                                                                                              |
+| Delete       | Effect                                                                                                                         |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `user`       | Cascades to areas, projects, tasks, subtasks, user_plans, refresh_tokens, password_reset_tokens, ai_sessions, ai_usage_monthly |
+| `area`       | Sets `area_id = NULL` on child projects                                                                                        |
+| `project`    | Sets `project_id = NULL` on child tasks (they become inbox tasks)                                                              |
+| `task`       | Cascades to subtasks                                                                                                           |
+| `ai_session` | Cascades to ai_messages                                                                                                        |
 
 #### Migration File Convention
 
@@ -2416,13 +2511,13 @@ func Error(w http.ResponseWriter, err *apperror.AppError) {
 
 #### 8.3.1 Overview
 
-| Component     | Provider      | Details                                                               |
-| ------------- | ------------- | --------------------------------------------------------------------- |
-| Go API        | Render.com    | Web Service, Go buildpack, port `3001` (env: `PORT`)                  |
-| PostgreSQL 15 | Render.com    | Managed PostgreSQL 15, internal hostname only (no public access)      |
-| Frontend      | Vercel        | React 19 SPA; `staging` auto-deploy, `main` manual deploy             |
-| File storage  | AWS S3        | Bucket `nicoflow-attachments`, presigned URLs only (no public access) |
-| Billing       | Lemon Squeezy | Subscription webhooks → `POST /v1/billing/webhook`                    |
+| Component     | Provider      | Details                                                                        |
+| ------------- | ------------- | ------------------------------------------------------------------------------ |
+| Go API        | Render.com    | Web Service, Go buildpack, port `3001` (env: `PORT`)                           |
+| PostgreSQL 16 | Render.com    | Managed PostgreSQL 16, internal hostname only (no public access)               |
+| Frontend      | Vercel        | React 19 SPA; `staging` auto-deploy, `main` manual deploy                      |
+| File storage  | AWS S3        | Bucket `nicoflow-attachments`, presigned URLs only (no public access)          |
+| Billing       | Lemon Squeezy | Subscription webhooks → `POST /v1/billing/webhook`                             |
 | Email         | Mailtrap SMTP | Password reset emails via stdlib `net/smtp`; configured via `SMTP_DSN` env var |
 
 ---
@@ -2432,22 +2527,22 @@ func Error(w http.ResponseWriter, err *apperror.AppError) {
 - **Health check:** `GET /health` — returns `200 OK` with `{"status":"ok","version":"<git_sha>"}`
 - **Required environment variables:**
 
-| Variable                       | Description                                                     |
-| ------------------------------ | --------------------------------------------------------------- |
-| `DATABASE_URL`                 | PostgreSQL connection string (provided by Render)               |
-| `JWT_SECRET`                   | HS256 signing secret, min 32 bytes, cryptographically random    |
-| `JWT_EXPIRY`                   | Access token TTL, e.g. `15m` (default: `15m`)                   |
-| `REFRESH_TOKEN_EXPIRY`         | Refresh token TTL, e.g. `168h` (default: `168h` = 7 days)      |
-| `SMTP_DSN`                     | SMTP connection string for password reset email, e.g. `smtp://user:pass@smtp.mailtrap.io:587` |
-| `APP_BASE_URL`                 | Frontend base URL used to build reset-password links, e.g. `https://app.nicoflow.app` |
-| `CORS_ORIGINS`                 | Comma-separated allowed CORS origins                            |
-| `AWS_REGION`                   | S3 region                                                       |
-| `AWS_ACCESS_KEY_ID`            | IAM key for S3                                                  |
-| `AWS_SECRET_ACCESS_KEY`        | IAM secret for S3                                               |
-| `S3_BUCKET_NAME`               | `nicoflow-attachments`                                          |
-| `LS_WEBHOOK_SECRET`            | HMAC-SHA256 secret for Lemon Squeezy webhook verification       |
-| `APP_ENV`                      | `staging` \| `production`                                       |
-| `PORT`                         | `3001` (set by Render automatically)                            |
+| Variable                | Description                                                                                   |
+| ----------------------- | --------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`          | PostgreSQL connection string (provided by Render)                                             |
+| `JWT_SECRET`            | HS256 signing secret, min 32 bytes, cryptographically random                                  |
+| `JWT_EXPIRY`            | Access token TTL, e.g. `15m` (default: `15m`)                                                 |
+| `REFRESH_TOKEN_EXPIRY`  | Refresh token TTL, e.g. `168h` (default: `168h` = 7 days)                                     |
+| `SMTP_DSN`              | SMTP connection string for password reset email, e.g. `smtp://user:pass@smtp.mailtrap.io:587` |
+| `APP_BASE_URL`          | Frontend base URL used to build reset-password links, e.g. `https://app.nicoflow.app`         |
+| `CORS_ORIGINS`          | Comma-separated allowed CORS origins                                                          |
+| `AWS_REGION`            | S3 region                                                                                     |
+| `AWS_ACCESS_KEY_ID`     | IAM key for S3                                                                                |
+| `AWS_SECRET_ACCESS_KEY` | IAM secret for S3                                                                             |
+| `S3_BUCKET_NAME`        | `nicoflow-attachments`                                                                        |
+| `LS_WEBHOOK_SECRET`     | HMAC-SHA256 secret for Lemon Squeezy webhook verification                                     |
+| `APP_ENV`               | `staging` \| `production`                                                                     |
+| `PORT`                  | `3001` (set by Render automatically)                                                          |
 
 ---
 
