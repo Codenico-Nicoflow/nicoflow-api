@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
@@ -25,6 +26,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/task"
 	"github.com/nicoflow/nicoflow-api/internal/handler"
 	"github.com/nicoflow/nicoflow-api/internal/testutil"
+	"github.com/nicoflow/nicoflow-api/pkg/jwtutil"
 )
 
 const integrationJWTSecret = "integration-test-secret-32-bytes!!"
@@ -64,6 +66,26 @@ func cleanProjectTestData(t *testing.T, pool *pgxpool.Pool) {
 	}
 }
 
+// insertTestUser inserts a user directly into the DB and returns a signed JWT.
+// This avoids calling auth.Register (which stores a refresh token in a separate
+// non-transactional step that races with parallel cleanup in other test packages).
+func insertTestUser(t *testing.T, pool *pgxpool.Pool, email, plan string) (userID, token string) {
+	t.Helper()
+	userID = uuid.New().String()
+	_, err := pool.Exec(context.Background(),
+		`INSERT INTO users (id, email, username, password_hash, plan) VALUES ($1, $2, $3, 'x', $4)`,
+		userID, email, uuid.New().String()[:12], plan,
+	)
+	if err != nil {
+		t.Fatalf("insertTestUser %s: %v", email, err)
+	}
+	tok, err := jwtutil.Issue(userID, email, plan, integrationJWTSecret, 15*time.Minute)
+	if err != nil {
+		t.Fatalf("insertTestUser jwt: %v", err)
+	}
+	return userID, tok
+}
+
 // newProjectServer spins up a real httptest.Server backed by the test DB.
 // Returns an env with the server, a JWT for a fresh free-plan user, and a
 // pre-created area (most project tests need one).
@@ -79,18 +101,10 @@ func newProjectServer(t *testing.T) testEnv {
 		RefreshTokenExpiry: 7 * 24 * time.Hour,
 	}
 
-	authSvc := auth.NewService(auth.NewRepository(pool), cfg)
-	reg, err := authSvc.Register(context.Background(), auth.RegisterRequest{
-		Email:    "usera@project-integration.test",
-		Password: "Integrate1",
-		Username: "projusera",
-	})
-	if err != nil {
-		t.Fatalf("newProjectServer: register: %v", err)
-	}
+	_, token := insertTestUser(t, pool, "usera@project-integration.test", "free")
 
 	h := handler.Handlers{
-		Auth:    auth.NewHandler(authSvc, false),
+		Auth:    auth.NewHandler(auth.NewService(auth.NewRepository(pool), cfg), false),
 		Area:    area.NewHandler(area.NewService(area.NewRepository(pool))),
 		Project: project.NewHandler(project.NewService(project.NewRepository(pool))),
 		Task:    task.NewHandler(task.NewService(task.NewRepository(pool))),
@@ -103,9 +117,9 @@ func newProjectServer(t *testing.T) testEnv {
 	t.Cleanup(srv.Close)
 
 	// Pre-create an area for convenience.
-	aID := doCreateArea(t, srv, reg.Token, "Default Area")
+	aID := doCreateArea(t, srv, token, "Default Area")
 
-	return testEnv{srv: srv, token: reg.Token, areaID: aID}
+	return testEnv{srv: srv, token: token, areaID: aID}
 }
 
 func do(t *testing.T, srv *httptest.Server, method, path string, body any, token string) *http.Response {
@@ -445,24 +459,9 @@ func TestIntegration_Project_CrossUser_Returns404(t *testing.T) {
 	envA := newProjectServer(t)
 	pA := createProject(t, envA.srv, envA.token, envA.areaID, "User A Project")
 
-	// Register user B against the same server.
+	// Create user B via direct DB insert (avoids auth.Register refresh-token race).
 	pool := testutil.NewTestDB(t)
-	cfg := config.Config{
-		JWTSecret:          integrationJWTSecret,
-		JWTExpiry:          15 * time.Minute,
-		RefreshTokenExpiry: 7 * 24 * time.Hour,
-	}
-	regB, err := auth.NewService(auth.NewRepository(pool), cfg).Register(
-		context.Background(), auth.RegisterRequest{
-			Email:    "userb@project-integration.test",
-			Password: "Integrate1",
-			Username: "userbproj",
-		},
-	)
-	if err != nil {
-		t.Fatalf("register user B: %v", err)
-	}
-	tokenB := regB.Token
+	_, tokenB := insertTestUser(t, pool, "userb@project-integration.test", "free")
 
 	verbs := []struct {
 		method string
@@ -583,35 +582,21 @@ func TestIntegration_Project_Reorder_CrossUserRejected(t *testing.T) {
 	pA := createProject(t, envA.srv, envA.token, envA.areaID, "User A Project")
 
 	pool := testutil.NewTestDB(t)
-	cfg := config.Config{
-		JWTSecret:          integrationJWTSecret,
-		JWTExpiry:          15 * time.Minute,
-		RefreshTokenExpiry: 7 * 24 * time.Hour,
-	}
-	regB, err := auth.NewService(auth.NewRepository(pool), cfg).Register(
-		context.Background(), auth.RegisterRequest{
-			Email:    "userb-reorder@project-integration.test",
-			Password: "Integrate1",
-			Username: "userbrojre",
-		},
-	)
-	if err != nil {
-		t.Fatalf("register user B: %v", err)
-	}
-	areaBID := doCreateArea(t, envA.srv, regB.Token, "User B Area")
-	pB := createProject(t, envA.srv, regB.Token, areaBID, "User B Project")
+	_, tokenB := insertTestUser(t, pool, "userb-reorder@project-integration.test", "free")
+	areaBID := doCreateArea(t, envA.srv, tokenB, "User B Area")
+	pB := createProject(t, envA.srv, tokenB, areaBID, "User B Project")
 
 	resp := do(t, envA.srv, http.MethodPatch, "/v1/projects/reorder", project.ReorderRequest{
 		Items: []project.ReorderItem{
 			{ID: pB.ID, DisplayOrder: 10},
 			{ID: pA.ID, DisplayOrder: 20}, // belongs to user A
 		},
-	}, regB.Token)
+	}, tokenB)
 	assertStatus(t, resp, http.StatusNotFound)
 	assertHTTPErrCode(t, resp, apperror.ErrProjectNotFound)
 
 	// User B's own project must be unchanged (atomic rollback).
-	getResp := do(t, envA.srv, http.MethodGet, "/v1/projects/"+pB.ID, nil, regB.Token)
+	getResp := do(t, envA.srv, http.MethodGet, "/v1/projects/"+pB.ID, nil, tokenB)
 	assertStatus(t, getResp, http.StatusOK)
 	var getEnv struct {
 		Data project.ProjectView `json:"data"`
