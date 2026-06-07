@@ -36,9 +36,8 @@ func NewRepository(db *pgxpool.Pool) Repository {
 	return &pgRepository{db: db}
 }
 
-const projectSelectCols = `
-	id, user_id, area_id, name, status, folder_icon,
-	due_date, is_favorite, description, display_order, created_at, updated_at`
+const projectSelectCols = ` id, user_id, area_id, name, status, folder_icon,
+	due_date, is_favorite, description, display_order, created_at, updated_at `
 
 func (r *pgRepository) List(ctx context.Context, userID string, f ListProjectsFilter) ([]Project, string, error) {
 	limit, cursorOrder, cursorID, err := parsePaginationArgs(f.Limit, f.Cursor)
@@ -131,6 +130,9 @@ func (r *pgRepository) Create(ctx context.Context, p Project) (Project, error) {
 	if err != nil {
 		if isUniqueViolation(err) {
 			return Project{}, apperror.New(http.StatusConflict, apperror.ErrDuplicateName, "a project with this name already exists")
+		}
+		if isForeignKeyViolation(err) {
+			return Project{}, apperror.New(http.StatusNotFound, apperror.ErrAreaNotFound, "area not found or does not belong to you")
 		}
 		return Project{}, fmt.Errorf("project.Create: %w", err)
 	}
@@ -345,6 +347,14 @@ func isUniqueViolation(err error) bool {
 	var pgErr interface{ SQLState() string }
 	if errors.As(err, &pgErr) {
 		return pgErr.SQLState() == "23505"
+	}
+	return false
+}
+
+func isForeignKeyViolation(err error) bool {
+	var pgErr interface{ SQLState() string }
+	if errors.As(err, &pgErr) {
+		return pgErr.SQLState() == "23503"
 	}
 	return false
 }
