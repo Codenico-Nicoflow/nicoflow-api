@@ -132,6 +132,9 @@ func (r *pgRepository) Create(ctx context.Context, p Project) (Project, error) {
 		if isUniqueViolation(err) {
 			return Project{}, apperror.New(http.StatusConflict, apperror.ErrDuplicateName, "a project with this name already exists")
 		}
+		if isForeignKeyViolation(err) {
+			return Project{}, apperror.New(http.StatusNotFound, apperror.ErrAreaNotFound, "area not found or does not belong to you")
+		}
 		return Project{}, fmt.Errorf("project.Create: %w", err)
 	}
 	return p, nil
@@ -345,6 +348,14 @@ func isUniqueViolation(err error) bool {
 	var pgErr interface{ SQLState() string }
 	if errors.As(err, &pgErr) {
 		return pgErr.SQLState() == "23505"
+	}
+	return false
+}
+
+func isForeignKeyViolation(err error) bool {
+	var pgErr interface{ SQLState() string }
+	if errors.As(err, &pgErr) {
+		return pgErr.SQLState() == "23503"
 	}
 	return false
 }
