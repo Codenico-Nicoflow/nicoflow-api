@@ -36,9 +36,8 @@ func NewRepository(db *pgxpool.Pool) Repository {
 	return &pgRepository{db: db}
 }
 
-const projectSelectCols = `
-	id, user_id, area_id, name, status, folder_icon,
-	due_date, is_favorite, description, display_order, created_at, updated_at`
+const projectSelectCols = ` id, user_id, area_id, name, status, folder_icon,
+	due_date, is_favorite, description, display_order, created_at, updated_at `
 
 func (r *pgRepository) List(ctx context.Context, userID string, f ListProjectsFilter) ([]Project, string, error) {
 	limit, cursorOrder, cursorID, err := parsePaginationArgs(f.Limit, f.Cursor)

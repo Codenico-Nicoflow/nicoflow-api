@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
 	"github.com/nicoflow/nicoflow-api/internal/config"
 	"github.com/nicoflow/nicoflow-api/internal/domain/ai"
@@ -35,22 +37,36 @@ type testEnv struct {
 	areaID string
 }
 
+// cleanProjectTestData removes only the rows owned by project-integration test users,
+// keyed on the email domain "@project-integration.test". This avoids the blanket
+// DELETE FROM users that would race against auth integration tests running in parallel.
+func cleanProjectTestData(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	// Delete child rows first (FK order), scoped to our test users only.
+	queries := []string{
+		`DELETE FROM subtasks   WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%@project-integration.test')`,
+		`DELETE FROM tasks      WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%@project-integration.test')`,
+		`DELETE FROM projects   WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%@project-integration.test')`,
+		`DELETE FROM areas      WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%@project-integration.test')`,
+		`DELETE FROM password_reset_tokens WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%@project-integration.test')`,
+		`DELETE FROM refresh_tokens        WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%@project-integration.test')`,
+		`DELETE FROM users WHERE email LIKE '%@project-integration.test'`,
+	}
+	for _, q := range queries {
+		if _, err := pool.Exec(context.Background(), q); err != nil {
+			t.Fatalf("cleanProjectTestData: %v", err)
+		}
+	}
+}
+
 // newProjectServer spins up a real httptest.Server backed by the test DB.
 // Returns an env with the server, a JWT for a fresh free-plan user, and a
 // pre-created area (most project tests need one).
 func newProjectServer(t *testing.T) testEnv {
 	t.Helper()
 	pool := testutil.NewTestDB(t)
-	testutil.CleanTables(t, pool,
-		"subtasks", "tasks", "projects", "areas",
-		"password_reset_tokens", "refresh_tokens", "users",
-	)
-	t.Cleanup(func() {
-		testutil.CleanTables(t, pool,
-			"subtasks", "tasks", "projects", "areas",
-			"password_reset_tokens", "refresh_tokens", "users",
-		)
-	})
+	cleanProjectTestData(t, pool)
+	t.Cleanup(func() { cleanProjectTestData(t, pool) })
 
 	cfg := config.Config{
 		JWTSecret:          integrationJWTSecret,
@@ -60,9 +76,9 @@ func newProjectServer(t *testing.T) testEnv {
 
 	authSvc := auth.NewService(auth.NewRepository(pool), cfg)
 	reg, err := authSvc.Register(context.Background(), auth.RegisterRequest{
-		Email:    "project-test@example.com",
+		Email:    "usera@project-integration.test",
 		Password: "Integrate1",
-		Username: "projtest",
+		Username: "projusera",
 	})
 	if err != nil {
 		t.Fatalf("newProjectServer: register: %v", err)
@@ -364,8 +380,9 @@ func TestIntegration_Project_Update_DetachFromArea(t *testing.T) {
 	env := newProjectServer(t)
 	p := createProject(t, env.srv, env.token, env.areaID, "Detachable")
 
+	emptyArea := ""
 	resp := do(t, env.srv, http.MethodPatch, "/v1/projects/"+p.ID,
-		map[string]any{"areaId": nil}, env.token)
+		project.UpdateProjectRequest{AreaID: &emptyArea}, env.token)
 	assertStatus(t, resp, http.StatusOK)
 
 	var pEnv struct {
@@ -393,7 +410,7 @@ func TestIntegration_Project_Delete_NullsTaskProjectID(t *testing.T) {
 		 VALUES (gen_random_uuid()::text,
 		         (SELECT id FROM users WHERE email = $1),
 		         $2, 'My Task', 'inbox')`,
-		"project-test@example.com", p.ID,
+		"usera@project-integration.test", p.ID,
 	)
 	if err != nil {
 		t.Fatalf("insert task: %v", err)
@@ -407,7 +424,7 @@ func TestIntegration_Project_Delete_NullsTaskProjectID(t *testing.T) {
 	var projectIDIsNull bool
 	if err := pool.QueryRow(context.Background(),
 		`SELECT project_id IS NULL FROM tasks WHERE user_id = (SELECT id FROM users WHERE email = $1)`,
-		"project-test@example.com",
+		"usera@project-integration.test",
 	).Scan(&projectIDIsNull); err != nil {
 		t.Fatalf("query task: %v", err)
 	}
@@ -432,7 +449,7 @@ func TestIntegration_Project_CrossUser_Returns404(t *testing.T) {
 	}
 	regB, err := auth.NewService(auth.NewRepository(pool), cfg).Register(
 		context.Background(), auth.RegisterRequest{
-			Email:    "userb-proj@example.com",
+			Email:    "userb@project-integration.test",
 			Password: "Integrate1",
 			Username: "userbproj",
 		},
@@ -568,7 +585,7 @@ func TestIntegration_Project_Reorder_CrossUserRejected(t *testing.T) {
 	}
 	regB, err := auth.NewService(auth.NewRepository(pool), cfg).Register(
 		context.Background(), auth.RegisterRequest{
-			Email:    "userb-reorder-proj@example.com",
+			Email:    "userb-reorder@project-integration.test",
 			Password: "Integrate1",
 			Username: "userbrojre",
 		},

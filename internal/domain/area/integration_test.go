@@ -30,13 +30,31 @@ const (
 	testJWTExpiry = 15 * time.Minute
 )
 
+// cleanAreaTestData deletes only rows belonging to area-integration test users
+// (email domain "@integration.test"), avoiding cross-package races with auth tests.
+func cleanAreaTestData(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	queries := []string{
+		`DELETE FROM projects WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%@integration.test')`,
+		`DELETE FROM areas    WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%@integration.test')`,
+		`DELETE FROM refresh_tokens        WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%@integration.test')`,
+		`DELETE FROM password_reset_tokens WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%@integration.test')`,
+		`DELETE FROM users WHERE email LIKE '%@integration.test'`,
+	}
+	for _, q := range queries {
+		if _, err := pool.Exec(context.Background(), q); err != nil {
+			t.Fatalf("cleanAreaTestData: %v", err)
+		}
+	}
+}
+
 // ── server helpers ─────────────────────────────────────────────────────────────
 
 func newAreaServer(t *testing.T) (*httptest.Server, *pgxpool.Pool) {
 	t.Helper()
 	pool := testutil.NewTestDB(t)
-	testutil.CleanTables(t, pool, "projects", "areas", "users")
-	t.Cleanup(func() { testutil.CleanTables(t, pool, "projects", "areas", "users") })
+	cleanAreaTestData(t, pool)
+	t.Cleanup(func() { cleanAreaTestData(t, pool) })
 
 	cfg := config.Config{
 		JWTSecret:          testJWTSecret,
