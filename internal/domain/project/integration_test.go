@@ -44,7 +44,12 @@ func cleanProjectTestData(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	// Delete child rows first (FK order), scoped to our test users only.
 	queries := []string{
-		`DELETE FROM subtasks   WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%@project-integration.test')`,
+		// subtasks has no user_id — cascade via task_id
+		`DELETE FROM subtasks WHERE task_id IN (
+			SELECT t.id FROM tasks t
+			JOIN users u ON u.id = t.user_id
+			WHERE u.email LIKE '%@project-integration.test'
+		)`,
 		`DELETE FROM tasks      WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%@project-integration.test')`,
 		`DELETE FROM projects   WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%@project-integration.test')`,
 		`DELETE FROM areas      WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%@project-integration.test')`,
