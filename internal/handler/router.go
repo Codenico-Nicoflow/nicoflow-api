@@ -66,6 +66,9 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		r.Post("/refresh-token", h.Auth.Refresh)
 		r.With(mw.RateLimitIP(3, 3, trustedProxies)).Post("/forgot-password", h.Auth.ForgotPassword)
 		r.With(mw.RateLimitIP(5, 5, trustedProxies)).Post("/reset-password", h.Auth.ResetPassword)
+		// Email verification (public; token-bearing or email-bearing).
+		r.With(mw.RateLimitIP(10, 10, trustedProxies)).Post("/verify-email", h.Auth.VerifyEmail)
+		r.With(mw.RateLimitIP(3, 3, trustedProxies)).Post("/resend-verification", h.Auth.ResendVerification)
 		// Biometric stubs — FIDO2/WebAuthn in v2
 		r.Post("/biometric/verify", h.Auth.BiometricVerify)
 	})

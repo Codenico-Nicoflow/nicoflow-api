@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/mail"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 
@@ -20,6 +22,7 @@ import (
 type Repository interface {
 	CreateUser(ctx context.Context, email, username, passwordHash string) (User, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
+	GetUserByIdentifier(ctx context.Context, identifier string) (User, error)
 	GetUserByID(ctx context.Context, userID string) (User, error)
 	UpdateUser(ctx context.Context, userID string, req UpdateMeRequest) (User, error)
 	SoftDeleteUser(ctx context.Context, userID string) error
@@ -37,6 +40,11 @@ type Repository interface {
 	GetPasswordResetTokenByFingerprint(ctx context.Context, fingerprint string) (PasswordResetToken, error)
 	MarkPasswordResetTokenUsed(ctx context.Context, fingerprint string) error
 	UpdatePassword(ctx context.Context, userID, passwordHash string) error
+
+	StoreEmailVerificationToken(ctx context.Context, userID, tokenHash, tokenFingerprint string, expiresAt time.Time) error
+	GetEmailVerificationTokenByFingerprint(ctx context.Context, fingerprint string) (EmailVerificationToken, error)
+	MarkEmailVerificationTokenUsed(ctx context.Context, fingerprint string) error
+	MarkEmailVerified(ctx context.Context, userID string) error
 }
 
 type pgRepo struct {
@@ -71,10 +79,52 @@ func (r *pgRepo) CreateUser(ctx context.Context, email, username, passwordHash s
 		&u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
-		if isUniqueViolation(err) {
-			return User{}, apperror.New(http.StatusConflict, apperror.ErrEmailAlreadyExists, "email already in use")
+		if code := uniqueViolationField(err); code != "" {
+			switch code {
+			case "users_username_key":
+				return User{}, apperror.New(http.StatusConflict, apperror.ErrUsernameAlreadyExists, "username already taken")
+			default:
+				// users_email_active_uniq (and any other email constraint).
+				return User{}, apperror.New(http.StatusConflict, apperror.ErrEmailAlreadyExists, "email already in use")
+			}
 		}
 		return User{}, fmt.Errorf("auth.CreateUser: %w", err)
+	}
+	return u, nil
+}
+
+// GetUserByIdentifier looks a user up by email when the identifier parses as an
+// email address, otherwise by username. Used by login to accept either form.
+func (r *pgRepo) GetUserByIdentifier(ctx context.Context, identifier string) (User, error) {
+	if _, err := mail.ParseAddress(identifier); err == nil {
+		return r.GetUserByEmail(ctx, identifier)
+	}
+	return r.getUserByUsername(ctx, identifier)
+}
+
+func (r *pgRepo) getUserByUsername(ctx context.Context, username string) (User, error) {
+	var u User
+	err := r.db.QueryRow(ctx, `
+		SELECT id, email, COALESCE(username,''), password_hash,
+		       COALESCE(first_name,''), COALESCE(last_name,''),
+		       theme, COALESCE(image_url,''), status, plan, timezone,
+		       failed_login_count, locked_until,
+		       created_at, updated_at
+		FROM users
+		WHERE username = @username AND deleted_at IS NULL`,
+		pgx.NamedArgs{"username": username},
+	).Scan(
+		&u.ID, &u.Email, &u.Username, &u.PasswordHash,
+		&u.FirstName, &u.LastName,
+		&u.Theme, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
+		&u.FailedLoginCount, &u.LockedUntil,
+		&u.CreatedAt, &u.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return User{}, apperror.New(http.StatusNotFound, apperror.ErrUserNotFound, "user not found")
+		}
+		return User{}, fmt.Errorf("auth.getUserByUsername: %w", err)
 	}
 	return u, nil
 }
@@ -347,6 +397,87 @@ func (r *pgRepo) UpdatePassword(ctx context.Context, userID, passwordHash string
 	return nil
 }
 
+func (r *pgRepo) StoreEmailVerificationToken(ctx context.Context, userID, tokenHash, tokenFingerprint string, expiresAt time.Time) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("auth.StoreEmailVerificationToken begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// One active verification token per user at a time.
+	_, err = tx.Exec(ctx,
+		`DELETE FROM email_verification_tokens WHERE user_id = @userID AND used_at IS NULL`,
+		pgx.NamedArgs{"userID": userID},
+	)
+	if err != nil {
+		return fmt.Errorf("auth.StoreEmailVerificationToken cleanup: %w", err)
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO email_verification_tokens (id, user_id, token_hash, token_fingerprint, expires_at)
+		VALUES (@id, @userID, @tokenHash, @tokenFingerprint, @expiresAt)`,
+		pgx.NamedArgs{
+			"id":               uuid.New().String(),
+			"userID":           userID,
+			"tokenHash":        tokenHash,
+			"tokenFingerprint": tokenFingerprint,
+			"expiresAt":        expiresAt,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("auth.StoreEmailVerificationToken: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("auth.StoreEmailVerificationToken commit: %w", err)
+	}
+	return nil
+}
+
+func (r *pgRepo) GetEmailVerificationTokenByFingerprint(ctx context.Context, fingerprint string) (EmailVerificationToken, error) {
+	var evt EmailVerificationToken
+	err := r.db.QueryRow(ctx, `
+		SELECT id, user_id, token_hash, token_fingerprint, expires_at, used_at, created_at
+		FROM email_verification_tokens
+		WHERE token_fingerprint = @fingerprint
+		  AND expires_at > NOW()
+		  AND used_at IS NULL`,
+		pgx.NamedArgs{"fingerprint": fingerprint},
+	).Scan(&evt.ID, &evt.UserID, &evt.TokenHash, &evt.TokenFingerprint, &evt.ExpiresAt, &evt.UsedAt, &evt.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return EmailVerificationToken{}, apperror.New(http.StatusUnauthorized, apperror.ErrInvalidToken, "invalid or expired verification token")
+		}
+		return EmailVerificationToken{}, fmt.Errorf("auth.GetEmailVerificationToken: %w", err)
+	}
+	return evt, nil
+}
+
+func (r *pgRepo) MarkEmailVerificationTokenUsed(ctx context.Context, fingerprint string) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE email_verification_tokens SET used_at = NOW() WHERE token_fingerprint = @fingerprint`,
+		pgx.NamedArgs{"fingerprint": fingerprint},
+	)
+	if err != nil {
+		return fmt.Errorf("auth.MarkEmailVerificationTokenUsed: %w", err)
+	}
+	return nil
+}
+
+func (r *pgRepo) MarkEmailVerified(ctx context.Context, userID string) error {
+	tag, err := r.db.Exec(ctx,
+		`UPDATE users SET email_verified = true, updated_at = NOW() WHERE id = @userID AND deleted_at IS NULL`,
+		pgx.NamedArgs{"userID": userID},
+	)
+	if err != nil {
+		return fmt.Errorf("auth.MarkEmailVerified: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return apperror.New(http.StatusNotFound, apperror.ErrUserNotFound, "user not found")
+	}
+	return nil
+}
+
 // IncrementFailedLogin bumps the failed_login_count and sets locked_until using
 // exponential back-off: lock duration = 2^(count-1) minutes, capped at 60 minutes.
 func (r *pgRepo) IncrementFailedLogin(ctx context.Context, userID string) error {
@@ -396,6 +527,9 @@ func StartTokenGC(ctx context.Context, db *pgxpool.Pool) {
 				if _, err := db.Exec(ctx, `DELETE FROM password_reset_tokens WHERE expires_at < NOW() OR used_at IS NOT NULL`); err != nil {
 					log.Error().Err(err).Msg("token GC: failed to purge expired reset tokens")
 				}
+				if _, err := db.Exec(ctx, `DELETE FROM email_verification_tokens WHERE expires_at < NOW() OR used_at IS NOT NULL`); err != nil {
+					log.Error().Err(err).Msg("token GC: failed to purge expired verification tokens")
+				}
 			case <-ctx.Done():
 				return
 			}
@@ -408,4 +542,16 @@ func isUniqueViolation(err error) bool {
 	type pgErr interface{ SQLState() string }
 	var pg pgErr
 	return errors.As(err, &pg) && pg.SQLState() == "23505"
+}
+
+// uniqueViolationField returns the constraint/index name of a PostgreSQL unique
+// violation (23505), or "" if err is not a unique violation. Used to tell apart
+// a duplicate email (users_email_active_uniq) from a duplicate username
+// (users_username_key) so callers can return a specific error code.
+func uniqueViolationField(err error) string {
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) && pg.Code == "23505" {
+		return pg.ConstraintName
+	}
+	return ""
 }

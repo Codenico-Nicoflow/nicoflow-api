@@ -32,6 +32,12 @@ func (m *mockService) ForgotPassword(_ context.Context, _ string) error { return
 func (m *mockService) ResetPassword(_ context.Context, _ auth.ResetPasswordRequest) error {
 	return nil
 }
+func (m *mockService) VerifyEmail(_ context.Context, _ auth.VerifyEmailRequest) error {
+	return nil
+}
+func (m *mockService) ResendVerification(_ context.Context, _ string) error {
+	return nil
+}
 func (m *mockService) GetProfile(_ context.Context, _ string) (auth.UserView, error) {
 	return auth.UserView{}, nil
 }

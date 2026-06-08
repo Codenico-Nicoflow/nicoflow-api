@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/rs/zerolog/log"
 
@@ -48,6 +49,8 @@ type Service interface {
 	RefreshToken(ctx context.Context, rawRefreshToken string) (AuthResponse, error)
 	ForgotPassword(ctx context.Context, email string) error
 	ResetPassword(ctx context.Context, req ResetPasswordRequest) error
+	VerifyEmail(ctx context.Context, req VerifyEmailRequest) error
+	ResendVerification(ctx context.Context, email string) error
 	GetProfile(ctx context.Context, userID string) (UserView, error)
 	UpdateMe(ctx context.Context, userID string, req UpdateMeRequest) (UserView, error)
 	DeleteMe(ctx context.Context, userID string) error
@@ -85,17 +88,53 @@ func (s *service) Register(ctx context.Context, req RegisterRequest) (AuthRespon
 		return AuthResponse{}, err
 	}
 
+	// Best-effort email verification: issue a token and send the email, but do
+	// NOT block registration or login on it.
+	// TODO(email-verify): once SMTP is production-ready, gate login on
+	// user.email_verified (see Login) and surface an "unverified" state.
+	s.sendVerificationEmail(ctx, user)
+
 	return s.issueAuthResponse(ctx, user, s.cfg.RefreshTokenExpiry)
 }
 
+// sendVerificationEmail issues a fresh email-verification token and sends the
+// verification link. Failures are logged, never returned — verification is
+// non-blocking for now.
+func (s *service) sendVerificationEmail(ctx context.Context, user User) {
+	rawToken, err := generateRawToken()
+	if err != nil {
+		log.Error().Err(err).Str("user_id", user.ID).Msg("verify-email: generate token failed")
+		return
+	}
+	tokenHash, err := hashutil.Hash(rawToken)
+	if err != nil {
+		log.Error().Err(err).Str("user_id", user.ID).Msg("verify-email: hash failed")
+		return
+	}
+	fp := fingerprint(rawToken)
+	expiresAt := time.Now().Add(24 * time.Hour)
+	if err := s.repo.StoreEmailVerificationToken(ctx, user.ID, tokenHash, fp, expiresAt); err != nil {
+		log.Error().Err(err).Str("user_id", user.ID).Msg("verify-email: store token failed")
+		return
+	}
+	if s.cfg.SMTPDsn != "" {
+		verifyURL := s.cfg.AppBaseURL + "/verify-email?token=" + rawToken
+		if err := emailutil.SendVerificationEmail(user.Email, verifyURL, s.cfg.SMTPDsn); err != nil {
+			log.Error().Err(err).Str("user_id", user.ID).Msg("verify-email: send failed")
+		}
+	}
+}
+
 func (s *service) Login(ctx context.Context, req LoginRequest) (AuthResponse, error) {
-	if req.Email == "" || req.Password == "" {
-		return AuthResponse{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "email and password are required")
+	identifier := req.LoginIdentifier()
+	if identifier == "" || req.Password == "" {
+		return AuthResponse{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "identifier and password are required")
 	}
 
-	user, err := s.repo.GetUserByEmail(ctx, req.Email)
+	// Look up by email or username. The response is intentionally identical for
+	// "no such user" and "wrong password" to prevent account enumeration.
+	user, err := s.repo.GetUserByIdentifier(ctx, identifier)
 	if err != nil {
-		// Return 401 regardless of whether user exists (no enumeration).
 		var ae *apperror.AppError
 		if errors.As(err, &ae) && ae.Code == apperror.ErrUserNotFound {
 			// Constant-time: run bcrypt so response time matches the "wrong password" path.
@@ -249,6 +288,48 @@ func (s *service) ResetPassword(ctx context.Context, req ResetPasswordRequest) e
 	return nil
 }
 
+// VerifyEmail consumes a verification token and marks the user's email verified.
+// Single-use, expiry-checked, dual-hash verified (mirrors ResetPassword).
+func (s *service) VerifyEmail(ctx context.Context, req VerifyEmailRequest) error {
+	if req.Token == "" {
+		return apperror.New(http.StatusUnauthorized, apperror.ErrInvalidToken, "verification token required")
+	}
+
+	fp := fingerprint(req.Token)
+	evt, err := s.repo.GetEmailVerificationTokenByFingerprint(ctx, fp)
+	if err != nil {
+		return err
+	}
+	if evt.UsedAt != nil {
+		return apperror.New(http.StatusUnauthorized, apperror.ErrInvalidToken, "verification token already used")
+	}
+	if time.Now().After(evt.ExpiresAt) {
+		return apperror.New(http.StatusUnauthorized, apperror.ErrInvalidToken, "verification token expired")
+	}
+	if !hashutil.Compare(evt.TokenHash, req.Token) {
+		return apperror.New(http.StatusUnauthorized, apperror.ErrInvalidToken, "invalid verification token")
+	}
+
+	if err := s.repo.MarkEmailVerified(ctx, evt.UserID); err != nil {
+		return err
+	}
+	return s.repo.MarkEmailVerificationTokenUsed(ctx, fp)
+}
+
+// ResendVerification re-issues a verification email. Returns success regardless
+// of whether the email exists, to avoid user enumeration.
+func (s *service) ResendVerification(ctx context.Context, email string) error {
+	if err := validateEmail(email); err != nil {
+		return nil
+	}
+	user, err := s.repo.GetUserByEmail(ctx, email)
+	if err != nil {
+		return nil
+	}
+	s.sendVerificationEmail(ctx, user)
+	return nil
+}
+
 func (s *service) GetProfile(ctx context.Context, userID string) (UserView, error) {
 	user, err := s.repo.GetUserByID(ctx, userID)
 	if err != nil {
@@ -337,13 +418,26 @@ func validateEmail(email string) error {
 }
 
 func validatePassword(password string) error {
-	// NIST SP 800-63B: min 8, max 72 (bcrypt silently truncates beyond 72 bytes).
-	// No mandatory composition rules — length is the primary strength signal.
+	// Policy: 8–72 chars (bcrypt truncates beyond 72 bytes), with at least one
+	// uppercase and one lowercase letter. Keep this in sync with the frontend
+	// passwordSchema and SPEC §3.
 	if len(password) < 8 {
-		return apperror.New(http.StatusBadRequest, apperror.ErrWeakPassword, "password must be at least 8 characters")
+		return apperror.New(http.StatusBadRequest, apperror.ErrWeakPassword, "password must be at least 8 characters with an uppercase and a lowercase letter")
 	}
 	if len(password) > 72 {
 		return apperror.New(http.StatusBadRequest, apperror.ErrWeakPassword, "password must be at most 72 characters")
+	}
+	var hasUpper, hasLower bool
+	for _, r := range password {
+		switch {
+		case unicode.IsUpper(r):
+			hasUpper = true
+		case unicode.IsLower(r):
+			hasLower = true
+		}
+	}
+	if !hasUpper || !hasLower {
+		return apperror.New(http.StatusBadRequest, apperror.ErrWeakPassword, "password must contain at least one uppercase and one lowercase letter")
 	}
 	return nil
 }

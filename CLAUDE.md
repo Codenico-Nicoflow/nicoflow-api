@@ -21,7 +21,7 @@ Keep replies concise. No fluff. For any third-party library, fetch current docs 
 | ---------- | --------------------------------------------------------- |
 | Language   | Go 1.26.4                                                 |
 | Router     | `chi` v5                                                  |
-| Database   | PostgreSQL 15/16 via `pgx/v5` + `pgxpool`                |
+| Database   | PostgreSQL 16 via `pgx/v5` + `pgxpool`                   |
 | Migrations | `golang-migrate` — files in `migrations/`                 |
 | Auth       | JWT HS256 (15 min) + bcrypt refresh tokens + dual-hash    |
 | Email      | stdlib `net/smtp` via `SMTP_DSN` env var (Mailtrap)       |

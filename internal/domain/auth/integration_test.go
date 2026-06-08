@@ -149,18 +149,79 @@ func TestIntegration_Register_DuplicateEmail(t *testing.T) {
 	assertErrCode(t, err, apperror.ErrEmailAlreadyExists)
 }
 
-// ── Login ─────────────────────────────────────────────────────────────────────
-
-func TestIntegration_Login(t *testing.T) {
+func TestIntegration_Register_DuplicateUsername(t *testing.T) {
 	svc, _ := integrationSvc(t)
 	mustRegister(t, svc)
 
+	// Same username, different email → must surface USERNAME_ALREADY_EXISTS,
+	// not the email conflict code.
+	_, err := svc.Register(context.Background(), auth.RegisterRequest{
+		Email:    "different@example.com",
+		Password: "Integrate1",
+		Username: "integuser",
+	})
+	assertErrCode(t, err, apperror.ErrUsernameAlreadyExists)
+}
+
+func TestIntegration_Register_WeakPassword_NoUppercase(t *testing.T) {
+	svc, _ := integrationSvc(t)
+
+	_, err := svc.Register(context.Background(), auth.RegisterRequest{
+		Email:    "integration@example.com",
+		Password: "integrate1", // no uppercase
+		Username: "integuser",
+	})
+	assertErrCode(t, err, apperror.ErrWeakPassword)
+}
+
+// ── Login ─────────────────────────────────────────────────────────────────────
+
+func TestIntegration_Login_ByEmail(t *testing.T) {
+	svc, _ := integrationSvc(t)
+	mustRegister(t, svc)
+
+	resp, err := svc.Login(context.Background(), auth.LoginRequest{
+		Identifier: "integration@example.com",
+		Password:   "Integrate1",
+	})
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+	if resp.Token == "" {
+		t.Error("expected non-empty JWT")
+	}
+}
+
+func TestIntegration_Login_ByUsername(t *testing.T) {
+	svc, _ := integrationSvc(t)
+	mustRegister(t, svc)
+
+	resp, err := svc.Login(context.Background(), auth.LoginRequest{
+		Identifier: "integuser",
+		Password:   "Integrate1",
+	})
+	if err != nil {
+		t.Fatalf("Login() by username error = %v", err)
+	}
+	if resp.Token == "" {
+		t.Error("expected non-empty JWT")
+	}
+	if resp.User.Email != "integration@example.com" {
+		t.Errorf("User.Email = %q, want %q", resp.User.Email, "integration@example.com")
+	}
+}
+
+func TestIntegration_Login_LegacyEmailField(t *testing.T) {
+	svc, _ := integrationSvc(t)
+	mustRegister(t, svc)
+
+	// Older clients still send `email` instead of `identifier`.
 	resp, err := svc.Login(context.Background(), auth.LoginRequest{
 		Email:    "integration@example.com",
 		Password: "Integrate1",
 	})
 	if err != nil {
-		t.Fatalf("Login() error = %v", err)
+		t.Fatalf("Login() legacy email field error = %v", err)
 	}
 	if resp.Token == "" {
 		t.Error("expected non-empty JWT")
@@ -172,18 +233,18 @@ func TestIntegration_Login_WrongPassword(t *testing.T) {
 	mustRegister(t, svc)
 
 	_, err := svc.Login(context.Background(), auth.LoginRequest{
-		Email:    "integration@example.com",
-		Password: "WrongPass1",
+		Identifier: "integration@example.com",
+		Password:   "WrongPass1",
 	})
 	assertErrCode(t, err, apperror.ErrUnauthorized)
 }
 
-func TestIntegration_Login_NonExistentEmail(t *testing.T) {
+func TestIntegration_Login_NonExistentIdentifier(t *testing.T) {
 	svc, _ := integrationSvc(t)
 
 	_, err := svc.Login(context.Background(), auth.LoginRequest{
-		Email:    "nobody@example.com",
-		Password: "Integrate1",
+		Identifier: "nobody@example.com",
+		Password:   "Integrate1",
 	})
 	// Must return same error code as wrong password — no enumeration.
 	assertErrCode(t, err, apperror.ErrUnauthorized)
@@ -298,15 +359,15 @@ func TestIntegration_ResetPassword(t *testing.T) {
 
 	// Old password must be rejected.
 	_, err := svc.Login(context.Background(), auth.LoginRequest{
-		Email:    "integration@example.com",
-		Password: "Integrate1",
+		Identifier: "integration@example.com",
+		Password:   "Integrate1",
 	})
 	assertErrCode(t, err, apperror.ErrUnauthorized)
 
 	// New password must work.
 	_, err = svc.Login(context.Background(), auth.LoginRequest{
-		Email:    "integration@example.com",
-		Password: "NewIntegrate1",
+		Identifier: "integration@example.com",
+		Password:   "NewIntegrate1",
 	})
 	if err != nil {
 		t.Fatalf("login with new password failed: %v", err)
@@ -375,8 +436,8 @@ func TestIntegration_LogoutAll(t *testing.T) {
 
 	// Create a second session.
 	reg2, err := svc.Login(context.Background(), auth.LoginRequest{
-		Email:    "integration@example.com",
-		Password: "Integrate1",
+		Identifier: "integration@example.com",
+		Password:   "Integrate1",
 	})
 	if err != nil {
 		t.Fatalf("second login: %v", err)
@@ -414,9 +475,76 @@ func TestIntegration_DeleteMe(t *testing.T) {
 
 	// Login must fail (deleted_at IS NULL filter).
 	_, err = svc.Login(context.Background(), auth.LoginRequest{
-		Email:    "integration@example.com",
-		Password: "Integrate1",
+		Identifier: "integration@example.com",
+		Password:   "Integrate1",
 	})
 	assertErrCode(t, err, apperror.ErrUnauthorized)
 }
 
+// ── Email verification ──────────────────────────────────────────────────────
+
+// insertVerificationToken writes a valid email-verification token directly into
+// the DB and returns the raw token (no SMTP needed).
+func insertVerificationToken(t *testing.T, pool *pgxpool.Pool, email string) string {
+	t.Helper()
+
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatalf("insertVerificationToken: rand: %v", err)
+	}
+	rawToken := hex.EncodeToString(b)
+
+	tokenHash, err := hashutil.Hash(rawToken)
+	if err != nil {
+		t.Fatalf("insertVerificationToken: hash: %v", err)
+	}
+
+	sum := sha256.Sum256([]byte(rawToken))
+	fp := hex.EncodeToString(sum[:])
+	expiresAt := time.Now().Add(24 * time.Hour)
+
+	_, err = pool.Exec(context.Background(), `
+		INSERT INTO email_verification_tokens (id, user_id, token_hash, token_fingerprint, expires_at)
+		SELECT gen_random_uuid()::text, u.id, $1, $2, $3
+		FROM users u WHERE u.email = $4 AND u.deleted_at IS NULL`,
+		tokenHash, fp, expiresAt, email,
+	)
+	if err != nil {
+		t.Fatalf("insertVerificationToken: exec: %v", err)
+	}
+	return rawToken
+}
+
+func TestIntegration_VerifyEmail(t *testing.T) {
+	svc, pool := integrationSvc(t)
+	mustRegister(t, svc)
+
+	rawToken := insertVerificationToken(t, pool, "integration@example.com")
+
+	if err := svc.VerifyEmail(context.Background(), auth.VerifyEmailRequest{Token: rawToken}); err != nil {
+		t.Fatalf("VerifyEmail() error = %v", err)
+	}
+
+	// email_verified must now be true.
+	var verified bool
+	if err := pool.QueryRow(context.Background(),
+		`SELECT email_verified FROM users WHERE email = $1`, "integration@example.com",
+	).Scan(&verified); err != nil {
+		t.Fatalf("query email_verified: %v", err)
+	}
+	if !verified {
+		t.Error("expected email_verified = true after VerifyEmail")
+	}
+
+	// Token is single-use — second use must fail.
+	err := svc.VerifyEmail(context.Background(), auth.VerifyEmailRequest{Token: rawToken})
+	assertErrCode(t, err, apperror.ErrInvalidToken)
+}
+
+func TestIntegration_VerifyEmail_InvalidToken(t *testing.T) {
+	svc, _ := integrationSvc(t)
+	mustRegister(t, svc)
+
+	err := svc.VerifyEmail(context.Background(), auth.VerifyEmailRequest{Token: "not-a-real-token"})
+	assertErrCode(t, err, apperror.ErrInvalidToken)
+}
