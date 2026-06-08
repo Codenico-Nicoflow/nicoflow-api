@@ -147,6 +147,35 @@ func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, map[string]string{"message": "password updated successfully"})
 }
 
+// POST /v1/auth/verify-email
+func (h *Handler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
+	var req VerifyEmailRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respond.Error(w, http.StatusBadRequest, apperror.ErrInvalidInput, "invalid request body")
+		return
+	}
+
+	if err := h.svc.VerifyEmail(r.Context(), req); err != nil {
+		writeAppError(w, r, err)
+		return
+	}
+
+	respond.JSON(w, http.StatusOK, map[string]string{"message": "email verified successfully"})
+}
+
+// POST /v1/auth/resend-verification
+func (h *Handler) ResendVerification(w http.ResponseWriter, r *http.Request) {
+	var req ResendVerificationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respond.Error(w, http.StatusBadRequest, apperror.ErrInvalidInput, "invalid request body")
+		return
+	}
+
+	// Always 200 — no enumeration.
+	_ = h.svc.ResendVerification(r.Context(), req.Email)
+	respond.JSON(w, http.StatusOK, map[string]string{"message": "if the email exists, a verification link has been sent"})
+}
+
 // GET /v1/users/profile
 func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())

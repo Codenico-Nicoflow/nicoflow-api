@@ -42,6 +42,17 @@ type PasswordResetToken struct {
 	CreatedAt        time.Time
 }
 
+// EmailVerificationToken is a stored email-verification token row.
+type EmailVerificationToken struct {
+	ID               string
+	UserID           string
+	TokenHash        string
+	TokenFingerprint string
+	ExpiresAt        time.Time
+	UsedAt           *time.Time
+	CreatedAt        time.Time
+}
+
 // RegisterRequest is the body for POST /v1/auth/register.
 type RegisterRequest struct {
 	Email    string `json:"email"`
@@ -51,11 +62,23 @@ type RegisterRequest struct {
 }
 
 // LoginRequest is the body for POST /v1/auth/login.
+// Identifier accepts either an email address or a username. Email is kept as a
+// fallback for older clients that still send the `email` field.
 type LoginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-	Remember bool   `json:"remember"`
-	Platform string `json:"platform"`
+	Identifier string `json:"identifier"`
+	Email      string `json:"email"`
+	Password   string `json:"password"`
+	Remember   bool   `json:"remember"`
+	Platform   string `json:"platform"`
+}
+
+// LoginIdentifier returns the identifier to authenticate with, preferring the
+// new `identifier` field and falling back to the legacy `email` field.
+func (r LoginRequest) LoginIdentifier() string {
+	if r.Identifier != "" {
+		return r.Identifier
+	}
+	return r.Email
 }
 
 // ForgotPasswordRequest is the body for POST /v1/auth/forgot-password.
@@ -68,6 +91,16 @@ type ResetPasswordRequest struct {
 	Token           string `json:"token"`
 	NewPassword     string `json:"newPassword"`
 	ConfirmPassword string `json:"confirmPassword"`
+}
+
+// VerifyEmailRequest is the body for POST /v1/auth/verify-email.
+type VerifyEmailRequest struct {
+	Token string `json:"token"`
+}
+
+// ResendVerificationRequest is the body for POST /v1/auth/resend-verification.
+type ResendVerificationRequest struct {
+	Email string `json:"email"`
 }
 
 // UpdateMeRequest is the body for PATCH /v1/users/me.

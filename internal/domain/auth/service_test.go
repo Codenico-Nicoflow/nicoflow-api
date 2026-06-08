@@ -15,22 +15,27 @@ import (
 
 // mockRepo implements auth.Repository for testing.
 type mockRepo struct {
-	createUserFn                   func(ctx context.Context, email, username, passwordHash string) (auth.User, error)
-	getUserByEmailFn               func(ctx context.Context, email string) (auth.User, error)
-	getUserByIDFn                  func(ctx context.Context, userID string) (auth.User, error)
-	updateUserFn                   func(ctx context.Context, userID string, req auth.UpdateMeRequest) (auth.User, error)
-	softDeleteUserFn               func(ctx context.Context, userID string) error
-	storeRefreshTokenFn            func(ctx context.Context, userID, tokenHash, fp string, expiresAt time.Time) error
-	getRefreshTokenByFingerprintFn func(ctx context.Context, fingerprint string) (auth.RefreshToken, error)
-	deleteRefreshTokenFn           func(ctx context.Context, fingerprint string) (int64, error)
-	deleteRefreshTokenReturningFn  func(ctx context.Context, fingerprint string) (auth.RefreshToken, error)
-	deleteAllRefreshTokensFn       func(ctx context.Context, userID string) error
-	incrementFailedLoginFn         func(ctx context.Context, userID string) error
-	resetFailedLoginFn             func(ctx context.Context, userID string) error
-	storePasswordResetTokenFn      func(ctx context.Context, userID, tokenHash, fp string, expiresAt time.Time) error
-	getPasswordResetTokenByFpFn    func(ctx context.Context, fingerprint string) (auth.PasswordResetToken, error)
-	markPasswordResetTokenUsedFn   func(ctx context.Context, fingerprint string) error
-	updatePasswordFn               func(ctx context.Context, userID, passwordHash string) error
+	createUserFn                     func(ctx context.Context, email, username, passwordHash string) (auth.User, error)
+	getUserByEmailFn                 func(ctx context.Context, email string) (auth.User, error)
+	getUserByIDFn                    func(ctx context.Context, userID string) (auth.User, error)
+	updateUserFn                     func(ctx context.Context, userID string, req auth.UpdateMeRequest) (auth.User, error)
+	softDeleteUserFn                 func(ctx context.Context, userID string) error
+	storeRefreshTokenFn              func(ctx context.Context, userID, tokenHash, fp string, expiresAt time.Time) error
+	getRefreshTokenByFingerprintFn   func(ctx context.Context, fingerprint string) (auth.RefreshToken, error)
+	deleteRefreshTokenFn             func(ctx context.Context, fingerprint string) (int64, error)
+	deleteRefreshTokenReturningFn    func(ctx context.Context, fingerprint string) (auth.RefreshToken, error)
+	deleteAllRefreshTokensFn         func(ctx context.Context, userID string) error
+	incrementFailedLoginFn           func(ctx context.Context, userID string) error
+	resetFailedLoginFn               func(ctx context.Context, userID string) error
+	storePasswordResetTokenFn        func(ctx context.Context, userID, tokenHash, fp string, expiresAt time.Time) error
+	getPasswordResetTokenByFpFn      func(ctx context.Context, fingerprint string) (auth.PasswordResetToken, error)
+	markPasswordResetTokenUsedFn     func(ctx context.Context, fingerprint string) error
+	updatePasswordFn                 func(ctx context.Context, userID, passwordHash string) error
+	getUserByIdentifierFn            func(ctx context.Context, identifier string) (auth.User, error)
+	storeEmailVerificationTokenFn    func(ctx context.Context, userID, tokenHash, fp string, expiresAt time.Time) error
+	getEmailVerificationTokenByFpFn  func(ctx context.Context, fingerprint string) (auth.EmailVerificationToken, error)
+	markEmailVerificationTokenUsedFn func(ctx context.Context, fingerprint string) error
+	markEmailVerifiedFn              func(ctx context.Context, userID string) error
 }
 
 func (m *mockRepo) CreateUser(ctx context.Context, email, username, passwordHash string) (auth.User, error) {
@@ -80,6 +85,37 @@ func (m *mockRepo) MarkPasswordResetTokenUsed(ctx context.Context, fingerprint s
 }
 func (m *mockRepo) UpdatePassword(ctx context.Context, userID, passwordHash string) error {
 	return m.updatePasswordFn(ctx, userID, passwordHash)
+}
+func (m *mockRepo) GetUserByIdentifier(ctx context.Context, identifier string) (auth.User, error) {
+	if m.getUserByIdentifierFn != nil {
+		return m.getUserByIdentifierFn(ctx, identifier)
+	}
+	// Default: behave like email lookup so existing login tests keep working.
+	return m.getUserByEmailFn(ctx, identifier)
+}
+func (m *mockRepo) StoreEmailVerificationToken(ctx context.Context, userID, tokenHash, fp string, expiresAt time.Time) error {
+	if m.storeEmailVerificationTokenFn != nil {
+		return m.storeEmailVerificationTokenFn(ctx, userID, tokenHash, fp, expiresAt)
+	}
+	return nil
+}
+func (m *mockRepo) GetEmailVerificationTokenByFingerprint(ctx context.Context, fingerprint string) (auth.EmailVerificationToken, error) {
+	if m.getEmailVerificationTokenByFpFn != nil {
+		return m.getEmailVerificationTokenByFpFn(ctx, fingerprint)
+	}
+	return auth.EmailVerificationToken{}, nil
+}
+func (m *mockRepo) MarkEmailVerificationTokenUsed(ctx context.Context, fingerprint string) error {
+	if m.markEmailVerificationTokenUsedFn != nil {
+		return m.markEmailVerificationTokenUsedFn(ctx, fingerprint)
+	}
+	return nil
+}
+func (m *mockRepo) MarkEmailVerified(ctx context.Context, userID string) error {
+	if m.markEmailVerifiedFn != nil {
+		return m.markEmailVerifiedFn(ctx, userID)
+	}
+	return nil
 }
 
 func testCfg() config.Config {
@@ -166,6 +202,16 @@ func TestRegister(t *testing.T) {
 			wantErr: apperror.ErrWeakPassword,
 		},
 		{
+			name:    "weak password - no uppercase",
+			req:     auth.RegisterRequest{Email: "user@example.com", Password: "secret123", Username: "johndoe"},
+			wantErr: apperror.ErrWeakPassword,
+		},
+		{
+			name:    "weak password - no lowercase",
+			req:     auth.RegisterRequest{Email: "user@example.com", Password: "SECRET123", Username: "johndoe"},
+			wantErr: apperror.ErrWeakPassword,
+		},
+		{
 			name:    "invalid username",
 			req:     auth.RegisterRequest{Email: "user@example.com", Password: "Secret123", Username: "x"},
 			wantErr: apperror.ErrInvalidInput,
@@ -179,6 +225,16 @@ func TestRegister(t *testing.T) {
 				}
 			},
 			wantErr: apperror.ErrEmailAlreadyExists,
+		},
+		{
+			name: "duplicate username",
+			req:  auth.RegisterRequest{Email: "user@example.com", Password: "Secret123", Username: "johndoe"},
+			repoFn: func(m *mockRepo) {
+				m.createUserFn = func(_ context.Context, _, _, _ string) (auth.User, error) {
+					return auth.User{}, apperror.New(http.StatusConflict, apperror.ErrUsernameAlreadyExists, "username already taken")
+				}
+			},
+			wantErr: apperror.ErrUsernameAlreadyExists,
 		},
 	}
 
@@ -222,19 +278,35 @@ func TestLogin(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name: "success",
+			name: "success by email identifier",
+			req:  auth.LoginRequest{Identifier: "user@example.com", Password: "Secret123"},
+		},
+		{
+			name: "success by username identifier",
+			req:  auth.LoginRequest{Identifier: "johndoe", Password: "Secret123"},
+			repoFn: func(m *mockRepo) {
+				m.getUserByIdentifierFn = func(_ context.Context, _ string) (auth.User, error) {
+					u := fixedUser()
+					hash, _ := hashutil.Hash("Secret123")
+					u.PasswordHash = hash
+					return u, nil
+				}
+			},
+		},
+		{
+			name: "success via legacy email field",
 			req:  auth.LoginRequest{Email: "user@example.com", Password: "Secret123"},
 		},
 		{
 			name:    "wrong password",
-			req:     auth.LoginRequest{Email: "user@example.com", Password: "WrongPass1"},
+			req:     auth.LoginRequest{Identifier: "user@example.com", Password: "WrongPass1"},
 			wantErr: apperror.ErrUnauthorized,
 		},
 		{
 			name: "user not found",
-			req:  auth.LoginRequest{Email: "nobody@example.com", Password: "Secret123"},
+			req:  auth.LoginRequest{Identifier: "nobody@example.com", Password: "Secret123"},
 			repoFn: func(m *mockRepo) {
-				m.getUserByEmailFn = func(_ context.Context, _ string) (auth.User, error) {
+				m.getUserByIdentifierFn = func(_ context.Context, _ string) (auth.User, error) {
 					return auth.User{}, apperror.New(http.StatusNotFound, apperror.ErrUserNotFound, "user not found")
 				}
 			},
@@ -661,6 +733,54 @@ func TestRefreshToken_EmptyToken(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty refresh token, got nil")
 	}
+	var ae *apperror.AppError
+	if !errors.As(err, &ae) || ae.Code != apperror.ErrInvalidToken {
+		t.Fatalf("expected INVALID_TOKEN, got %v", err)
+	}
+}
+
+func TestVerifyEmail_EmptyToken(t *testing.T) {
+	svc := auth.NewService(happyRepo(), testCfg())
+	err := svc.VerifyEmail(context.Background(), auth.VerifyEmailRequest{Token: ""})
+	var ae *apperror.AppError
+	if !errors.As(err, &ae) || ae.Code != apperror.ErrInvalidToken {
+		t.Fatalf("expected INVALID_TOKEN, got %v", err)
+	}
+}
+
+func TestVerifyEmail_Success(t *testing.T) {
+	repo := happyRepo()
+	rawToken := "verify-raw-token"
+	hash, _ := hashutil.Hash(rawToken)
+	var markedVerified, markedUsed bool
+	repo.getEmailVerificationTokenByFpFn = func(_ context.Context, _ string) (auth.EmailVerificationToken, error) {
+		return auth.EmailVerificationToken{UserID: "usr_abc123", TokenHash: hash, ExpiresAt: time.Now().Add(time.Hour)}, nil
+	}
+	repo.markEmailVerifiedFn = func(_ context.Context, _ string) error { markedVerified = true; return nil }
+	repo.markEmailVerificationTokenUsedFn = func(_ context.Context, _ string) error { markedUsed = true; return nil }
+
+	svc := auth.NewService(repo, testCfg())
+	if err := svc.VerifyEmail(context.Background(), auth.VerifyEmailRequest{Token: rawToken}); err != nil {
+		t.Fatalf("VerifyEmail() error = %v", err)
+	}
+	if !markedVerified {
+		t.Error("expected MarkEmailVerified to be called")
+	}
+	if !markedUsed {
+		t.Error("expected MarkEmailVerificationTokenUsed to be called")
+	}
+}
+
+func TestVerifyEmail_TamperedToken(t *testing.T) {
+	repo := happyRepo()
+	// Stored hash is for a different token → bcrypt compare fails.
+	otherHash, _ := hashutil.Hash("a-different-token")
+	repo.getEmailVerificationTokenByFpFn = func(_ context.Context, _ string) (auth.EmailVerificationToken, error) {
+		return auth.EmailVerificationToken{UserID: "usr_abc123", TokenHash: otherHash, ExpiresAt: time.Now().Add(time.Hour)}, nil
+	}
+
+	svc := auth.NewService(repo, testCfg())
+	err := svc.VerifyEmail(context.Background(), auth.VerifyEmailRequest{Token: "verify-raw-token"})
 	var ae *apperror.AppError
 	if !errors.As(err, &ae) || ae.Code != apperror.ErrInvalidToken {
 		t.Fatalf("expected INVALID_TOKEN, got %v", err)
