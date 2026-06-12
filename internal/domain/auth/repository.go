@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/mail"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -79,13 +80,17 @@ func (r *pgRepo) CreateUser(ctx context.Context, email, username, passwordHash s
 		&u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
-		if code := uniqueViolationField(err); code != "" {
-			switch code {
-			case "users_username_key":
+		if name := uniqueViolationField(err); name != "" {
+			// Match on the field in the constraint/index name rather than an exact
+			// name, so renames stay correct: username is users_username_key (pre-021)
+			// or users_username_active_uniq (021+); email is users_email_active_uniq.
+			switch {
+			case strings.Contains(name, "username"):
 				return User{}, apperror.New(http.StatusConflict, apperror.ErrUsernameAlreadyExists, "username already taken")
-			default:
-				// users_email_active_uniq (and any other email constraint).
+			case strings.Contains(name, "email"):
 				return User{}, apperror.New(http.StatusConflict, apperror.ErrEmailAlreadyExists, "email already in use")
+			default:
+				return User{}, apperror.New(http.StatusConflict, apperror.ErrConflict, "resource already exists")
 			}
 		}
 		return User{}, fmt.Errorf("auth.CreateUser: %w", err)
