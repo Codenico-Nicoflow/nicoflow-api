@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -14,18 +15,20 @@ type Config struct {
 	RefreshTokenExpiry time.Duration
 	SMTPDsn            string
 	AppBaseURL         string
-	LSWebhookSecret    string
-	AWSAccessKeyID     string
-	AWSSecretKey       string
-	S3Bucket           string
-	CORSOrigins        string
-	TrustedProxyCIDRs  string
-	AppEnv             string
-	Port               string
-	LogLevel           string
-	MinIOEndpoint      string
-	MinIOAccessKey     string
-	MinIOSecretKey     string
+	// Gate login on a verified email. Default false so dev (no SMTP) isn't locked out.
+	RequireEmailVerification bool
+	LSWebhookSecret          string
+	AWSAccessKeyID           string
+	AWSSecretKey             string
+	S3Bucket                 string
+	CORSOrigins              string
+	TrustedProxyCIDRs        string
+	AppEnv                   string
+	Port                     string
+	LogLevel                 string
+	MinIOEndpoint            string
+	MinIOAccessKey           string
+	MinIOSecretKey           string
 }
 
 func Load() Config {
@@ -61,18 +64,20 @@ func Load() Config {
 		RefreshTokenExpiry: refreshExpiry,
 		SMTPDsn:            os.Getenv("SMTP_DSN"),
 		AppBaseURL:         os.Getenv("APP_BASE_URL"),
-		LSWebhookSecret:    os.Getenv("LS_WEBHOOK_SECRET"),
-		AWSAccessKeyID:     os.Getenv("AWS_ACCESS_KEY_ID"),
-		AWSSecretKey:       os.Getenv("AWS_SECRET_ACCESS_KEY"),
-		S3Bucket:           os.Getenv("S3_BUCKET_NAME"),
-		CORSOrigins:        os.Getenv("CORS_ORIGINS"),
-		TrustedProxyCIDRs:  os.Getenv("TRUSTED_PROXY"),
-		AppEnv:             os.Getenv("APP_ENV"),
-		Port:               port,
-		LogLevel:           logLevel,
-		MinIOEndpoint:      os.Getenv("MINIO_ENDPOINT"),
-		MinIOAccessKey:     os.Getenv("MINIO_ACCESS_KEY"),
-		MinIOSecretKey:     os.Getenv("MINIO_SECRET_KEY"),
+
+		RequireEmailVerification: parseBool(os.Getenv("REQUIRE_EMAIL_VERIFICATION"), false),
+		LSWebhookSecret:          os.Getenv("LS_WEBHOOK_SECRET"),
+		AWSAccessKeyID:           os.Getenv("AWS_ACCESS_KEY_ID"),
+		AWSSecretKey:             os.Getenv("AWS_SECRET_ACCESS_KEY"),
+		S3Bucket:                 os.Getenv("S3_BUCKET_NAME"),
+		CORSOrigins:              os.Getenv("CORS_ORIGINS"),
+		TrustedProxyCIDRs:        os.Getenv("TRUSTED_PROXY"),
+		AppEnv:                   os.Getenv("APP_ENV"),
+		Port:                     port,
+		LogLevel:                 logLevel,
+		MinIOEndpoint:            os.Getenv("MINIO_ENDPOINT"),
+		MinIOAccessKey:           os.Getenv("MINIO_ACCESS_KEY"),
+		MinIOSecretKey:           os.Getenv("MINIO_SECRET_KEY"),
 	}
 }
 
@@ -91,4 +96,15 @@ func parseDuration(s string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+func parseBool(s string, fallback bool) bool {
+	if s == "" {
+		return fallback
+	}
+	b, err := strconv.ParseBool(s)
+	if err != nil {
+		return fallback
+	}
+	return b
 }

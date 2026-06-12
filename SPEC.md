@@ -61,16 +61,16 @@ Create a new user account.
 | `username` | string | Yes      | 3–20 chars, alphanumeric only                   |
 | `platform` | string | No       | `"web"` \| `"mobile"` — defaults to `"web"`     |
 
-> **Email verification (scaffolded):** registration succeeds immediately and is **not** blocked on verification. On register, the API issues an email-verification token and (if SMTP is configured) sends a verification link. Verification is completed via `POST /v1/auth/verify-email`; a new link can be requested via `POST /v1/auth/resend-verification`. Gating login on `email_verified` is a future step (TODO in `auth/service.go`).
+> **Email verification:** registration does **not** log the user in. The API creates the user, issues an email-verification token, and (if SMTP is configured) sends a verification link. The response carries the **user only — no tokens and no refresh cookie**. The user must verify via `POST /v1/auth/verify-email` (resend via `POST /v1/auth/resend-verification`), then log in. Login enforcement of `email_verified` is gated by the server config `REQUIRE_EMAIL_VERIFICATION` (default false in dev where no SMTP is configured; true in staging/production).
 
-**Response — 201 Created**
+**Response — 201 Created** (user only — no tokens, no Set-Cookie)
 
 ```json
 {
-  "token": "<jwt>",
-  "refreshToken": "<refresh-jwt>",
+  "token": "",
+  "refreshToken": "",
   "user": {
-    "id": 1,
+    "id": "usr_abc123",
     "email": "...",
     "username": "...",
     "firstName": "...",
@@ -129,7 +129,7 @@ Authenticate and receive tokens.
 }
 ```
 
-**Errors:** `UNAUTHORIZED` (401, invalid credentials — identical for unknown user and wrong password, by design, to prevent account enumeration), `INVALID_INPUT` (422), `RATE_LIMITED` (429 — IP rate limit or account lockout after repeated failures)
+**Errors:** `UNAUTHORIZED` (401, invalid credentials — identical for unknown user and wrong password, by design, to prevent account enumeration), `EMAIL_NOT_VERIFIED` (403 — credentials valid but email unverified; only when `REQUIRE_EMAIL_VERIFICATION` is enabled; returned after the password check so it never leaks verification state to a wrong password), `INVALID_INPUT` (422), `RATE_LIMITED` (429 — IP rate limit or account lockout after repeated failures)
 
 ---
 
@@ -159,11 +159,23 @@ Exchange a refresh token for a new access token. Refresh token is read from the 
 
 #### POST /v1/auth/logout
 
-Invalidate the current session.
+Invalidate the current session (deletes the single refresh token carried by the cookie).
 
-- **Auth required:** Yes
+- **Auth required:** No — authenticates off the HttpOnly refresh cookie (`Path=/v1/auth`, `SameSite=Strict`), not the access token, so an expired JWT can't trap the user in a session they can't end. Idempotent: a missing or already-deleted token still returns 204.
 
 **Response — 204 No Content**
+
+---
+
+#### POST /v1/auth/logout-all
+
+Revoke **every** refresh token for the authenticated user (sign out of all devices).
+
+- **Auth required:** Yes — revokes by the `userID` JWT claim; needs a live, valid session to authorize.
+
+**Response — 204 No Content**
+
+> **⚠️ TODO (later phase — Settings/Security, E-021):** the route + handler + service (`DeleteAllRefreshTokens`) exist but are **not yet exposed in the frontend** — there is no `LOGOUT_ALL` endpoint constant, mutation, or UI. Wire up a "Sign out of all devices" affordance on the Profile/Security page when that lands. The underlying revoke-all logic is already shared by the password-change and delete-account flows.
 
 ---
 
@@ -1377,6 +1389,7 @@ These are the exact constants defined in `internal/apperror/errors.go` of the Go
 | `INVALID_INPUT`         | 400         | Request body or query parameters failed validation                         |
 | `INVALID_TOKEN`         | 401         | JWT is malformed, tampered, or not recognised                              |
 | `UNAUTHORIZED`          | 401         | No valid token provided, or credentials are incorrect                      |
+| `EMAIL_NOT_VERIFIED`    | 403         | Credentials valid but email unverified (login gate; `REQUIRE_EMAIL_VERIFICATION`) |
 | `FORBIDDEN`             | 403         | Authenticated but not permitted to access the resource                     |
 | `PLAN_LIMIT_EXCEEDED`   | 403         | Action blocked by the user's plan (areas/projects/AI quota)                |
 | `PERMISSION_DENIED`     | 403         | Resource belongs to another user                                           |

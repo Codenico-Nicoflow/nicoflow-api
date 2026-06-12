@@ -113,7 +113,7 @@ func (r *pgRepo) getUserByUsername(ctx context.Context, username string) (User, 
 		SELECT id, email, COALESCE(username,''), password_hash,
 		       COALESCE(first_name,''), COALESCE(last_name,''),
 		       theme, COALESCE(image_url,''), status, plan, timezone,
-		       failed_login_count, locked_until,
+		       email_verified, failed_login_count, locked_until,
 		       created_at, updated_at
 		FROM users
 		WHERE username = @username AND deleted_at IS NULL`,
@@ -122,7 +122,7 @@ func (r *pgRepo) getUserByUsername(ctx context.Context, username string) (User, 
 		&u.ID, &u.Email, &u.Username, &u.PasswordHash,
 		&u.FirstName, &u.LastName,
 		&u.Theme, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
-		&u.FailedLoginCount, &u.LockedUntil,
+		&u.EmailVerified, &u.FailedLoginCount, &u.LockedUntil,
 		&u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
@@ -140,7 +140,7 @@ func (r *pgRepo) GetUserByEmail(ctx context.Context, email string) (User, error)
 		SELECT id, email, COALESCE(username,''), password_hash,
 		       COALESCE(first_name,''), COALESCE(last_name,''),
 		       theme, COALESCE(image_url,''), status, plan, timezone,
-		       failed_login_count, locked_until,
+		       email_verified, failed_login_count, locked_until,
 		       created_at, updated_at
 		FROM users
 		WHERE email = @email AND deleted_at IS NULL`,
@@ -149,7 +149,7 @@ func (r *pgRepo) GetUserByEmail(ctx context.Context, email string) (User, error)
 		&u.ID, &u.Email, &u.Username, &u.PasswordHash,
 		&u.FirstName, &u.LastName,
 		&u.Theme, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
-		&u.FailedLoginCount, &u.LockedUntil,
+		&u.EmailVerified, &u.FailedLoginCount, &u.LockedUntil,
 		&u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
@@ -167,6 +167,7 @@ func (r *pgRepo) GetUserByID(ctx context.Context, userID string) (User, error) {
 		SELECT id, email, COALESCE(username,''), password_hash,
 		       COALESCE(first_name,''), COALESCE(last_name,''),
 		       theme, COALESCE(image_url,''), status, plan, timezone,
+		       email_verified,
 		       created_at, updated_at
 		FROM users
 		WHERE id = @userID AND deleted_at IS NULL`,
@@ -175,6 +176,7 @@ func (r *pgRepo) GetUserByID(ctx context.Context, userID string) (User, error) {
 		&u.ID, &u.Email, &u.Username, &u.PasswordHash,
 		&u.FirstName, &u.LastName,
 		&u.Theme, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
+		&u.EmailVerified,
 		&u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {

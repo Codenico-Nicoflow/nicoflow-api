@@ -41,7 +41,11 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.setRefreshCookie(w, resp.RefreshToken, resp.CookieMaxAge)
+	// Register no longer establishes a session — only set the cookie if a refresh
+	// token was issued (it isn't, while verification-before-login is the flow).
+	if resp.RefreshToken != "" {
+		h.setRefreshCookie(w, resp.RefreshToken, resp.CookieMaxAge)
+	}
 	respond.JSON(w, http.StatusCreated, resp)
 }
 

@@ -15,6 +15,7 @@ type User struct {
 	Status           string
 	Plan             string
 	Timezone         string
+	EmailVerified    bool
 	FailedLoginCount int
 	LockedUntil      *time.Time
 	CreatedAt        time.Time

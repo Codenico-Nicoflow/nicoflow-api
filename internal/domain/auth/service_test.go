@@ -128,13 +128,14 @@ func testCfg() config.Config {
 
 func fixedUser() auth.User {
 	return auth.User{
-		ID:       "usr_abc123",
-		Email:    "user@example.com",
-		Username: "johndoe",
-		Plan:     "free",
-		Theme:    "light",
-		Status:   "regular",
-		Timezone: "UTC",
+		ID:            "usr_abc123",
+		Email:         "user@example.com",
+		Username:      "johndoe",
+		Plan:          "free",
+		Theme:         "light",
+		Status:        "regular",
+		Timezone:      "UTC",
+		EmailVerified: true,
 	}
 }
 
@@ -260,11 +261,12 @@ func TestRegister(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if resp.Token == "" {
-				t.Error("expected non-empty JWT token")
+			// Register does not auto-login — it returns the user, no tokens.
+			if resp.User.Email == "" {
+				t.Error("expected user in register response")
 			}
-			if resp.RefreshToken == "" {
-				t.Error("expected non-empty refresh token")
+			if resp.Token != "" || resp.RefreshToken != "" {
+				t.Error("expected no tokens on register (verification required before login)")
 			}
 		})
 	}
@@ -399,6 +401,101 @@ func TestLogin_RememberMe(t *testing.T) {
 				t.Errorf("stored token TTL = %v, want between %v and %v", actualTTL, tt.wantMinTTL, tt.wantMaxTTL)
 			}
 		})
+	}
+}
+
+func TestLogin_EmailVerificationGate(t *testing.T) {
+	tests := []struct {
+		name     string
+		require  bool
+		verified bool
+		wantErr  string
+	}{
+		{name: "flag on + unverified is rejected", require: true, verified: false, wantErr: apperror.ErrEmailNotVerified},
+		{name: "flag on + verified succeeds", require: true, verified: true},
+		{name: "flag off + unverified succeeds (dev path)", require: false, verified: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := happyRepo()
+			repo.getUserByIdentifierFn = func(_ context.Context, _ string) (auth.User, error) {
+				u := fixedUser()
+				u.EmailVerified = tt.verified
+				hash, _ := hashutil.Hash("Secret123")
+				u.PasswordHash = hash
+				return u, nil
+			}
+
+			cfg := testCfg()
+			cfg.RequireEmailVerification = tt.require
+			svc := auth.NewService(repo, cfg)
+
+			_, err := svc.Login(context.Background(), auth.LoginRequest{Identifier: "user@example.com", Password: "Secret123"})
+			if tt.wantErr != "" {
+				var ae *apperror.AppError
+				if !errors.As(err, &ae) || ae.Code != tt.wantErr {
+					t.Fatalf("expected error code %q, got %v", tt.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestLogin_WrongPassword_DoesNotLeakVerificationState(t *testing.T) {
+	// With the gate on and an unverified user, a wrong password must still return
+	// UNAUTHORIZED (not EMAIL_NOT_VERIFIED) — the gate is after the password check.
+	repo := happyRepo()
+	repo.getUserByIdentifierFn = func(_ context.Context, _ string) (auth.User, error) {
+		u := fixedUser()
+		u.EmailVerified = false
+		hash, _ := hashutil.Hash("Secret123")
+		u.PasswordHash = hash
+		return u, nil
+	}
+	cfg := testCfg()
+	cfg.RequireEmailVerification = true
+	svc := auth.NewService(repo, cfg)
+
+	_, err := svc.Login(context.Background(), auth.LoginRequest{Identifier: "user@example.com", Password: "WrongPass1"})
+	var ae *apperror.AppError
+	if !errors.As(err, &ae) || ae.Code != apperror.ErrUnauthorized {
+		t.Fatalf("expected UNAUTHORIZED, got %v", err)
+	}
+}
+
+func TestRegister_DoesNotAutoLogin(t *testing.T) {
+	var storedVerificationToken bool
+	repo := happyRepo()
+	repo.storeEmailVerificationTokenFn = func(_ context.Context, _, _, _ string, _ time.Time) error {
+		storedVerificationToken = true
+		return nil
+	}
+
+	svc := auth.NewService(repo, testCfg())
+	resp, err := svc.Register(context.Background(), auth.RegisterRequest{
+		Email: "new@example.com", Password: "Secret123", Username: "newuser",
+	})
+	if err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	// No session is established on register — tokens must be empty.
+	if resp.Token != "" {
+		t.Error("expected empty access token (no auto-login on register)")
+	}
+	if resp.RefreshToken != "" {
+		t.Error("expected empty refresh token (no auto-login on register)")
+	}
+	// But the user is returned and a verification email/token is issued.
+	if resp.User.Email != "user@example.com" {
+		t.Errorf("expected user in response, got %+v", resp.User)
+	}
+	if !storedVerificationToken {
+		t.Error("expected a verification token to be stored on register")
 	}
 }
 
