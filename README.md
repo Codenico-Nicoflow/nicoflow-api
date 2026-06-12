@@ -296,6 +296,29 @@ make docker-migrate-up
 
 > **Golden rule:** Never edit a migration file that has already been applied to any environment. Always add a new numbered pair.
 
+### How `DATABASE_URL` is resolved
+
+The `migrate-*` targets pick up `DATABASE_URL` differently per environment — you don't have to think about it, but here's the model:
+
+| Environment      | Source of `DATABASE_URL`                        | How migrations run                                  |
+| ---------------- | ----------------------------------------------- | --------------------------------------------------- |
+| **Local**        | Read from `.env` at recipe time                 | `make migrate-up` (just works)                      |
+| **Staging/Prod** | Injected by Render as a real env var            | **Automatic** Render pre-deploy command (no manual step) |
+
+- **Local:** the Makefile reads `DATABASE_URL` straight out of `.env` *without* `include`/`source`, so a literal `$` in the local DB password survives un-mangled. An already-exported env var still wins over `.env`.
+- **Staging/Prod:** Render sets `DATABASE_URL` in the environment, so it takes precedence and `.env` is never consulted (it doesn't exist on Render). Migrations apply automatically via the Render **pre-deploy command**:
+  ```bash
+  migrate -path migrations -database "$DATABASE_URL" up
+  ```
+  Use `sslmode=require` for the managed Postgres URL. To run a migration against staging/prod manually from your machine, pass the URL inline:
+  ```bash
+  DATABASE_URL='<render-staging-or-prod-url>' make migrate-up
+  ```
+
+> **Production strategy:** there is **no separate prod migration step to wire up** — it's the same `up` command, just with Render's injected `DATABASE_URL`. Never run `make migrate-down` / `migrate-down-all` against staging or production (roll forward with a new migration instead).
+>
+> **Gotcha:** if you `source .env` in a plain shell, a raw `$` in the local password breaks it (`too many colons in address`). URL-encode it (`$` → `%24`) or just use the `make migrate-*` targets, which read the value literally.
+
 ---
 
 ## Make Targets

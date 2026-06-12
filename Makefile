@@ -3,6 +3,13 @@
 
 DOCKER_DATABASE_URL ?= postgres://nicoflow:BaNa9406%24@localhost:5432/nicoflow?sslmode=disable
 
+# Resolve DATABASE_URL at recipe time without expanding it. `include .env` lets
+# Make expand a `$` in the value (a `$` in the DB password becomes `$@` etc.),
+# and `source .env` lets the *shell* do the same. So we read the literal line
+# from .env with sed and never let either layer touch the `$`. An already-set
+# environment variable wins; otherwise we fall back to the .env value.
+db_url = $${DATABASE_URL:-$$(sed -n 's/^DATABASE_URL=//p' .env 2>/dev/null)}
+
 ## Development
 
 dev:
@@ -31,19 +38,36 @@ docker-down:
 docker-migrate-up:
 	migrate -path migrations -database "$(DOCKER_DATABASE_URL)" up
 
-## Database migrations (requires DATABASE_URL env var, except migrate-create)
+## Database migrations
+#
+# How DATABASE_URL is resolved (see db_url above):
+#   - LOCAL: read from .env at recipe time (no `include`/`source`, so a literal
+#     `$` in the password survives). `make migrate-up` etc. "just work".
+#   - STAGING/PROD: Render injects DATABASE_URL as a real env var, so it wins
+#     over .env (which doesn't exist on Render). Migrations run automatically as
+#     a Render pre-deploy command — you do NOT run `make migrate-*` against prod.
+#     The canonical pre-deploy command is:
+#         migrate -path migrations -database "$DATABASE_URL" up
+#   - To run a migration against staging/prod manually from your machine, pass
+#     the URL inline (use sslmode=require for managed PG):
+#         DATABASE_URL='<render-pg-url>' make migrate-up
+#   - NEVER run migrate-down / migrate-down-all against staging or prod.
+#
+# Gotcha: if you ever `source .env` in a plain shell, a raw `$` in the password
+# breaks it ("too many colons in address"). Either URL-encode it (`$` -> %24) or
+# rely on these make targets, which read the value literally.
 
 migrate-up:
-	migrate -path migrations -database "$$DATABASE_URL" up
+	migrate -path migrations -database "$(db_url)" up
 
 migrate-down:
-	migrate -path migrations -database "$$DATABASE_URL" down 1
+	migrate -path migrations -database "$(db_url)" down 1
 
 migrate-down-all:
-	migrate -path migrations -database "$$DATABASE_URL" down
+	migrate -path migrations -database "$(db_url)" down
 
 migrate-version:
-	migrate -path migrations -database "$$DATABASE_URL" version
+	migrate -path migrations -database "$(db_url)" version
 
 migrate-create:
 	@test -n "$(name)" || (echo "Usage: make migrate-create name=<migration_name>" && exit 1)
@@ -51,4 +75,4 @@ migrate-create:
 
 migrate-force:
 	@test -n "$(version)" || (echo "Usage: make migrate-force version=<version_number>" && exit 1)
-	migrate -path migrations -database "$$DATABASE_URL" force $(version)
+	migrate -path migrations -database "$(db_url)" force $(version)
