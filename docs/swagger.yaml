@@ -1,0 +1,471 @@
+basePath: /v1
+definitions:
+  auth.AuthEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/auth.AuthResponse'
+      error: {}
+    type: object
+  auth.AuthResponse:
+    properties:
+      refreshToken:
+        type: string
+      token:
+        type: string
+      user:
+        $ref: '#/definitions/auth.UserView'
+    type: object
+  auth.ErrorEnvelope:
+    properties:
+      data: {}
+      error:
+        $ref: '#/definitions/auth.SwaggerError'
+    type: object
+  auth.ForgotPasswordRequest:
+    properties:
+      email:
+        type: string
+    type: object
+  auth.LoginRequest:
+    properties:
+      email:
+        type: string
+      identifier:
+        type: string
+      password:
+        type: string
+      platform:
+        type: string
+      remember:
+        type: boolean
+    type: object
+  auth.MessageData:
+    properties:
+      message:
+        example: password updated successfully
+        type: string
+    type: object
+  auth.MessageEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/auth.MessageData'
+      error: {}
+    type: object
+  auth.RegisterRequest:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+      platform:
+        type: string
+      username:
+        type: string
+    type: object
+  auth.ResendVerificationRequest:
+    properties:
+      email:
+        type: string
+    type: object
+  auth.ResetPasswordRequest:
+    properties:
+      confirmPassword:
+        type: string
+      newPassword:
+        type: string
+      token:
+        type: string
+    type: object
+  auth.SwaggerError:
+    properties:
+      code:
+        example: UNAUTHORIZED
+        type: string
+      message:
+        example: invalid email or password
+        type: string
+    type: object
+  auth.UpdateMeRequest:
+    properties:
+      email:
+        type: string
+      firstName:
+        type: string
+      lastName:
+        type: string
+      theme:
+        type: string
+      timezone:
+        type: string
+    type: object
+  auth.UserEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/auth.UserView'
+      error: {}
+    type: object
+  auth.UserView:
+    properties:
+      email:
+        type: string
+      firstName:
+        type: string
+      id:
+        type: string
+      imageUrl:
+        type: string
+      lastName:
+        type: string
+      status:
+        type: string
+      theme:
+        type: string
+      username:
+        type: string
+    type: object
+  auth.VerifyEmailRequest:
+    properties:
+      token:
+        type: string
+    type: object
+info:
+  contact: {}
+  description: REST API for the Nicoflow GTD task-management platform. This spec currently
+    documents the authentication & user-management surface.
+  title: Nicoflow API
+  version: "1.0"
+paths:
+  /auth/forgot-password:
+    post:
+      consumes:
+      - application/json
+      description: Sends a password-reset email. Always returns 200 regardless of
+        whether the email exists (no user enumeration).
+      parameters:
+      - description: Account email
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.ForgotPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.MessageEnvelope'
+        "429":
+          description: RATE_LIMITED
+          schema:
+            $ref: '#/definitions/auth.ErrorEnvelope'
+      summary: Request a password reset
+      tags:
+      - auth
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Authenticates by email or username and returns a JWT access token
+        plus an HttpOnly refresh cookie. When REQUIRE_EMAIL_VERIFICATION is enabled,
+        an unverified account is rejected with 403 EMAIL_NOT_VERIFIED after the password
+        check (so verification state is never leaked to a wrong password).
+      parameters:
+      - description: Credentials (identifier = email or username)
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Access token + user; Set-Cookie refresh token
+          schema:
+            $ref: '#/definitions/auth.AuthEnvelope'
+        "401":
+          description: UNAUTHORIZED (invalid credentials; identical for unknown user
+            and wrong password)
+          schema:
+            $ref: '#/definitions/auth.ErrorEnvelope'
+        "403":
+          description: EMAIL_NOT_VERIFIED
+          schema:
+            $ref: '#/definitions/auth.ErrorEnvelope'
+        "422":
+          description: INVALID_INPUT
+          schema:
+            $ref: '#/definitions/auth.ErrorEnvelope'
+        "429":
+          description: RATE_LIMITED (IP limit or account lockout)
+          schema:
+            $ref: '#/definitions/auth.ErrorEnvelope'
+      summary: Log in
+      tags:
+      - auth
+  /auth/logout:
+    post:
+      description: Revokes the single refresh token carried by the cookie and clears
+        it. Authenticates off the HttpOnly refresh cookie, not the access token. Idempotent
+        — a missing or already-deleted token still returns 204.
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: Session ended; refresh cookie cleared
+      summary: Log out (current session)
+      tags:
+      - auth
+  /auth/logout-all:
+    post:
+      description: Revokes every refresh token for the authenticated user. Requires
+        a valid access token (revokes by the userID claim).
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: All sessions revoked; refresh cookie cleared
+        "401":
+          description: UNAUTHORIZED (missing or invalid access token)
+          schema:
+            $ref: '#/definitions/auth.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Log out of all devices
+      tags:
+      - auth
+  /auth/refresh-token:
+    post:
+      consumes:
+      - application/json
+      description: Rotates the refresh token (delete-old/insert-new) and issues a
+        fresh access token. The raw refresh token is read from the HttpOnly cookie
+        (preferred) or a JSON body. Replaying a consumed token is reuse and revokes
+        all of the user's sessions.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: New access token + rotated refresh cookie
+          schema:
+            $ref: '#/definitions/auth.AuthEnvelope'
+        "401":
+          description: INVALID_TOKEN (missing, expired, tampered, or already-used)
+          schema:
+            $ref: '#/definitions/auth.ErrorEnvelope'
+      summary: Refresh the access token
+      tags:
+      - auth
+  /auth/register:
+    post:
+      consumes:
+      - application/json
+      description: Creates a user and sends a verification email. Does not log the
+        user in — no token is issued and no cookie is set; the user must verify (when
+        enforced) then log in.
+      parameters:
+      - description: Registration details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: User created (token empty, no session)
+          schema:
+            $ref: '#/definitions/auth.AuthEnvelope'
+        "400":
+          description: WEAK_PASSWORD
+          schema:
+            $ref: '#/definitions/auth.ErrorEnvelope'
+        "409":
+          description: EMAIL_ALREADY_EXISTS or USERNAME_ALREADY_EXISTS
+          schema:
+            $ref: '#/definitions/auth.ErrorEnvelope'
+        "422":
+          description: INVALID_INPUT or INVALID_EMAIL
+          schema:
+            $ref: '#/definitions/auth.ErrorEnvelope'
+        "429":
+          description: RATE_LIMITED
+          schema:
+            $ref: '#/definitions/auth.ErrorEnvelope'
+      summary: Register a new account
+      tags:
+      - auth
+  /auth/resend-verification:
+    post:
+      consumes:
+      - application/json
+      description: Re-sends the email-verification link. Always returns 200 (no user
+        enumeration).
+      parameters:
+      - description: Account email
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.ResendVerificationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.MessageEnvelope'
+        "429":
+          description: RATE_LIMITED
+          schema:
+            $ref: '#/definitions/auth.ErrorEnvelope'
+      summary: Resend the verification email
+      tags:
+      - auth
+  /auth/reset-password:
+    post:
+      consumes:
+      - application/json
+      description: Sets a new password using the single-use reset token from the email.
+        Revokes all active refresh tokens on success.
+      parameters:
+      - description: Reset token + new password
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.ResetPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.MessageEnvelope'
+        "400":
+          description: WEAK_PASSWORD
+          schema:
+            $ref: '#/definitions/auth.ErrorEnvelope'
+        "401":
+          description: INVALID_TOKEN (invalid, expired, or already-used)
+          schema:
+            $ref: '#/definitions/auth.ErrorEnvelope'
+        "422":
+          description: INVALID_INPUT (e.g. password mismatch)
+          schema:
+            $ref: '#/definitions/auth.ErrorEnvelope'
+      summary: Reset password with a token
+      tags:
+      - auth
+  /auth/verify-email:
+    post:
+      consumes:
+      - application/json
+      description: Confirms a user's email using the single-use token from the verification
+        email.
+      parameters:
+      - description: Verification token
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.VerifyEmailRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.MessageEnvelope'
+        "401":
+          description: INVALID_TOKEN (invalid, expired, or already-used)
+          schema:
+            $ref: '#/definitions/auth.ErrorEnvelope'
+        "422":
+          description: INVALID_INPUT
+          schema:
+            $ref: '#/definitions/auth.ErrorEnvelope'
+      summary: Verify email address
+      tags:
+      - auth
+  /users/me:
+    delete:
+      description: Soft-deletes the authenticated user (sets deleted_at) and revokes
+        all refresh tokens.
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: Account deleted; all sessions revoked
+        "401":
+          description: UNAUTHORIZED
+          schema:
+            $ref: '#/definitions/auth.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Delete the current account
+      tags:
+      - users
+    patch:
+      consumes:
+      - application/json
+      description: Updates profile fields. All fields are optional; omitted fields
+        are left unchanged.
+      parameters:
+      - description: Fields to update
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.UpdateMeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.UserEnvelope'
+        "401":
+          description: UNAUTHORIZED
+          schema:
+            $ref: '#/definitions/auth.ErrorEnvelope'
+        "422":
+          description: INVALID_INPUT or INVALID_EMAIL
+          schema:
+            $ref: '#/definitions/auth.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Update the current user
+      tags:
+      - users
+  /users/profile:
+    get:
+      description: Returns the authenticated user's profile.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.UserEnvelope'
+        "401":
+          description: UNAUTHORIZED
+          schema:
+            $ref: '#/definitions/auth.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Get the current user
+      tags:
+      - users
+schemes:
+- http
+- https
+securityDefinitions:
+  BearerAuth:
+    description: JWT access token as "Bearer <token>".
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

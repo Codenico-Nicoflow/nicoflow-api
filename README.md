@@ -83,6 +83,15 @@ curl http://localhost:8080/health
 # → {"status":"ok","version":"<git_sha>"}
 ```
 
+**API docs (Swagger):** with the server running (non-production), the auth API is browsable at
+`http://localhost:8080/v1/swagger/index.html` (raw spec at `/v1/swagger/doc.json`). Regenerate after
+changing handler annotations with `make swagger`.
+
+**Postman:** import `docs/postman/Nicoflow-Auth.postman_collection.json` + the
+`docs/postman/Nicoflow-Local.postman_environment.json` environment. Run **Register → Login** (Login
+captures the access token into `{{authToken}}`), then the protected requests authenticate
+automatically. Paste reset/verify tokens (from the emails) into `{{resetToken}}` / `{{verifyToken}}`.
+
 **Tear down**
 
 ```bash
@@ -329,6 +338,7 @@ The `migrate-*` targets pick up `DATABASE_URL` differently per environment — y
 | `make build`                   | Compile binary to `bin/api`                            |
 | `make test`                    | Run all tests with race detector + coverage            |
 | `make lint`                    | Run golangci-lint                                      |
+| `make swagger`                 | Regenerate OpenAPI docs into `docs/` from annotations  |
 | `make docker-up`               | Start Postgres + MinIO via Docker Compose              |
 | `make docker-down`             | Stop containers (keeps data volumes)                   |
 | `make docker-migrate-up`       | Apply migrations against Docker Compose Postgres       |

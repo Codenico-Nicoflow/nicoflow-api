@@ -24,7 +24,19 @@ func NewHandler(svc Service, secureCookie bool) *Handler {
 	return &Handler{svc: svc, secureCookie: secureCookie}
 }
 
-// POST /v1/auth/register
+// Register godoc
+// @Summary      Register a new account
+// @Description  Creates a user and sends a verification email. Does not log the user in — no token is issued and no cookie is set; the user must verify (when enforced) then log in.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        body  body      RegisterRequest  true  "Registration details"
+// @Success      201   {object}  AuthEnvelope     "User created (token empty, no session)"
+// @Failure      409   {object}  ErrorEnvelope    "EMAIL_ALREADY_EXISTS or USERNAME_ALREADY_EXISTS"
+// @Failure      400   {object}  ErrorEnvelope    "WEAK_PASSWORD"
+// @Failure      422   {object}  ErrorEnvelope    "INVALID_INPUT or INVALID_EMAIL"
+// @Failure      429   {object}  ErrorEnvelope    "RATE_LIMITED"
+// @Router       /auth/register [post]
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	var req RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -49,7 +61,19 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusCreated, resp)
 }
 
-// POST /v1/auth/login
+// Login godoc
+// @Summary      Log in
+// @Description  Authenticates by email or username and returns a JWT access token plus an HttpOnly refresh cookie. When REQUIRE_EMAIL_VERIFICATION is enabled, an unverified account is rejected with 403 EMAIL_NOT_VERIFIED after the password check (so verification state is never leaked to a wrong password).
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        body  body      LoginRequest  true  "Credentials (identifier = email or username)"
+// @Success      200   {object}  AuthEnvelope   "Access token + user; Set-Cookie refresh token"
+// @Failure      401   {object}  ErrorEnvelope  "UNAUTHORIZED (invalid credentials; identical for unknown user and wrong password)"
+// @Failure      403   {object}  ErrorEnvelope  "EMAIL_NOT_VERIFIED"
+// @Failure      422   {object}  ErrorEnvelope  "INVALID_INPUT"
+// @Failure      429   {object}  ErrorEnvelope  "RATE_LIMITED (IP limit or account lockout)"
+// @Router       /auth/login [post]
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -67,7 +91,15 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, resp)
 }
 
-// POST /v1/auth/refresh-token
+// Refresh godoc
+// @Summary      Refresh the access token
+// @Description  Rotates the refresh token (delete-old/insert-new) and issues a fresh access token. The raw refresh token is read from the HttpOnly cookie (preferred) or a JSON body. Replaying a consumed token is reuse and revokes all of the user's sessions.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Success      200  {object}  AuthEnvelope   "New access token + rotated refresh cookie"
+// @Failure      401  {object}  ErrorEnvelope  "INVALID_TOKEN (missing, expired, tampered, or already-used)"
+// @Router       /auth/refresh-token [post]
 func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	// Cookie takes priority; fall back to JSON body.
 	rawToken := ""
@@ -92,7 +124,13 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, resp)
 }
 
-// POST /v1/auth/logout
+// Logout godoc
+// @Summary      Log out (current session)
+// @Description  Revokes the single refresh token carried by the cookie and clears it. Authenticates off the HttpOnly refresh cookie, not the access token. Idempotent — a missing or already-deleted token still returns 204.
+// @Tags         auth
+// @Produce      json
+// @Success      204  "Session ended; refresh cookie cleared"
+// @Router       /auth/logout [post]
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())
 	rawToken := ""
@@ -109,7 +147,15 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	respond.NoContent(w)
 }
 
-// POST /v1/auth/logout-all
+// LogoutAll godoc
+// @Summary      Log out of all devices
+// @Description  Revokes every refresh token for the authenticated user. Requires a valid access token (revokes by the userID claim).
+// @Tags         auth
+// @Produce      json
+// @Security     BearerAuth
+// @Success      204  "All sessions revoked; refresh cookie cleared"
+// @Failure      401  {object}  ErrorEnvelope  "UNAUTHORIZED (missing or invalid access token)"
+// @Router       /auth/logout-all [post]
 func (h *Handler) LogoutAll(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())
 
@@ -122,7 +168,16 @@ func (h *Handler) LogoutAll(w http.ResponseWriter, r *http.Request) {
 	respond.NoContent(w)
 }
 
-// POST /v1/auth/forgot-password
+// ForgotPassword godoc
+// @Summary      Request a password reset
+// @Description  Sends a password-reset email. Always returns 200 regardless of whether the email exists (no user enumeration).
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        body  body      ForgotPasswordRequest  true  "Account email"
+// @Success      200   {object}  MessageEnvelope
+// @Failure      429   {object}  ErrorEnvelope  "RATE_LIMITED"
+// @Router       /auth/forgot-password [post]
 func (h *Handler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	var req ForgotPasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -135,7 +190,18 @@ func (h *Handler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, map[string]string{"message": "if the email exists, a reset link has been sent"})
 }
 
-// POST /v1/auth/reset-password
+// ResetPassword godoc
+// @Summary      Reset password with a token
+// @Description  Sets a new password using the single-use reset token from the email. Revokes all active refresh tokens on success.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        body  body      ResetPasswordRequest  true  "Reset token + new password"
+// @Success      200   {object}  MessageEnvelope
+// @Failure      401   {object}  ErrorEnvelope  "INVALID_TOKEN (invalid, expired, or already-used)"
+// @Failure      400   {object}  ErrorEnvelope  "WEAK_PASSWORD"
+// @Failure      422   {object}  ErrorEnvelope  "INVALID_INPUT (e.g. password mismatch)"
+// @Router       /auth/reset-password [post]
 func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	var req ResetPasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -151,7 +217,17 @@ func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, map[string]string{"message": "password updated successfully"})
 }
 
-// POST /v1/auth/verify-email
+// VerifyEmail godoc
+// @Summary      Verify email address
+// @Description  Confirms a user's email using the single-use token from the verification email.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        body  body      VerifyEmailRequest  true  "Verification token"
+// @Success      200   {object}  MessageEnvelope
+// @Failure      401   {object}  ErrorEnvelope  "INVALID_TOKEN (invalid, expired, or already-used)"
+// @Failure      422   {object}  ErrorEnvelope  "INVALID_INPUT"
+// @Router       /auth/verify-email [post]
 func (h *Handler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 	var req VerifyEmailRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -167,7 +243,16 @@ func (h *Handler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, map[string]string{"message": "email verified successfully"})
 }
 
-// POST /v1/auth/resend-verification
+// ResendVerification godoc
+// @Summary      Resend the verification email
+// @Description  Re-sends the email-verification link. Always returns 200 (no user enumeration).
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        body  body      ResendVerificationRequest  true  "Account email"
+// @Success      200   {object}  MessageEnvelope
+// @Failure      429   {object}  ErrorEnvelope  "RATE_LIMITED"
+// @Router       /auth/resend-verification [post]
 func (h *Handler) ResendVerification(w http.ResponseWriter, r *http.Request) {
 	var req ResendVerificationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -180,7 +265,15 @@ func (h *Handler) ResendVerification(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, map[string]string{"message": "if the email exists, a verification link has been sent"})
 }
 
-// GET /v1/users/profile
+// GetProfile godoc
+// @Summary      Get the current user
+// @Description  Returns the authenticated user's profile.
+// @Tags         users
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  UserEnvelope
+// @Failure      401  {object}  ErrorEnvelope  "UNAUTHORIZED"
+// @Router       /users/profile [get]
 func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())
 
@@ -193,7 +286,18 @@ func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, view)
 }
 
-// PATCH /v1/users/me
+// UpdateMe godoc
+// @Summary      Update the current user
+// @Description  Updates profile fields. All fields are optional; omitted fields are left unchanged.
+// @Tags         users
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        body  body      UpdateMeRequest  true  "Fields to update"
+// @Success      200   {object}  UserEnvelope
+// @Failure      401   {object}  ErrorEnvelope  "UNAUTHORIZED"
+// @Failure      422   {object}  ErrorEnvelope  "INVALID_INPUT or INVALID_EMAIL"
+// @Router       /users/me [patch]
 func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())
 
@@ -212,7 +316,15 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, view)
 }
 
-// DELETE /v1/users/me
+// DeleteMe godoc
+// @Summary      Delete the current account
+// @Description  Soft-deletes the authenticated user (sets deleted_at) and revokes all refresh tokens.
+// @Tags         users
+// @Produce      json
+// @Security     BearerAuth
+// @Success      204  "Account deleted; all sessions revoked"
+// @Failure      401  {object}  ErrorEnvelope  "UNAUTHORIZED"
+// @Router       /users/me [delete]
 func (h *Handler) DeleteMe(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())
 

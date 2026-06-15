@@ -1,4 +1,4 @@
-.PHONY: dev build test lint docker-up docker-down docker-migrate-up \
+.PHONY: dev build test lint swagger docker-up docker-down docker-migrate-up \
         migrate-up migrate-down migrate-down-all migrate-version migrate-create migrate-force
 
 DOCKER_DATABASE_URL ?= postgres://nicoflow:BaNa9406%24@localhost:5432/nicoflow?sslmode=disable
@@ -26,6 +26,10 @@ test-integration:
 
 lint:
 	golangci-lint run ./...
+
+# Regenerate the OpenAPI/Swagger docs from handler annotations into docs/.
+swagger:
+	$(HOME)/go/bin/swag init -g cmd/api/main.go -o docs --parseInternal
 
 ## Docker Compose
 
