@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	httpSwagger "github.com/swaggo/http-swagger/v2"
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
 	"github.com/nicoflow/nicoflow-api/internal/config"
@@ -53,6 +54,11 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 	// ── Public routes ──────────────────────────────────────────────────────────
 	r.Get("/v1/health", Health(pool))
 
+	// Swagger UI — auth API docs. Disabled in production to avoid exposing the surface.
+	if cfg.AppEnv != "production" {
+		r.Get("/v1/swagger/*", httpSwagger.Handler(httpSwagger.URL("/v1/swagger/doc.json")))
+	}
+
 	// WS — JWT validated inside the handler once implemented (E-022)
 	r.Get("/v1/ws", stub)
 
@@ -78,18 +84,23 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		r.Post("/logout", h.Auth.Logout)
 		// Biometric stubs — FIDO2/WebAuthn in v2
 		r.Post("/biometric/verify", h.Auth.BiometricVerify)
+
+		// JWT-protected auth routes must live inside this same /v1/auth subrouter:
+		// chi resolves /v1/auth/* into the subrouter mounted here, so registering
+		// them on a separate /v1 Route block would be shadowed (404).
+		r.Group(func(r chi.Router) {
+			r.Use(mw.Auth(cfg.JWTSecret))
+			r.Use(mw.RateLimitUser(1000, 100))
+			// logout-all revokes by the userID claim, so it needs a live access token.
+			r.Post("/logout-all", h.Auth.LogoutAll)
+			r.Post("/biometric/register", h.Auth.BiometricRegister)
+		})
 	})
 
 	// ── Protected routes ───────────────────────────────────────────────────────
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(mw.Auth(cfg.JWTSecret))
 		r.Use(mw.RateLimitUser(1000, 100))
-
-		// Auth — session management + biometric stub.
-		// Note: /auth/logout is public (see the public /v1/auth block above) —
-		// it authenticates off the refresh cookie, not the access token.
-		r.Post("/auth/logout-all", h.Auth.LogoutAll)
-		r.Post("/auth/biometric/register", h.Auth.BiometricRegister)
 
 		// User profile & settings
 		r.Get("/users/profile", h.Auth.GetProfile)
