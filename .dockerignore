@@ -6,4 +6,8 @@ coverage*
 tmp/
 bin/
 .github/
-docs/
+# docs/ holds the generated Swagger package (docs/docs.go) which main.go imports —
+# it must stay in the build context. Exclude only the parts the binary never needs.
+docs/postman/
+docs/swagger.json
+docs/swagger.yaml
