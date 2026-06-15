@@ -180,6 +180,7 @@ All configuration is set as environment variables in the Render dashboard:
 | `JWT_EXPIRY`            | No       | Access token TTL (default `15m`)                                 |
 | `REFRESH_TOKEN_EXPIRY`  | No       | Refresh token TTL (default `168h`)                               |
 | `SMTP_DSN`              | No       | `smtp://user:pass@host:587` — required for password reset emails |
+| `REQUIRE_EMAIL_VERIFICATION` | No  | Gate login on a verified email (`true`/`false`, default `false`). **Recommended `true` on both staging and prod** so the reject path (`EMAIL_NOT_VERIFIED`) is exercised before production; leave `false` only in local dev where no SMTP is configured. |
 | `APP_BASE_URL`          | No       | Frontend URL for reset links, e.g. `https://app.nicoflow.app`    |
 | `CORS_ORIGINS`          | No       | Comma-separated allowed origins, e.g. `https://app.nicoflow.app` |
 | `APP_ENV`               | No       | `production`                                                     |
