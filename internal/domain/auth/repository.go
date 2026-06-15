@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/mail"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -79,13 +80,17 @@ func (r *pgRepo) CreateUser(ctx context.Context, email, username, passwordHash s
 		&u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
-		if code := uniqueViolationField(err); code != "" {
-			switch code {
-			case "users_username_key":
+		if name := uniqueViolationField(err); name != "" {
+			// Match on the field in the constraint/index name rather than an exact
+			// name, so renames stay correct: username is users_username_key (pre-021)
+			// or users_username_active_uniq (021+); email is users_email_active_uniq.
+			switch {
+			case strings.Contains(name, "username"):
 				return User{}, apperror.New(http.StatusConflict, apperror.ErrUsernameAlreadyExists, "username already taken")
-			default:
-				// users_email_active_uniq (and any other email constraint).
+			case strings.Contains(name, "email"):
 				return User{}, apperror.New(http.StatusConflict, apperror.ErrEmailAlreadyExists, "email already in use")
+			default:
+				return User{}, apperror.New(http.StatusConflict, apperror.ErrConflict, "resource already exists")
 			}
 		}
 		return User{}, fmt.Errorf("auth.CreateUser: %w", err)
@@ -108,7 +113,7 @@ func (r *pgRepo) getUserByUsername(ctx context.Context, username string) (User, 
 		SELECT id, email, COALESCE(username,''), password_hash,
 		       COALESCE(first_name,''), COALESCE(last_name,''),
 		       theme, COALESCE(image_url,''), status, plan, timezone,
-		       failed_login_count, locked_until,
+		       email_verified, failed_login_count, locked_until,
 		       created_at, updated_at
 		FROM users
 		WHERE username = @username AND deleted_at IS NULL`,
@@ -117,7 +122,7 @@ func (r *pgRepo) getUserByUsername(ctx context.Context, username string) (User, 
 		&u.ID, &u.Email, &u.Username, &u.PasswordHash,
 		&u.FirstName, &u.LastName,
 		&u.Theme, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
-		&u.FailedLoginCount, &u.LockedUntil,
+		&u.EmailVerified, &u.FailedLoginCount, &u.LockedUntil,
 		&u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
@@ -135,7 +140,7 @@ func (r *pgRepo) GetUserByEmail(ctx context.Context, email string) (User, error)
 		SELECT id, email, COALESCE(username,''), password_hash,
 		       COALESCE(first_name,''), COALESCE(last_name,''),
 		       theme, COALESCE(image_url,''), status, plan, timezone,
-		       failed_login_count, locked_until,
+		       email_verified, failed_login_count, locked_until,
 		       created_at, updated_at
 		FROM users
 		WHERE email = @email AND deleted_at IS NULL`,
@@ -144,7 +149,7 @@ func (r *pgRepo) GetUserByEmail(ctx context.Context, email string) (User, error)
 		&u.ID, &u.Email, &u.Username, &u.PasswordHash,
 		&u.FirstName, &u.LastName,
 		&u.Theme, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
-		&u.FailedLoginCount, &u.LockedUntil,
+		&u.EmailVerified, &u.FailedLoginCount, &u.LockedUntil,
 		&u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
@@ -162,6 +167,7 @@ func (r *pgRepo) GetUserByID(ctx context.Context, userID string) (User, error) {
 		SELECT id, email, COALESCE(username,''), password_hash,
 		       COALESCE(first_name,''), COALESCE(last_name,''),
 		       theme, COALESCE(image_url,''), status, plan, timezone,
+		       email_verified,
 		       created_at, updated_at
 		FROM users
 		WHERE id = @userID AND deleted_at IS NULL`,
@@ -170,6 +176,7 @@ func (r *pgRepo) GetUserByID(ctx context.Context, userID string) (User, error) {
 		&u.ID, &u.Email, &u.Username, &u.PasswordHash,
 		&u.FirstName, &u.LastName,
 		&u.Theme, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
+		&u.EmailVerified,
 		&u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {

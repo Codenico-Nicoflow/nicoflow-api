@@ -45,15 +45,26 @@ func integrationSvc(t *testing.T) (auth.Service, *pgxpool.Pool) {
 	return auth.NewService(auth.NewRepository(pool), cfg), pool
 }
 
+// mustRegister registers a user and then logs in to obtain a session. Register
+// no longer issues tokens (verification-before-login), so callers that need a
+// refresh/access token go through login here. Verification is not required by
+// the default integration config, so an unverified user can still log in.
 func mustRegister(t *testing.T, svc auth.Service) auth.AuthResponse {
 	t.Helper()
-	resp, err := svc.Register(context.Background(), auth.RegisterRequest{
+	if _, err := svc.Register(context.Background(), auth.RegisterRequest{
 		Email:    "integration@example.com",
 		Password: "Integrate1",
 		Username: "integuser",
+	}); err != nil {
+		t.Fatalf("mustRegister: register: %v", err)
+	}
+	resp, err := svc.Login(context.Background(), auth.LoginRequest{
+		Identifier: "integration@example.com",
+		Password:   "Integrate1",
+		Remember:   true,
 	})
 	if err != nil {
-		t.Fatalf("mustRegister: %v", err)
+		t.Fatalf("mustRegister: login: %v", err)
 	}
 	return resp
 }
@@ -118,22 +129,71 @@ func TestIntegration_Register(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
-	if resp.Token == "" {
-		t.Error("expected non-empty JWT")
-	}
-	if resp.RefreshToken == "" {
-		t.Error("expected non-empty refresh token")
+	// Register does not auto-login — user is returned, but no tokens.
+	if resp.Token != "" || resp.RefreshToken != "" {
+		t.Error("expected no tokens on register (verification required before login)")
 	}
 	if resp.User.Email != "integration@example.com" {
 		t.Errorf("User.Email = %q, want %q", resp.User.Email, "integration@example.com")
 	}
 
-	claims, err := jwtutil.Parse(resp.Token, "integration-test-secret-32-bytes!!")
+	// The user persists and can then log in (default config does not require
+	// verification), yielding a valid JWT.
+	login, err := svc.Login(context.Background(), auth.LoginRequest{
+		Identifier: "integration@example.com",
+		Password:   "Integrate1",
+	})
+	if err != nil {
+		t.Fatalf("Login() after register error = %v", err)
+	}
+	claims, err := jwtutil.Parse(login.Token, "integration-test-secret-32-bytes!!")
 	if err != nil {
 		t.Fatalf("JWT parse error: %v", err)
 	}
 	if claims.Subject == "" {
 		t.Error("expected non-empty JWT subject (userID)")
+	}
+}
+
+func TestIntegration_Login_EmailNotVerified(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	testutil.CleanTables(t, pool, "email_verification_tokens", "refresh_tokens", "users")
+	t.Cleanup(func() {
+		testutil.CleanTables(t, pool, "email_verification_tokens", "refresh_tokens", "users")
+	})
+	cfg := config.Config{
+		JWTSecret:                "integration-test-secret-32-bytes!!",
+		JWTExpiry:                15 * time.Minute,
+		RefreshTokenExpiry:       7 * 24 * time.Hour,
+		RequireEmailVerification: true,
+	}
+	svc := auth.NewService(auth.NewRepository(pool), cfg)
+
+	if _, err := svc.Register(context.Background(), auth.RegisterRequest{
+		Email:    "unverified@example.com",
+		Password: "Integrate1",
+		Username: "unverifieduser",
+	}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	// Unverified user is blocked from logging in when the gate is on.
+	_, err := svc.Login(context.Background(), auth.LoginRequest{
+		Identifier: "unverified@example.com",
+		Password:   "Integrate1",
+	})
+	assertErrCode(t, err, apperror.ErrEmailNotVerified)
+
+	// Mark verified, then login succeeds.
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE users SET email_verified = true WHERE email = $1`, "unverified@example.com"); err != nil {
+		t.Fatalf("mark verified: %v", err)
+	}
+	if _, err := svc.Login(context.Background(), auth.LoginRequest{
+		Identifier: "unverified@example.com",
+		Password:   "Integrate1",
+	}); err != nil {
+		t.Fatalf("Login() after verification error = %v", err)
 	}
 }
 

@@ -88,13 +88,11 @@ func (s *service) Register(ctx context.Context, req RegisterRequest) (AuthRespon
 		return AuthResponse{}, err
 	}
 
-	// Best-effort email verification: issue a token and send the email, but do
-	// NOT block registration or login on it.
-	// TODO(email-verify): once SMTP is production-ready, gate login on
-	// user.email_verified (see Login) and surface an "unverified" state.
+	// Send the verification email. Register does NOT log the user in — they must
+	// verify, then sign in. So we return the user only, no tokens/cookie.
 	s.sendVerificationEmail(ctx, user)
 
-	return s.issueAuthResponse(ctx, user, s.cfg.RefreshTokenExpiry)
+	return AuthResponse{User: userToView(user)}, nil
 }
 
 // sendVerificationEmail issues a fresh email-verification token and sends the
@@ -156,6 +154,12 @@ func (s *service) Login(ctx context.Context, req LoginRequest) (AuthResponse, er
 
 	// Successful login — reset counter.
 	_ = s.repo.ResetFailedLogin(ctx, user.ID)
+
+	// Gate unverified accounts (after the password check, so we don't leak
+	// verification state to someone who doesn't know the password).
+	if s.cfg.RequireEmailVerification && !user.EmailVerified {
+		return AuthResponse{}, apperror.New(http.StatusForbidden, apperror.ErrEmailNotVerified, "email not verified")
+	}
 
 	tokenTTL := s.cfg.RefreshTokenExpiry
 	if !req.Remember {

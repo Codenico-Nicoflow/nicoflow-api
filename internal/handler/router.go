@@ -69,6 +69,13 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		// Email verification (public; token-bearing or email-bearing).
 		r.With(mw.RateLimitIP(10, 10, trustedProxies)).Post("/verify-email", h.Auth.VerifyEmail)
 		r.With(mw.RateLimitIP(3, 3, trustedProxies)).Post("/resend-verification", h.Auth.ResendVerification)
+		// Logout authenticates off the HttpOnly refresh cookie (Path=/v1/auth,
+		// SameSite=Strict), not the access token — so an expired JWT can't trap
+		// the user in a session they can't end. The handler is idempotent (no
+		// cookie / already-gone token → 204), and SameSite=Strict blocks a
+		// cross-site CSRF logout. logout-all stays protected (it revokes by the
+		// userID claim). Matches SPEC §3 (logout is in the public auth block).
+		r.Post("/logout", h.Auth.Logout)
 		// Biometric stubs — FIDO2/WebAuthn in v2
 		r.Post("/biometric/verify", h.Auth.BiometricVerify)
 	})
@@ -78,8 +85,9 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		r.Use(mw.Auth(cfg.JWTSecret))
 		r.Use(mw.RateLimitUser(1000, 100))
 
-		// Auth — session management + biometric stub
-		r.Post("/auth/logout", h.Auth.Logout)
+		// Auth — session management + biometric stub.
+		// Note: /auth/logout is public (see the public /v1/auth block above) —
+		// it authenticates off the refresh cookie, not the access token.
 		r.Post("/auth/logout-all", h.Auth.LogoutAll)
 		r.Post("/auth/biometric/register", h.Auth.BiometricRegister)
 
