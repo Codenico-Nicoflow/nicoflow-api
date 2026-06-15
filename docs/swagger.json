@@ -1,0 +1,698 @@
+{
+    "schemes": [
+        "http",
+        "https"
+    ],
+    "swagger": "2.0",
+    "info": {
+        "description": "REST API for the Nicoflow GTD task-management platform. This spec currently documents the authentication \u0026 user-management surface.",
+        "title": "Nicoflow API",
+        "contact": {},
+        "version": "1.0"
+    },
+    "basePath": "/v1",
+    "paths": {
+        "/auth/forgot-password": {
+            "post": {
+                "description": "Sends a password-reset email. Always returns 200 regardless of whether the email exists (no user enumeration).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Request a password reset",
+                "parameters": [
+                    {
+                        "description": "Account email",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/auth.ForgotPasswordRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/auth.MessageEnvelope"
+                        }
+                    },
+                    "429": {
+                        "description": "RATE_LIMITED",
+                        "schema": {
+                            "$ref": "#/definitions/auth.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/login": {
+            "post": {
+                "description": "Authenticates by email or username and returns a JWT access token plus an HttpOnly refresh cookie. When REQUIRE_EMAIL_VERIFICATION is enabled, an unverified account is rejected with 403 EMAIL_NOT_VERIFIED after the password check (so verification state is never leaked to a wrong password).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Log in",
+                "parameters": [
+                    {
+                        "description": "Credentials (identifier = email or username)",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/auth.LoginRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Access token + user; Set-Cookie refresh token",
+                        "schema": {
+                            "$ref": "#/definitions/auth.AuthEnvelope"
+                        }
+                    },
+                    "401": {
+                        "description": "UNAUTHORIZED (invalid credentials; identical for unknown user and wrong password)",
+                        "schema": {
+                            "$ref": "#/definitions/auth.ErrorEnvelope"
+                        }
+                    },
+                    "403": {
+                        "description": "EMAIL_NOT_VERIFIED",
+                        "schema": {
+                            "$ref": "#/definitions/auth.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT",
+                        "schema": {
+                            "$ref": "#/definitions/auth.ErrorEnvelope"
+                        }
+                    },
+                    "429": {
+                        "description": "RATE_LIMITED (IP limit or account lockout)",
+                        "schema": {
+                            "$ref": "#/definitions/auth.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/logout": {
+            "post": {
+                "description": "Revokes the single refresh token carried by the cookie and clears it. Authenticates off the HttpOnly refresh cookie, not the access token. Idempotent — a missing or already-deleted token still returns 204.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Log out (current session)",
+                "responses": {
+                    "204": {
+                        "description": "Session ended; refresh cookie cleared"
+                    }
+                }
+            }
+        },
+        "/auth/logout-all": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Revokes every refresh token for the authenticated user. Requires a valid access token (revokes by the userID claim).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Log out of all devices",
+                "responses": {
+                    "204": {
+                        "description": "All sessions revoked; refresh cookie cleared"
+                    },
+                    "401": {
+                        "description": "UNAUTHORIZED (missing or invalid access token)",
+                        "schema": {
+                            "$ref": "#/definitions/auth.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/refresh-token": {
+            "post": {
+                "description": "Rotates the refresh token (delete-old/insert-new) and issues a fresh access token. The raw refresh token is read from the HttpOnly cookie (preferred) or a JSON body. Replaying a consumed token is reuse and revokes all of the user's sessions.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Refresh the access token",
+                "responses": {
+                    "200": {
+                        "description": "New access token + rotated refresh cookie",
+                        "schema": {
+                            "$ref": "#/definitions/auth.AuthEnvelope"
+                        }
+                    },
+                    "401": {
+                        "description": "INVALID_TOKEN (missing, expired, tampered, or already-used)",
+                        "schema": {
+                            "$ref": "#/definitions/auth.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/register": {
+            "post": {
+                "description": "Creates a user and sends a verification email. Does not log the user in — no token is issued and no cookie is set; the user must verify (when enforced) then log in.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Register a new account",
+                "parameters": [
+                    {
+                        "description": "Registration details",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/auth.RegisterRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "User created (token empty, no session)",
+                        "schema": {
+                            "$ref": "#/definitions/auth.AuthEnvelope"
+                        }
+                    },
+                    "400": {
+                        "description": "WEAK_PASSWORD",
+                        "schema": {
+                            "$ref": "#/definitions/auth.ErrorEnvelope"
+                        }
+                    },
+                    "409": {
+                        "description": "EMAIL_ALREADY_EXISTS or USERNAME_ALREADY_EXISTS",
+                        "schema": {
+                            "$ref": "#/definitions/auth.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT or INVALID_EMAIL",
+                        "schema": {
+                            "$ref": "#/definitions/auth.ErrorEnvelope"
+                        }
+                    },
+                    "429": {
+                        "description": "RATE_LIMITED",
+                        "schema": {
+                            "$ref": "#/definitions/auth.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/resend-verification": {
+            "post": {
+                "description": "Re-sends the email-verification link. Always returns 200 (no user enumeration).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Resend the verification email",
+                "parameters": [
+                    {
+                        "description": "Account email",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/auth.ResendVerificationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/auth.MessageEnvelope"
+                        }
+                    },
+                    "429": {
+                        "description": "RATE_LIMITED",
+                        "schema": {
+                            "$ref": "#/definitions/auth.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/reset-password": {
+            "post": {
+                "description": "Sets a new password using the single-use reset token from the email. Revokes all active refresh tokens on success.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Reset password with a token",
+                "parameters": [
+                    {
+                        "description": "Reset token + new password",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/auth.ResetPasswordRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/auth.MessageEnvelope"
+                        }
+                    },
+                    "400": {
+                        "description": "WEAK_PASSWORD",
+                        "schema": {
+                            "$ref": "#/definitions/auth.ErrorEnvelope"
+                        }
+                    },
+                    "401": {
+                        "description": "INVALID_TOKEN (invalid, expired, or already-used)",
+                        "schema": {
+                            "$ref": "#/definitions/auth.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT (e.g. password mismatch)",
+                        "schema": {
+                            "$ref": "#/definitions/auth.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/verify-email": {
+            "post": {
+                "description": "Confirms a user's email using the single-use token from the verification email.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Verify email address",
+                "parameters": [
+                    {
+                        "description": "Verification token",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/auth.VerifyEmailRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/auth.MessageEnvelope"
+                        }
+                    },
+                    "401": {
+                        "description": "INVALID_TOKEN (invalid, expired, or already-used)",
+                        "schema": {
+                            "$ref": "#/definitions/auth.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT",
+                        "schema": {
+                            "$ref": "#/definitions/auth.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/users/me": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Soft-deletes the authenticated user (sets deleted_at) and revokes all refresh tokens.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Delete the current account",
+                "responses": {
+                    "204": {
+                        "description": "Account deleted; all sessions revoked"
+                    },
+                    "401": {
+                        "description": "UNAUTHORIZED",
+                        "schema": {
+                            "$ref": "#/definitions/auth.ErrorEnvelope"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Updates profile fields. All fields are optional; omitted fields are left unchanged.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Update the current user",
+                "parameters": [
+                    {
+                        "description": "Fields to update",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/auth.UpdateMeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/auth.UserEnvelope"
+                        }
+                    },
+                    "401": {
+                        "description": "UNAUTHORIZED",
+                        "schema": {
+                            "$ref": "#/definitions/auth.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT or INVALID_EMAIL",
+                        "schema": {
+                            "$ref": "#/definitions/auth.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/users/profile": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the authenticated user's profile.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Get the current user",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/auth.UserEnvelope"
+                        }
+                    },
+                    "401": {
+                        "description": "UNAUTHORIZED",
+                        "schema": {
+                            "$ref": "#/definitions/auth.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "auth.AuthEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/auth.AuthResponse"
+                },
+                "error": {}
+            }
+        },
+        "auth.AuthResponse": {
+            "type": "object",
+            "properties": {
+                "refreshToken": {
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
+                },
+                "user": {
+                    "$ref": "#/definitions/auth.UserView"
+                }
+            }
+        },
+        "auth.ErrorEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {},
+                "error": {
+                    "$ref": "#/definitions/auth.SwaggerError"
+                }
+            }
+        },
+        "auth.ForgotPasswordRequest": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                }
+            }
+        },
+        "auth.LoginRequest": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "identifier": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                },
+                "platform": {
+                    "type": "string"
+                },
+                "remember": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "auth.MessageData": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "password updated successfully"
+                }
+            }
+        },
+        "auth.MessageEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/auth.MessageData"
+                },
+                "error": {}
+            }
+        },
+        "auth.RegisterRequest": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                },
+                "platform": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
+        "auth.ResendVerificationRequest": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                }
+            }
+        },
+        "auth.ResetPasswordRequest": {
+            "type": "object",
+            "properties": {
+                "confirmPassword": {
+                    "type": "string"
+                },
+                "newPassword": {
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
+                }
+            }
+        },
+        "auth.SwaggerError": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "example": "UNAUTHORIZED"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "invalid email or password"
+                }
+            }
+        },
+        "auth.UpdateMeRequest": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "firstName": {
+                    "type": "string"
+                },
+                "lastName": {
+                    "type": "string"
+                },
+                "theme": {
+                    "type": "string"
+                },
+                "timezone": {
+                    "type": "string"
+                }
+            }
+        },
+        "auth.UserEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/auth.UserView"
+                },
+                "error": {}
+            }
+        },
+        "auth.UserView": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "firstName": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "imageUrl": {
+                    "type": "string"
+                },
+                "lastName": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "theme": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
+        "auth.VerifyEmailRequest": {
+            "type": "object",
+            "properties": {
+                "token": {
+                    "type": "string"
+                }
+            }
+        }
+    },
+    "securityDefinitions": {
+        "BearerAuth": {
+            "description": "JWT access token as \"Bearer \u003ctoken\u003e\".",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        }
+    }
+}

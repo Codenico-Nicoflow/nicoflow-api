@@ -22,8 +22,21 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
 	"github.com/nicoflow/nicoflow-api/internal/domain/task"
 	"github.com/nicoflow/nicoflow-api/internal/handler"
+
+	// Generated Swagger docs (make swagger). Imported for the side-effect of
+	// registering the spec; the /v1/swagger UI route reads it.
+	_ "github.com/nicoflow/nicoflow-api/docs"
 )
 
+// @title           Nicoflow API
+// @version         1.0
+// @description     REST API for the Nicoflow GTD task-management platform. This spec currently documents the authentication & user-management surface.
+// @BasePath        /v1
+// @schemes         http https
+// @securityDefinitions.apikey  BearerAuth
+// @in                          header
+// @name                        Authorization
+// @description                 JWT access token as "Bearer <token>".
 func main() {
 	if os.Getenv("APP_ENV") != "production" {
 		_ = godotenv.Load()
