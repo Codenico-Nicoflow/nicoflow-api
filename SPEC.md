@@ -32,6 +32,8 @@
 All authenticated endpoints require `Authorization: Bearer <jwt>` header.
 All request and response bodies are `application/json`.
 
+**Interactive docs (Swagger):** the authentication & user-management surface is annotated with swaggo and served at `GET /v1/swagger/index.html` (spec JSON at `/v1/swagger/doc.json`) in non-production environments. Regenerate from the handler annotations with `make swagger`.
+
 ---
 
 ### 3.1 Authentication & Users
@@ -175,13 +177,13 @@ Revoke **every** refresh token for the authenticated user (sign out of all devic
 
 **Response — 204 No Content**
 
-> **⚠️ TODO (later phase — Settings/Security, E-021):** the route + handler + service (`DeleteAllRefreshTokens`) exist but are **not yet exposed in the frontend** — there is no `LOGOUT_ALL` endpoint constant, mutation, or UI. Wire up a "Sign out of all devices" affordance on the Profile/Security page when that lands. The underlying revoke-all logic is already shared by the password-change and delete-account flows.
+> **Frontend:** wired — the `useLogoutAllMutation` hook calls this endpoint and a "Sign out of all devices" affordance lives in the sidebar user menu (clears the session and redirects to sign-in). The underlying revoke-all logic is shared with the password-change and delete-account flows. A dedicated Profile/Security home for it can follow in E-021.
 
 ---
 
 #### POST /v1/auth/verify-email
 
-Confirm a user's email address using the token from the verification email. *(Scaffolded — not yet enforced at login.)*
+Confirm a user's email address using the token from the verification email. *(Login enforcement is gated by the `REQUIRE_EMAIL_VERIFICATION` config flag — when enabled, unverified accounts are rejected at login with `EMAIL_NOT_VERIFIED`.)*
 
 - **Auth required:** No
 
