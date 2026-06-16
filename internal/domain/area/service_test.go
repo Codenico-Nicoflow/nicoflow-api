@@ -127,7 +127,7 @@ func TestAreaService_Create(t *testing.T) {
 		{
 			name:       "invalid icon",
 			plan:       "pro",
-			req:        area.CreateAreaRequest{Name: "X", Icon: "rocket"},
+			req:        area.CreateAreaRequest{Name: "X", Icon: "not-a-real-icon"},
 			wantCode:   apperror.ErrInvalidInput,
 			wantStatus: http.StatusUnprocessableEntity,
 		},

@@ -391,6 +391,8 @@ Create a new area.
 | `color` | string | No       | Hex colour e.g. `#3B82F6` — default `#3B82F6` |
 | `icon`  | string | No       | Valid `IconId` — default `"folder"`           |
 
+> **Icon set:** areas and projects share one backend-validated allowlist (`project.AllowedIcons`). It is a **superset** of the frontend's curated picker (`src/lib/types/icons.ts`) — every icon the UI can pick is accepted, plus extra options for headroom. An unrecognised icon → `INVALID_INPUT`. The two lists are kept in sync by a regression test (`internal/domain/project/icons_test.go`).
+
 **Response — 201 Created** — `IArea`
 
 **Errors:** `PLAN_LIMIT_EXCEEDED` (403), `INVALID_INPUT` (422), `DUPLICATE_NAME` (409)

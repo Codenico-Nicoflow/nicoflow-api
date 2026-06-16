@@ -115,7 +115,7 @@ func TestProjectService_Create(t *testing.T) {
 		{
 			name:       "invalid folderIcon",
 			plan:       "pro",
-			req:        project.CreateProjectRequest{Name: "X", FolderIcon: "rocket"},
+			req:        project.CreateProjectRequest{Name: "X", FolderIcon: "not-a-real-icon"},
 			wantCode:   apperror.ErrInvalidInput,
 			wantStatus: http.StatusUnprocessableEntity,
 		},
