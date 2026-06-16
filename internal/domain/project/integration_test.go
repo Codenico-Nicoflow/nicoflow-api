@@ -243,6 +243,24 @@ func TestIntegration_Project_Create_HappyPath(t *testing.T) {
 	}
 }
 
+// TestIntegration_Project_Create_ThemedFolderIcon guards the DB path for the
+// unified icon allowlist: a themed icon valid in project.AllowedIcons must
+// persist (not be rejected by a stale folder_icon CHECK -> 500). Regression for
+// the migration-013 CHECK dropped in migration 022. An unknown icon still 422s.
+func TestIntegration_Project_Create_ThemedFolderIcon(t *testing.T) {
+	env := newProjectServer(t)
+
+	for _, icon := range []string{"rocket", "briefcase", "heart-pulse"} {
+		resp := do(t, env.srv, http.MethodPost, fmt.Sprintf("/v1/areas/%s/projects", env.areaID),
+			project.CreateProjectRequest{Name: "P-" + icon, Status: "active", FolderIcon: icon}, env.token)
+		assertStatus(t, resp, http.StatusCreated)
+	}
+
+	resp := do(t, env.srv, http.MethodPost, fmt.Sprintf("/v1/areas/%s/projects", env.areaID),
+		project.CreateProjectRequest{Name: "bad", Status: "active", FolderIcon: "not-a-real-icon"}, env.token)
+	assertStatus(t, resp, http.StatusUnprocessableEntity)
+}
+
 // TestIntegration_Project_Create_PlanLimit covers test matrix row #17.
 func TestIntegration_Project_Create_PlanLimit(t *testing.T) {
 	env := newProjectServer(t)
