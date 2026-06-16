@@ -20,15 +20,9 @@ const (
 	defaultIcon  = "folder"
 )
 
-var (
-	colorRE = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
-
-	allowedIcons = map[string]bool{
-		"folder": true, "inbox": true, "calendar": true, "alarm": true,
-		"search": true, "settings": true, "menu": true, "layer": true,
-		"zap": true, "computer": true, "user": true, "sprout": true, "bone": true,
-	}
-)
+// colorRE validates 6-digit hex colors. Icons are validated against the shared
+// project.AllowedIcons set so areas and projects accept the same icons.
+var colorRE = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
 
 // Service defines the area business logic interface.
 type Service interface {
@@ -106,7 +100,7 @@ func (s *service) Create(ctx context.Context, userID, plan string, req CreateAre
 
 	if req.Icon == "" {
 		req.Icon = defaultIcon
-	} else if !allowedIcons[req.Icon] {
+	} else if !project.AllowedIcons[req.Icon] {
 		return AreaView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "icon is not valid")
 	}
 
@@ -146,7 +140,7 @@ func (s *service) Update(ctx context.Context, userID, id string, req UpdateAreaR
 	if req.Color != nil && !colorRE.MatchString(*req.Color) {
 		return AreaView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "color must be a valid hex color (e.g. #3B82F6)")
 	}
-	if req.Icon != nil && !allowedIcons[*req.Icon] {
+	if req.Icon != nil && !project.AllowedIcons[*req.Icon] {
 		return AreaView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "icon is not valid")
 	}
 

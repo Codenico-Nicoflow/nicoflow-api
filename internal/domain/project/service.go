@@ -22,12 +22,6 @@ var allowedStatuses = map[string]bool{
 	"active": true, "completed": true, "archived": true,
 }
 
-var allowedFolderIcons = map[string]bool{
-	"inbox": true, "calendar": true, "alarm": true, "search": true,
-	"settings": true, "menu": true, "folder": true, "layer": true,
-	"zap": true, "computer": true, "user": true, "sprout": true, "bone": true,
-}
-
 // Service defines the project business logic interface.
 type Service interface {
 	List(ctx context.Context, userID string, f ListProjectsFilter) (ListProjectsResponse, error)
@@ -89,7 +83,7 @@ func (s *service) Create(ctx context.Context, userID, areaID, plan string, req C
 
 	if req.FolderIcon == "" {
 		req.FolderIcon = defaultFolderIcon
-	} else if !allowedFolderIcons[req.FolderIcon] {
+	} else if !AllowedIcons[req.FolderIcon] {
 		return ProjectView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "folderIcon is not valid")
 	}
 
@@ -142,7 +136,7 @@ func (s *service) Update(ctx context.Context, userID, id string, req UpdateProje
 	if req.Status != nil && !allowedStatuses[*req.Status] {
 		return ProjectView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidStatus, "status must be one of: active, completed, archived")
 	}
-	if req.FolderIcon != nil && !allowedFolderIcons[*req.FolderIcon] {
+	if req.FolderIcon != nil && !AllowedIcons[*req.FolderIcon] {
 		return ProjectView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "folderIcon is not valid")
 	}
 	if req.Description != nil && len(*req.Description) > 2000 {
