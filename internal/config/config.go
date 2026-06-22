@@ -21,19 +21,19 @@ type Config struct {
 	// sent on cross-site requests — required when the frontend and API are on different
 	// registrable domains (e.g. *.vercel.app calling *.onrender.com). SameSite=None demands
 	// Secure, so this is only honoured in secure environments. Default false (same-site, Strict).
-	CookieCrossSite bool
-	LSWebhookSecret          string
-	AWSAccessKeyID           string
-	AWSSecretKey             string
-	S3Bucket                 string
-	CORSOrigins              string
-	TrustedProxyCIDRs        string
-	AppEnv                   string
-	Port                     string
-	LogLevel                 string
-	MinIOEndpoint            string
-	MinIOAccessKey           string
-	MinIOSecretKey           string
+	CookieCrossSite   bool
+	LSWebhookSecret   string
+	AWSAccessKeyID    string
+	AWSSecretKey      string
+	S3Bucket          string
+	CORSOrigins       string
+	TrustedProxyCIDRs string
+	AppEnv            string
+	Port              string
+	LogLevel          string
+	MinIOEndpoint     string
+	MinIOAccessKey    string
+	MinIOSecretKey    string
 }
 
 func Load() Config {
