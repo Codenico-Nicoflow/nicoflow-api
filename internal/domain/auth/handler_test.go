@@ -117,7 +117,7 @@ func TestHandler_Login_RememberMe_Cookie(t *testing.T) {
 				},
 			}
 
-			h := auth.NewHandler(svc, false)
+			h := auth.NewHandler(svc, auth.HandlerConfig{})
 			r := httptest.NewRequest(http.MethodPost, "/v1/auth/login", loginBody(t, tt.remember))
 			r.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
@@ -149,6 +149,82 @@ func TestHandler_Login_RememberMe_Cookie(t *testing.T) {
 				t.Error("cookie must be SameSite=Strict")
 			}
 		})
+	}
+}
+
+// TestHandler_Login_CrossSiteCookie asserts the refresh cookie is configured for a
+// cross-site deployment: secure environment + CrossSite=true yields the secure cookie
+// name with SameSite=None and Secure (so the browser sends it on cross-origin refresh).
+func TestHandler_Login_CrossSiteCookie(t *testing.T) {
+	svc := &mockService{
+		loginFn: func(_ context.Context, _ auth.LoginRequest) (auth.AuthResponse, error) {
+			return auth.AuthResponse{
+				Token:        "jwt.token.here",
+				RefreshToken: "rawrefreshtoken",
+				User:         auth.UserView{ID: "usr_1", Email: "user@example.com"},
+				CookieMaxAge: int(testCfg().RefreshTokenExpiry.Seconds()),
+			}, nil
+		},
+	}
+
+	h := auth.NewHandler(svc, auth.HandlerConfig{SecureCookie: true, CrossSite: true})
+	r := httptest.NewRequest(http.MethodPost, "/v1/auth/login", loginBody(t, true))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	h.Login(w, r)
+
+	res := w.Result()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
+	}
+
+	var cookie *http.Cookie
+	for _, c := range res.Cookies() {
+		if c.Name == "__Secure-refresh_token" {
+			cookie = c
+			break
+		}
+	}
+	if cookie == nil {
+		t.Fatal("__Secure-refresh_token cookie not set in secure cross-site mode")
+	}
+	if cookie.SameSite != http.SameSiteNoneMode {
+		t.Errorf("cookie SameSite = %v, want None for cross-site", cookie.SameSite)
+	}
+	if !cookie.Secure {
+		t.Error("cross-site cookie must be Secure (SameSite=None requires it)")
+	}
+}
+
+// TestHandler_Login_CrossSiteIgnoredWithoutSecure asserts CrossSite is ignored over plain
+// HTTP (SecureCookie=false): SameSite=None without Secure is rejected by browsers, so the
+// handler must fall back to Strict rather than emit an unusable cookie.
+func TestHandler_Login_CrossSiteIgnoredWithoutSecure(t *testing.T) {
+	svc := &mockService{
+		loginFn: func(_ context.Context, _ auth.LoginRequest) (auth.AuthResponse, error) {
+			return auth.AuthResponse{
+				Token:        "jwt.token.here",
+				RefreshToken: "rawrefreshtoken",
+				User:         auth.UserView{ID: "usr_1", Email: "user@example.com"},
+				CookieMaxAge: int(testCfg().RefreshTokenExpiry.Seconds()),
+			}, nil
+		},
+	}
+
+	h := auth.NewHandler(svc, auth.HandlerConfig{SecureCookie: false, CrossSite: true})
+	r := httptest.NewRequest(http.MethodPost, "/v1/auth/login", loginBody(t, true))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	h.Login(w, r)
+
+	cookie := refreshCookie(w.Result())
+	if cookie == nil {
+		t.Fatal("refresh_token cookie not set")
+	}
+	if cookie.SameSite != http.SameSiteStrictMode {
+		t.Errorf("cookie SameSite = %v, want Strict (None ignored without Secure)", cookie.SameSite)
 	}
 }
 
@@ -196,7 +272,7 @@ func TestHandler_Register_NoSession(t *testing.T) {
 			return auth.AuthResponse{User: auth.UserView{ID: "usr_1", Email: "user@example.com"}}, nil
 		},
 	}
-	h := auth.NewHandler(svc, false)
+	h := auth.NewHandler(svc, auth.HandlerConfig{})
 	r := httptest.NewRequest(http.MethodPost, "/v1/auth/register", jsonBody(t, auth.RegisterRequest{
 		Email: "user@example.com", Username: "user", Password: "Secret123",
 	}))
@@ -235,7 +311,7 @@ func TestHandler_Login_Unverified(t *testing.T) {
 			return auth.AuthResponse{}, apperror.New(http.StatusForbidden, apperror.ErrEmailNotVerified, "email not verified")
 		},
 	}
-	h := auth.NewHandler(svc, false)
+	h := auth.NewHandler(svc, auth.HandlerConfig{})
 	r := httptest.NewRequest(http.MethodPost, "/v1/auth/login", loginBody(t, false))
 	w := httptest.NewRecorder()
 
@@ -265,7 +341,7 @@ func TestHandler_Refresh_NoToken(t *testing.T) {
 			return auth.AuthResponse{Token: "new", RefreshToken: "rotated"}, nil
 		},
 	}
-	h := auth.NewHandler(svc, false)
+	h := auth.NewHandler(svc, auth.HandlerConfig{})
 	r := httptest.NewRequest(http.MethodPost, "/v1/auth/refresh-token", bytes.NewBufferString("{}"))
 	w := httptest.NewRecorder()
 
@@ -284,7 +360,7 @@ func TestHandler_Refresh_NoToken(t *testing.T) {
 // TestHandler_Logout_ClearsCookie asserts logout returns 204 and expires the
 // refresh cookie even with no cookie on the request (idempotent).
 func TestHandler_Logout_ClearsCookie(t *testing.T) {
-	h := auth.NewHandler(&mockService{}, false)
+	h := auth.NewHandler(&mockService{}, auth.HandlerConfig{})
 	r := httptest.NewRequest(http.MethodPost, "/v1/auth/logout", nil)
 	w := httptest.NewRecorder()
 
@@ -306,7 +382,7 @@ func TestHandler_Logout_ClearsCookie(t *testing.T) {
 // TestHandler_LogoutAll_ClearsCookie asserts logout-all returns 204 and clears
 // the refresh cookie.
 func TestHandler_LogoutAll_ClearsCookie(t *testing.T) {
-	h := auth.NewHandler(&mockService{}, false)
+	h := auth.NewHandler(&mockService{}, auth.HandlerConfig{})
 	r := httptest.NewRequest(http.MethodPost, "/v1/auth/logout-all", nil)
 	w := httptest.NewRecorder()
 
@@ -329,7 +405,7 @@ func TestHandler_ResetPassword_InvalidToken(t *testing.T) {
 			return apperror.New(http.StatusUnauthorized, apperror.ErrInvalidToken, "invalid reset token")
 		},
 	}
-	h := auth.NewHandler(svc, false)
+	h := auth.NewHandler(svc, auth.HandlerConfig{})
 	r := httptest.NewRequest(http.MethodPost, "/v1/auth/reset-password", jsonBody(t, auth.ResetPasswordRequest{
 		Token: "bad", NewPassword: "Secret123", ConfirmPassword: "Secret123",
 	}))
@@ -350,7 +426,7 @@ func TestHandler_ResetPassword_InvalidToken(t *testing.T) {
 // TestHandler_VerifyEmail_Success asserts a happy verify returns 200 with a
 // message payload and no error.
 func TestHandler_VerifyEmail_Success(t *testing.T) {
-	h := auth.NewHandler(&mockService{}, false)
+	h := auth.NewHandler(&mockService{}, auth.HandlerConfig{})
 	r := httptest.NewRequest(http.MethodPost, "/v1/auth/verify-email", jsonBody(t, auth.VerifyEmailRequest{Token: "good"}))
 	w := httptest.NewRecorder()
 

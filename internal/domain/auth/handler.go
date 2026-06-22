@@ -16,12 +16,28 @@ import (
 type Handler struct {
 	svc          Service
 	secureCookie bool
+	crossSite    bool
+}
+
+// HandlerConfig configures cookie behaviour for the auth Handler.
+//   - SecureCookie: false in development (http://localhost), true in staging/production.
+//   - CrossSite: true when the frontend and API are on different registrable domains
+//     (e.g. *.vercel.app → *.onrender.com), which requires SameSite=None. SameSite=None
+//     demands Secure, so CrossSite is only honoured when SecureCookie is also true.
+type HandlerConfig struct {
+	SecureCookie bool
+	CrossSite    bool
 }
 
 // NewHandler creates a new auth Handler.
-// secureCookie should be false in development (http://localhost) and true in staging/production.
-func NewHandler(svc Service, secureCookie bool) *Handler {
-	return &Handler{svc: svc, secureCookie: secureCookie}
+func NewHandler(svc Service, cfg HandlerConfig) *Handler {
+	return &Handler{
+		svc:          svc,
+		secureCookie: cfg.SecureCookie,
+		// SameSite=None is invalid without Secure; ignore CrossSite over plain HTTP so a
+		// misconfiguration can't produce a cookie the browser silently rejects.
+		crossSite: cfg.CrossSite && cfg.SecureCookie,
+	}
 }
 
 // Register godoc
@@ -392,6 +408,16 @@ func (h *Handler) refreshCookieName() string {
 	return "refresh_token"
 }
 
+// refreshCookieSameSite returns SameSite=None for cross-site deployments (frontend and API
+// on different registrable domains) and SameSite=Strict otherwise. None is only ever returned
+// when secureCookie is true (enforced in NewHandler), since browsers reject None without Secure.
+func (h *Handler) refreshCookieSameSite() http.SameSite {
+	if h.crossSite {
+		return http.SameSiteNoneMode
+	}
+	return http.SameSiteStrictMode
+}
+
 // setRefreshCookie sets the HttpOnly refresh token cookie per SPEC §3.5.
 // maxAge=0 produces a session cookie (no Max-Age header, expires on browser close).
 // Secure is intentionally runtime-controlled (false in dev over HTTP, true in staging/production).
@@ -403,7 +429,7 @@ func (h *Handler) setRefreshCookie(w http.ResponseWriter, rawToken string, maxAg
 		MaxAge:   maxAge,
 		HttpOnly: true,
 		Secure:   h.secureCookie,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: h.refreshCookieSameSite(),
 	})
 }
 
@@ -416,7 +442,7 @@ func (h *Handler) clearRefreshCookie(w http.ResponseWriter) {
 		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   h.secureCookie,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: h.refreshCookieSameSite(),
 	})
 }
 

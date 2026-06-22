@@ -70,7 +70,7 @@ func newAreaServer(t *testing.T) (*httptest.Server, *pgxpool.Pool) {
 
 	// Remaining handlers are stubs — pass nils through the handler package's stub paths.
 	h := handler.Handlers{
-		Auth:    auth.NewHandler(authSvc, false),
+		Auth:    auth.NewHandler(authSvc, auth.HandlerConfig{}),
 		Area:    area.NewHandler(areaSvc),
 		Project: project.NewHandler(projSvc),
 	}

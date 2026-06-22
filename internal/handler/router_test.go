@@ -50,7 +50,7 @@ func (nopAuthService) RegisterPushToken(context.Context, string, auth.RegisterPu
 // into the public /v1/auth subrouter. An unauthenticated request must reach the
 // auth middleware (401), NOT fall through to a 404.
 func TestRouter_ProtectedAuthRoutesAreReachable(t *testing.T) {
-	h := handler.Handlers{Auth: auth.NewHandler(nopAuthService{}, false)}
+	h := handler.Handlers{Auth: auth.NewHandler(nopAuthService{}, auth.HandlerConfig{})}
 	router := handler.New(config.Config{JWTSecret: "test-secret-at-least-32-bytes-long!!"}, nil, h)
 
 	cases := []struct {
@@ -77,7 +77,7 @@ func TestRouter_ProtectedAuthRoutesAreReachable(t *testing.T) {
 // TestRouter_PublicAuthRoutesNotProtected confirms the public logout endpoint is
 // reachable without a token (it authenticates off the refresh cookie).
 func TestRouter_PublicAuthRoutesNotProtected(t *testing.T) {
-	h := handler.Handlers{Auth: auth.NewHandler(nopAuthService{}, false)}
+	h := handler.Handlers{Auth: auth.NewHandler(nopAuthService{}, auth.HandlerConfig{})}
 	router := handler.New(config.Config{JWTSecret: "test-secret-at-least-32-bytes-long!!"}, nil, h)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/auth/logout", nil)

@@ -71,6 +71,7 @@ func main() {
 	authSvc := auth.NewService(authRepo, cfg)
 	auth.StartTokenGC(ctx, pool)
 	secureCookie := cfg.AppEnv == "production" || cfg.AppEnv == "staging"
+	cookieCfg := auth.HandlerConfig{SecureCookie: secureCookie, CrossSite: cfg.CookieCrossSite}
 
 	// Area domain.
 	areaRepo := area.NewRepository(pool)
@@ -81,7 +82,7 @@ func main() {
 	projectSvc := project.NewService(projectRepo)
 
 	handlers := handler.Handlers{
-		Auth:    auth.NewHandler(authSvc, secureCookie),
+		Auth:    auth.NewHandler(authSvc, cookieCfg),
 		Area:    area.NewHandler(areaSvc),
 		Project: project.NewHandler(projectSvc),
 		Task:    task.NewHandler(nil),
