@@ -104,7 +104,7 @@ func newProjectServer(t *testing.T) testEnv {
 	_, token := insertTestUser(t, pool, "usera@project-integration.test", "free")
 
 	h := handler.Handlers{
-		Auth:    auth.NewHandler(auth.NewService(auth.NewRepository(pool), cfg), false),
+		Auth:    auth.NewHandler(auth.NewService(auth.NewRepository(pool), cfg), auth.HandlerConfig{}),
 		Area:    area.NewHandler(area.NewService(area.NewRepository(pool))),
 		Project: project.NewHandler(project.NewService(project.NewRepository(pool))),
 		Task:    task.NewHandler(task.NewService(task.NewRepository(pool))),

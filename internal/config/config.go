@@ -17,6 +17,11 @@ type Config struct {
 	AppBaseURL         string
 	// Gate login on a verified email. Default false so dev (no SMTP) isn't locked out.
 	RequireEmailVerification bool
+	// CookieCrossSite makes the refresh cookie SameSite=None (instead of Strict) so it is
+	// sent on cross-site requests — required when the frontend and API are on different
+	// registrable domains (e.g. *.vercel.app calling *.onrender.com). SameSite=None demands
+	// Secure, so this is only honoured in secure environments. Default false (same-site, Strict).
+	CookieCrossSite bool
 	LSWebhookSecret          string
 	AWSAccessKeyID           string
 	AWSSecretKey             string
@@ -66,6 +71,7 @@ func Load() Config {
 		AppBaseURL:         os.Getenv("APP_BASE_URL"),
 
 		RequireEmailVerification: parseBool(os.Getenv("REQUIRE_EMAIL_VERIFICATION"), false),
+		CookieCrossSite:          parseBool(os.Getenv("COOKIE_CROSS_SITE"), false),
 		LSWebhookSecret:          os.Getenv("LS_WEBHOOK_SECRET"),
 		AWSAccessKeyID:           os.Getenv("AWS_ACCESS_KEY_ID"),
 		AWSSecretKey:             os.Getenv("AWS_SECRET_ACCESS_KEY"),
