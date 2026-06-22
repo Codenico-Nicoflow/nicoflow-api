@@ -17,6 +17,9 @@ databases:
   - name: nicoflow-db-staging
     databaseName: nicoflow
     user: nicoflow
+    # Region MUST match the web service below — the API connects over Render's private
+    # network using the DB's internal hostname, which only resolves within the same region.
+    region: frankfurt
     # Free Postgres expires (~30 days) and is then deleted. Plan: upgrade to `starter`
     # (~$7/mo, persistent) before expiry if staging is still in use — one-line change,
     # no rebuild/migration needed. Until then it holds only throwaway test data.
@@ -29,6 +32,8 @@ services:
     runtime: docker
     dockerfilePath: ./Dockerfile
     plan: free
+    # Must match the database region above so the internal DB hostname resolves.
+    region: frankfurt
     branch: staging
     autoDeploy: true
     healthCheckPath: /v1/health
