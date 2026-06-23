@@ -61,11 +61,11 @@ func (r *pgRepo) CreateUser(ctx context.Context, email, username, passwordHash s
 	id := uuid.New().String()
 	var u User
 	err := r.db.QueryRow(ctx, `
-		INSERT INTO users (id, email, username, password_hash, theme, status, plan, timezone)
-		VALUES (@id, @email, @username, @passwordHash, 'light', 'regular', 'free', 'UTC')
+		INSERT INTO users (id, email, username, password_hash, theme, language, status, plan, timezone)
+		VALUES (@id, @email, @username, @passwordHash, 'light', 'en', 'regular', 'free', 'UTC')
 		RETURNING id, email, COALESCE(username,''), password_hash,
 		          COALESCE(first_name,''), COALESCE(last_name,''),
-		          theme, COALESCE(image_url,''), status, plan, timezone,
+		          theme, language, COALESCE(image_url,''), status, plan, timezone,
 		          created_at, updated_at`,
 		pgx.NamedArgs{
 			"id":           id,
@@ -76,7 +76,7 @@ func (r *pgRepo) CreateUser(ctx context.Context, email, username, passwordHash s
 	).Scan(
 		&u.ID, &u.Email, &u.Username, &u.PasswordHash,
 		&u.FirstName, &u.LastName,
-		&u.Theme, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
+		&u.Theme, &u.Language, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
 		&u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
@@ -112,7 +112,7 @@ func (r *pgRepo) getUserByUsername(ctx context.Context, username string) (User, 
 	err := r.db.QueryRow(ctx, `
 		SELECT id, email, COALESCE(username,''), password_hash,
 		       COALESCE(first_name,''), COALESCE(last_name,''),
-		       theme, COALESCE(image_url,''), status, plan, timezone,
+		       theme, language, COALESCE(image_url,''), status, plan, timezone,
 		       email_verified, failed_login_count, locked_until,
 		       created_at, updated_at
 		FROM users
@@ -121,7 +121,7 @@ func (r *pgRepo) getUserByUsername(ctx context.Context, username string) (User, 
 	).Scan(
 		&u.ID, &u.Email, &u.Username, &u.PasswordHash,
 		&u.FirstName, &u.LastName,
-		&u.Theme, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
+		&u.Theme, &u.Language, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
 		&u.EmailVerified, &u.FailedLoginCount, &u.LockedUntil,
 		&u.CreatedAt, &u.UpdatedAt,
 	)
@@ -139,7 +139,7 @@ func (r *pgRepo) GetUserByEmail(ctx context.Context, email string) (User, error)
 	err := r.db.QueryRow(ctx, `
 		SELECT id, email, COALESCE(username,''), password_hash,
 		       COALESCE(first_name,''), COALESCE(last_name,''),
-		       theme, COALESCE(image_url,''), status, plan, timezone,
+		       theme, language, COALESCE(image_url,''), status, plan, timezone,
 		       email_verified, failed_login_count, locked_until,
 		       created_at, updated_at
 		FROM users
@@ -148,7 +148,7 @@ func (r *pgRepo) GetUserByEmail(ctx context.Context, email string) (User, error)
 	).Scan(
 		&u.ID, &u.Email, &u.Username, &u.PasswordHash,
 		&u.FirstName, &u.LastName,
-		&u.Theme, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
+		&u.Theme, &u.Language, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
 		&u.EmailVerified, &u.FailedLoginCount, &u.LockedUntil,
 		&u.CreatedAt, &u.UpdatedAt,
 	)
@@ -166,7 +166,7 @@ func (r *pgRepo) GetUserByID(ctx context.Context, userID string) (User, error) {
 	err := r.db.QueryRow(ctx, `
 		SELECT id, email, COALESCE(username,''), password_hash,
 		       COALESCE(first_name,''), COALESCE(last_name,''),
-		       theme, COALESCE(image_url,''), status, plan, timezone,
+		       theme, language, COALESCE(image_url,''), status, plan, timezone,
 		       email_verified,
 		       created_at, updated_at
 		FROM users
@@ -175,7 +175,7 @@ func (r *pgRepo) GetUserByID(ctx context.Context, userID string) (User, error) {
 	).Scan(
 		&u.ID, &u.Email, &u.Username, &u.PasswordHash,
 		&u.FirstName, &u.LastName,
-		&u.Theme, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
+		&u.Theme, &u.Language, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
 		&u.EmailVerified,
 		&u.CreatedAt, &u.UpdatedAt,
 	)
@@ -197,11 +197,12 @@ func (r *pgRepo) UpdateUser(ctx context.Context, userID string, req UpdateMeRequ
 		  email       = COALESCE(@email,       email),
 		  timezone    = COALESCE(@timezone,    timezone),
 		  theme       = COALESCE(@theme,       theme),
+		  language    = COALESCE(@language,    language),
 		  updated_at  = NOW()
 		WHERE id = @userID AND deleted_at IS NULL
 		RETURNING id, email, COALESCE(username,''), password_hash,
 		          COALESCE(first_name,''), COALESCE(last_name,''),
-		          theme, COALESCE(image_url,''), status, plan, timezone,
+		          theme, language, COALESCE(image_url,''), status, plan, timezone,
 		          created_at, updated_at`,
 		pgx.NamedArgs{
 			"firstName": req.FirstName,
@@ -209,12 +210,13 @@ func (r *pgRepo) UpdateUser(ctx context.Context, userID string, req UpdateMeRequ
 			"email":     req.Email,
 			"timezone":  req.Timezone,
 			"theme":     req.Theme,
+			"language":  req.Language,
 			"userID":    userID,
 		},
 	).Scan(
 		&u.ID, &u.Email, &u.Username, &u.PasswordHash,
 		&u.FirstName, &u.LastName,
-		&u.Theme, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
+		&u.Theme, &u.Language, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
 		&u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
