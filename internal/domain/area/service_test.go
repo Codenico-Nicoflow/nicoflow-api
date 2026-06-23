@@ -96,10 +96,29 @@ func TestAreaService_Create(t *testing.T) {
 			wantName:   "Home",
 		},
 		{
+			// boundary: 2 existing areas (one below the limit of 3) is allowed.
+			name:       "free plan boundary — N-1 allowed",
+			plan:       "free",
+			req:        area.CreateAreaRequest{Name: "Third"},
+			repoCount:  2,
+			createArea: area.Area{ID: "a3", Name: "Third", Color: "#3B82F6", Icon: "folder"},
+			wantName:   "Third",
+		},
+		{
+			// boundary: 3 existing areas (at the limit) blocks the 4th.
 			name:       "free plan at limit",
 			plan:       "free",
 			req:        area.CreateAreaRequest{Name: "Extra"},
 			repoCount:  3,
+			wantCode:   apperror.ErrPlanLimitExceeded,
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			// boundary: already over the limit (graceful-downgrade state) stays blocked.
+			name:       "free plan over limit — N+1 blocked",
+			plan:       "free",
+			req:        area.CreateAreaRequest{Name: "Extra2"},
+			repoCount:  4,
 			wantCode:   apperror.ErrPlanLimitExceeded,
 			wantStatus: http.StatusForbidden,
 		},
