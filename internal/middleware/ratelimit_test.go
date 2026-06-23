@@ -3,6 +3,7 @@ package middleware
 import (
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -73,5 +74,30 @@ func TestParseCIDRs_SkipsInvalid(t *testing.T) {
 	nets := parseCIDRs([]string{"10.0.0.0/8", "notacidr", "", "192.168.0.0/16"})
 	if len(nets) != 2 {
 		t.Errorf("parseCIDRs len = %d, want 2", len(nets))
+	}
+}
+
+func TestRateLimit_SkipsOptionsPreflight(t *testing.T) {
+	// A 1-token-per-minute limiter would normally 429 the second request. OPTIONS
+	// preflights must bypass the limiter entirely so a burst of preflights (e.g.
+	// during a page reload) never surfaces as a misleading CORS error.
+	mw := RateLimitIP(1, 1, nil)
+	var called int
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	for i := 0; i < 5; i++ {
+		r, _ := http.NewRequest(http.MethodOptions, "/v1/users/me", nil)
+		r.RemoteAddr = "203.0.113.9:1111"
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("OPTIONS #%d: status = %d, want 204 (never throttled)", i, rec.Code)
+		}
+	}
+	if called != 5 {
+		t.Errorf("handler called %d times, want 5 — preflights must not be rate-limited", called)
 	}
 }

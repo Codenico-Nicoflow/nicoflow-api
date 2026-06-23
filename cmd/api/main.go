@@ -60,6 +60,15 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
+	// Apply pending DB migrations on boot so a deploy can never run against a
+	// schema older than the code expects (the single-instance Render setup has no
+	// separate migration step). Idempotent; opt out with SKIP_MIGRATIONS=true.
+	if !cfg.SkipMigrations {
+		if err := db.Migrate(cfg.DatabaseURL); err != nil {
+			log.Fatal().Err(err).Msg("failed to apply database migrations")
+		}
+	}
+
 	pool, err := db.New(ctx, cfg.DatabaseURL)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to connect to database")
