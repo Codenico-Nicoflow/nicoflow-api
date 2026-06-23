@@ -1,67 +1,107 @@
 package emailutil
 
 import (
+	"crypto/tls"
 	"fmt"
+	"net"
 	"net/smtp"
 	"net/url"
 	"strings"
+	"time"
 )
+
+// sendTimeout bounds the entire SMTP exchange (dial + handshake + send). The
+// stdlib smtp.SendMail uses no deadline, so a slow or unreachable host can hang
+// the calling goroutine for minutes (the OS TCP timeout). A short, explicit
+// deadline guarantees the send fails fast instead.
+const sendTimeout = 10 * time.Second
+
+const fromAddr = "noreply@nicoflow.app"
 
 // SendPasswordReset sends a password reset email via SMTP.
 // smtpDSN format: smtp://user:pass@host:port
 func SendPasswordReset(to, resetURL, smtpDSN string) error {
-	_, auth, addr, err := parseDSN(smtpDSN)
-	if err != nil {
-		return fmt.Errorf("emailutil: parse DSN: %w", err)
-	}
-
-	from := "noreply@nicoflow.app"
-	subject := "Reset your Nicoflow password"
-	body := buildResetEmail(resetURL)
-
-	msg := []byte(
-		"From: " + from + "\r\n" +
-			"To: " + to + "\r\n" +
-			"Subject: " + subject + "\r\n" +
-			"MIME-Version: 1.0\r\n" +
-			"Content-Type: text/html; charset=UTF-8\r\n" +
-			"\r\n" +
-			body,
-	)
-
-	if err := smtp.SendMail(addr, auth, from, []string{to}, msg); err != nil {
-		return fmt.Errorf("emailutil: send: %w", err)
-	}
-	return nil
+	return send(smtpDSN, to, "Reset your Nicoflow password", buildResetEmail(resetURL))
 }
 
 // SendVerificationEmail sends an email-address verification message via SMTP.
 // verifyURL should be the frontend link carrying the raw verification token.
 // smtpDSN format: smtp://user:pass@host:port
 func SendVerificationEmail(to, verifyURL, smtpDSN string) error {
-	_, auth, addr, err := parseDSN(smtpDSN)
+	return send(smtpDSN, to, "Verify your Nicoflow email", buildVerificationEmail(verifyURL))
+}
+
+// send performs a timeout-bounded SMTP delivery. Unlike smtp.SendMail it dials
+// with a deadline and sets a connection-wide deadline covering the whole
+// exchange, so a hung host cannot block the caller indefinitely. It negotiates
+// STARTTLS when the server advertises it (e.g. Mailtrap on :587).
+func send(smtpDSN, to, subject, htmlBody string) error {
+	host, auth, addr, err := parseDSN(smtpDSN)
 	if err != nil {
 		return fmt.Errorf("emailutil: parse DSN: %w", err)
 	}
 
-	from := "noreply@nicoflow.app"
-	subject := "Verify your Nicoflow email"
-	body := buildVerificationEmail(verifyURL)
-
 	msg := []byte(
-		"From: " + from + "\r\n" +
+		"From: " + fromAddr + "\r\n" +
 			"To: " + to + "\r\n" +
 			"Subject: " + subject + "\r\n" +
 			"MIME-Version: 1.0\r\n" +
 			"Content-Type: text/html; charset=UTF-8\r\n" +
 			"\r\n" +
-			body,
+			htmlBody,
 	)
 
-	if err := smtp.SendMail(addr, auth, from, []string{to}, msg); err != nil {
-		return fmt.Errorf("emailutil: send: %w", err)
+	conn, err := net.DialTimeout("tcp", addr, sendTimeout)
+	if err != nil {
+		return fmt.Errorf("emailutil: dial: %w", err)
 	}
-	return nil
+	// A single deadline on the raw connection bounds dial + every subsequent
+	// SMTP command/read for the life of this send.
+	if err := conn.SetDeadline(time.Now().Add(sendTimeout)); err != nil {
+		_ = conn.Close()
+		return fmt.Errorf("emailutil: set deadline: %w", err)
+	}
+
+	client, err := smtp.NewClient(conn, host)
+	if err != nil {
+		_ = conn.Close()
+		return fmt.Errorf("emailutil: smtp client: %w", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	if ok, _ := client.Extension("STARTTLS"); ok {
+		if err := client.StartTLS(&tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}); err != nil {
+			return fmt.Errorf("emailutil: starttls: %w", err)
+		}
+	}
+
+	if auth != nil {
+		if ok, _ := client.Extension("AUTH"); ok {
+			if err := client.Auth(auth); err != nil {
+				return fmt.Errorf("emailutil: auth: %w", err)
+			}
+		}
+	}
+
+	if err := client.Mail(fromAddr); err != nil {
+		return fmt.Errorf("emailutil: mail from: %w", err)
+	}
+	if err := client.Rcpt(to); err != nil {
+		return fmt.Errorf("emailutil: rcpt to: %w", err)
+	}
+
+	w, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("emailutil: data: %w", err)
+	}
+	if _, err := w.Write(msg); err != nil {
+		return fmt.Errorf("emailutil: write: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return fmt.Errorf("emailutil: close data: %w", err)
+	}
+
+	return client.Quit()
 }
 
 func parseDSN(dsn string) (smtpHost string, auth smtp.Auth, addr string, err error) {

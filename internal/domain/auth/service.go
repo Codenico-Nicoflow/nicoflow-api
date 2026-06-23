@@ -95,9 +95,12 @@ func (s *service) Register(ctx context.Context, req RegisterRequest) (AuthRespon
 	return AuthResponse{User: userToView(user)}, nil
 }
 
-// sendVerificationEmail issues a fresh email-verification token and sends the
-// verification link. Failures are logged, never returned — verification is
-// non-blocking for now.
+// sendVerificationEmail issues a fresh email-verification token and dispatches
+// the verification link. The token is stored synchronously (so it exists the
+// moment registration returns), but the SMTP send is fired in a detached
+// goroutine: it must not block the HTTP response, and the request ctx is
+// cancelled once the response is written. Failures are logged, never returned —
+// verification is best-effort and the user can always resend.
 func (s *service) sendVerificationEmail(ctx context.Context, user User) {
 	rawToken, err := generateRawToken()
 	if err != nil {
@@ -115,12 +118,15 @@ func (s *service) sendVerificationEmail(ctx context.Context, user User) {
 		log.Error().Err(err).Str("user_id", user.ID).Msg("verify-email: store token failed")
 		return
 	}
-	if s.cfg.SMTPDsn != "" {
-		verifyURL := s.cfg.AppBaseURL + "/verify-email?token=" + rawToken
+	if s.cfg.SMTPDsn == "" {
+		return
+	}
+	verifyURL := s.cfg.AppBaseURL + "/verify-email?token=" + rawToken
+	go func() {
 		if err := emailutil.SendVerificationEmail(user.Email, verifyURL, s.cfg.SMTPDsn); err != nil {
 			log.Error().Err(err).Str("user_id", user.ID).Msg("verify-email: send failed")
 		}
-	}
+	}()
 }
 
 func (s *service) Login(ctx context.Context, req LoginRequest) (AuthResponse, error) {
@@ -240,9 +246,15 @@ func (s *service) ForgotPassword(ctx context.Context, email string) error {
 
 	resetURL := s.cfg.AppBaseURL + "/reset-password?token=" + rawToken
 	if s.cfg.SMTPDsn != "" {
-		if err := emailutil.SendPasswordReset(email, resetURL, s.cfg.SMTPDsn); err != nil {
-			log.Error().Err(err).Str("user_id", user.ID).Msg("failed to send password reset email")
-		}
+		// Detached send: the SMTP exchange must not block the response, and the
+		// request ctx is cancelled once we return. The reset row is already
+		// persisted, so the link works regardless of send latency.
+		userID := user.ID
+		go func() {
+			if err := emailutil.SendPasswordReset(email, resetURL, s.cfg.SMTPDsn); err != nil {
+				log.Error().Err(err).Str("user_id", userID).Msg("failed to send password reset email")
+			}
+		}()
 	}
 
 	return nil
