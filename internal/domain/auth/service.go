@@ -207,6 +207,15 @@ func (s *service) RefreshToken(ctx context.Context, rawRefreshToken string) (Aut
 		return AuthResponse{}, apperror.New(http.StatusUnauthorized, apperror.ErrInvalidToken, "invalid refresh token")
 	}
 
+	// Reject an expired token. The DELETE RETURNING above already consumed the row,
+	// so an expired token is now gone either way — but we must not mint a new access
+	// token from it. Background GC only sweeps hourly, so without this check an
+	// expired-but-not-yet-purged token would still refresh. Mirrors the expiry check
+	// in ResetPassword/VerifyEmail.
+	if time.Now().After(rt.ExpiresAt) {
+		return AuthResponse{}, apperror.New(http.StatusUnauthorized, apperror.ErrInvalidToken, "refresh token expired")
+	}
+
 	user, err := s.repo.GetUserByID(ctx, rt.UserID)
 	if err != nil {
 		return AuthResponse{}, err
