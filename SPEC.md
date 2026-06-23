@@ -8,14 +8,14 @@
 
 ## Product, PRDs & Architecture → Confluence
 
-| Section | Confluence link |
-| ------- | --------------- |
-| 1. Product Overview (What is Nicoflow, Hierarchy, Plan Tiers, Roadmap) | [Confluence §1](https://nicoflow.atlassian.net/wiki/spaces/NI/pages/21037057) |
-| 2. Product Requirements / PRDs (E-001 … E-037) | [Confluence §2](https://nicoflow.atlassian.net/wiki/spaces/NI/pages/21200935) |
+| Section                                                                                                                 | Confluence link                                                               |
+| ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| 1. Product Overview (What is Nicoflow, Hierarchy, Plan Tiers, Roadmap)                                                  | [Confluence §1](https://nicoflow.atlassian.net/wiki/spaces/NI/pages/21037057) |
+| 2. Product Requirements / PRDs (E-001 … E-037)                                                                          | [Confluence §2](https://nicoflow.atlassian.net/wiki/spaces/NI/pages/21200935) |
 | 3. Architecture & Technical Design (System, DB Schema, Backend, Frontend, Auth, WS, S3, Billing, Mobile, Design System) | [Confluence §3](https://nicoflow.atlassian.net/wiki/spaces/NI/pages/21037111) |
-| 5. Engineering Operations (Local Dev, CI/CD, Branching, Deployment, Env Vars, Migrations, Testing) | [Confluence §5](https://nicoflow.atlassian.net/wiki/spaces/NI/pages/21070021) |
-| 6. Architecture Decision Records (ADR-001 … ADR-006) | [Confluence §6](https://nicoflow.atlassian.net/wiki/spaces/NI/pages/21561366) |
-| 7. Sprints (Overview + Sprint 01 … 25) | [Confluence §7](https://nicoflow.atlassian.net/wiki/spaces/NI/pages/21168185) |
+| 5. Engineering Operations (Local Dev, CI/CD, Branching, Deployment, Env Vars, Migrations, Testing)                      | [Confluence §5](https://nicoflow.atlassian.net/wiki/spaces/NI/pages/21070021) |
+| 6. Architecture Decision Records (ADR-001 … ADR-006)                                                                    | [Confluence §6](https://nicoflow.atlassian.net/wiki/spaces/NI/pages/21561366) |
+| 7. Sprints (Overview + Sprint 01 … 25)                                                                                  | [Confluence §7](https://nicoflow.atlassian.net/wiki/spaces/NI/pages/21168185) |
 
 > **Confluence space NI** · cloudId `ef5c2411-b64a-429c-a200-17ea853e32ce` · space id `425986`
 > Full page tree with ids: `.claude/skills/spec-sync/references/confluence-map.md`
@@ -56,12 +56,12 @@ Create a new user account.
 }
 ```
 
-| Field      | Type   | Required | Constraints                                     |
-| ---------- | ------ | -------- | ----------------------------------------------- |
-| `email`    | string | Yes      | Valid email format                              |
-| `password` | string | Yes      | 8–72 chars, ≥1 uppercase, ≥1 lowercase          |
-| `username` | string | Yes      | 3–20 chars, alphanumeric only                   |
-| `platform` | string | No       | `"web"` \| `"mobile"` — defaults to `"web"`     |
+| Field      | Type   | Required | Constraints                                 |
+| ---------- | ------ | -------- | ------------------------------------------- |
+| `email`    | string | Yes      | Valid email format                          |
+| `password` | string | Yes      | 8–72 chars, ≥1 uppercase, ≥1 lowercase      |
+| `username` | string | Yes      | 3–20 chars, alphanumeric only               |
+| `platform` | string | No       | `"web"` \| `"mobile"` — defaults to `"web"` |
 
 > **Email verification:** registration does **not** log the user in. The API creates the user, issues an email-verification token, and (if SMTP is configured) sends a verification link. The response carries the **user only — no tokens and no refresh cookie**. The user must verify via `POST /v1/auth/verify-email` (resend via `POST /v1/auth/resend-verification`), then log in. Login enforcement of `email_verified` is gated by the server config `REQUIRE_EMAIL_VERIFICATION` (default false in dev where no SMTP is configured; true in staging/production).
 
@@ -87,14 +87,14 @@ Create a new user account.
 
 **Errors**
 
-| Code                      | HTTP | Meaning                                |
-| ------------------------- | ---- | -------------------------------------- |
-| `EMAIL_ALREADY_EXISTS`    | 409  | Email already in use                   |
-| `USERNAME_ALREADY_EXISTS` | 409  | Username already taken                 |
-| `INVALID_EMAIL`           | 422  | Email failed format validation         |
-| `WEAK_PASSWORD`           | 400  | Password fails the policy above        |
-| `INVALID_INPUT`           | 422  | Other validation failed (e.g. username)|
-| `RATE_LIMITED`            | 429  | Too many registration attempts         |
+| Code                      | HTTP | Meaning                                 |
+| ------------------------- | ---- | --------------------------------------- |
+| `EMAIL_ALREADY_EXISTS`    | 409  | Email already in use                    |
+| `USERNAME_ALREADY_EXISTS` | 409  | Username already taken                  |
+| `INVALID_EMAIL`           | 422  | Email failed format validation          |
+| `WEAK_PASSWORD`           | 400  | Password fails the policy above         |
+| `INVALID_INPUT`           | 422  | Other validation failed (e.g. username) |
+| `RATE_LIMITED`            | 429  | Too many registration attempts          |
 
 ---
 
@@ -115,12 +115,12 @@ Authenticate and receive tokens.
 }
 ```
 
-| Field        | Type    | Required | Notes                                                        |
-| ------------ | ------- | -------- | ------------------------------------------------------------ |
+| Field        | Type    | Required | Notes                                                           |
+| ------------ | ------- | -------- | --------------------------------------------------------------- |
 | `identifier` | string  | Yes      | Email address **or** username. (Legacy `email` still accepted.) |
-| `password`   | string  | Yes      |                                                              |
-| `remember`   | boolean | Yes      | `true` → 7-day refresh token; `false` → 24-hour              |
-| `platform`   | string  | No       | `"web"` \| `"mobile"`                                        |
+| `password`   | string  | Yes      |                                                                 |
+| `remember`   | boolean | Yes      | `true` → 7-day refresh token; `false` → 24-hour                 |
+| `platform`   | string  | No       | `"web"` \| `"mobile"`                                           |
 
 **Response — 200 OK**
 
@@ -184,7 +184,7 @@ Revoke **every** refresh token for the authenticated user (sign out of all devic
 
 #### POST /v1/auth/verify-email
 
-Confirm a user's email address using the token from the verification email. *(Login enforcement is gated by the `REQUIRE_EMAIL_VERIFICATION` config flag — when enabled, unverified accounts are rejected at login with `EMAIL_NOT_VERIFIED`.)*
+Confirm a user's email address using the token from the verification email. _(Login enforcement is gated by the `REQUIRE_EMAIL_VERIFICATION` config flag — when enabled, unverified accounts are rejected at login with `EMAIL_NOT_VERIFIED`.)_
 
 - **Auth required:** No
 
@@ -631,12 +631,12 @@ List all tasks within a project.
 
 **Query parameters**
 
-| Param       | Type   | Description                                               |
-| ----------- | ------ | --------------------------------------------------------- |
-| `status`    | string | Filter by `inbox` \| `active` \| `done` \| `cancelled`   |
-| `priority`  | string | Filter by `low` \| `medium` \| `high`                    |
-| `sortField` | string | `dueDate` \| `priority` \| `title` \| `createdAt`        |
-| `sortOrder` | string | `asc` \| `desc`                                          |
+| Param       | Type   | Description                                            |
+| ----------- | ------ | ------------------------------------------------------ |
+| `status`    | string | Filter by `inbox` \| `active` \| `done` \| `cancelled` |
+| `priority`  | string | Filter by `low` \| `medium` \| `high`                  |
+| `sortField` | string | `dueDate` \| `priority` \| `title` \| `createdAt`      |
+| `sortOrder` | string | `asc` \| `desc`                                        |
 
 **Response — 200 OK** — `ITask[]`
 
@@ -1393,39 +1393,68 @@ All API errors return a consistent envelope:
 
 These are the exact constants defined in `internal/apperror/errors.go` of the Go API:
 
-| Code                    | HTTP Status | Description                                                                |
-| ----------------------- | ----------- | -------------------------------------------------------------------------- |
-| `INVALID_INPUT`         | 400         | Request body or query parameters failed validation                         |
-| `INVALID_TOKEN`         | 401         | JWT is malformed, tampered, or not recognised                              |
-| `UNAUTHORIZED`          | 401         | No valid token provided, or credentials are incorrect                      |
-| `EMAIL_NOT_VERIFIED`    | 403         | Credentials valid but email unverified (login gate; `REQUIRE_EMAIL_VERIFICATION`) |
-| `FORBIDDEN`             | 403         | Authenticated but not permitted to access the resource                     |
-| `PLAN_LIMIT_EXCEEDED`   | 403         | Action blocked by the user's plan (areas/projects/AI quota)                |
-| `PERMISSION_DENIED`     | 403         | Resource belongs to another user                                           |
-| `RESOURCE_NOT_FOUND`    | 404         | Generic — resource does not exist or is not visible to the requesting user |
-| `TASK_NOT_FOUND`        | 404         | Specific task resource not found                                           |
-| `PROJECT_NOT_FOUND`     | 404         | Specific project resource not found                                        |
-| `AREA_NOT_FOUND`        | 404         | Specific area resource not found                                           |
-| `USER_NOT_FOUND`        | 404         | Specific user not found                                                    |
-| `SESSION_NOT_FOUND`     | 404         | AI session not found                                                       |
-| `MESSAGE_NOT_FOUND`     | 404         | AI message not found                                                       |
-| `CONFLICT`              | 409         | A resource with the same unique field already exists                       |
-| `EMAIL_ALREADY_EXISTS`  | 409         | Registration attempted with an email already in use                        |
-| `USERNAME_ALREADY_EXISTS` | 409       | Registration attempted with a username already taken                       |
-| `DUPLICATE_NAME`        | 409         | Area or project name already exists for this user                          |
-| `IDEMPOTENCY_CONFLICT`  | 409         | Duplicate webhook event already processed                                  |
-| `RATE_LIMITED`          | 429         | Too many requests — back off and retry after `Retry-After` header          |
-| `AI_LIMIT_REACHED`      | 403         | Free-tier AI monthly quota (10 requests) exhausted                         |
-| `INVALID_PROJECT_ID`    | 400         | Project ID provided is not valid or does not belong to this user           |
-| `INVALID_STATUS`        | 400         | Unrecognised status value for the resource type                            |
-| `INVALID_DATE`          | 400         | Date string failed parsing or is out of acceptable range                   |
-| `INVALID_PRIORITY`      | 400         | Unrecognised priority value                                                |
-| `INVALID_AI_CONTEXT`    | 400         | AI request payload is structurally invalid                                 |
-| `INVALID_EMAIL`         | 400         | Email address failed format validation                                     |
-| `WEAK_PASSWORD`         | 400         | Password fails policy: 8–72 chars with ≥1 uppercase and ≥1 lowercase       |
-| `REQUIRED`              | 400         | A required field is missing from the request                               |
-| `DATABASE_ERROR`        | 500         | Unhandled database error                                                   |
-| `INTERNAL_SERVER_ERROR` | 500         | Unhandled server error                                                     |
-| `SERVICE_UNAVAILABLE`   | 503         | Downstream service (AI provider, S3, etc.) is unreachable                  |
+| Code                      | HTTP Status | Description                                                                       |
+| ------------------------- | ----------- | --------------------------------------------------------------------------------- |
+| `INVALID_INPUT`           | 400         | Request body or query parameters failed validation                                |
+| `INVALID_TOKEN`           | 401         | JWT is malformed, tampered, or not recognised                                     |
+| `UNAUTHORIZED`            | 401         | No valid token provided, or credentials are incorrect                             |
+| `EMAIL_NOT_VERIFIED`      | 403         | Credentials valid but email unverified (login gate; `REQUIRE_EMAIL_VERIFICATION`) |
+| `FORBIDDEN`               | 403         | Authenticated but not permitted to access the resource                            |
+| `PLAN_LIMIT_EXCEEDED`     | 403         | Action blocked by the user's plan (areas/projects/AI quota)                       |
+| `PERMISSION_DENIED`       | 403         | Resource belongs to another user                                                  |
+| `RESOURCE_NOT_FOUND`      | 404         | Generic — resource does not exist or is not visible to the requesting user        |
+| `TASK_NOT_FOUND`          | 404         | Specific task resource not found                                                  |
+| `PROJECT_NOT_FOUND`       | 404         | Specific project resource not found                                               |
+| `AREA_NOT_FOUND`          | 404         | Specific area resource not found                                                  |
+| `USER_NOT_FOUND`          | 404         | Specific user not found                                                           |
+| `SESSION_NOT_FOUND`       | 404         | AI session not found                                                              |
+| `MESSAGE_NOT_FOUND`       | 404         | AI message not found                                                              |
+| `CONFLICT`                | 409         | A resource with the same unique field already exists                              |
+| `EMAIL_ALREADY_EXISTS`    | 409         | Registration attempted with an email already in use                               |
+| `USERNAME_ALREADY_EXISTS` | 409         | Registration attempted with a username already taken                              |
+| `DUPLICATE_NAME`          | 409         | Area or project name already exists for this user                                 |
+| `IDEMPOTENCY_CONFLICT`    | 409         | Duplicate webhook event already processed                                         |
+| `RATE_LIMITED`            | 429         | Too many requests — back off and retry after `Retry-After` header                 |
+| `AI_LIMIT_REACHED`        | 403         | Free-tier AI monthly quota (10 requests) exhausted                                |
+| `INVALID_PROJECT_ID`      | 400         | Project ID provided is not valid or does not belong to this user                  |
+| `INVALID_STATUS`          | 400         | Unrecognised status value for the resource type                                   |
+| `INVALID_DATE`            | 400         | Date string failed parsing or is out of acceptable range                          |
+| `INVALID_PRIORITY`        | 400         | Unrecognised priority value                                                       |
+| `INVALID_AI_CONTEXT`      | 400         | AI request payload is structurally invalid                                        |
+| `INVALID_EMAIL`           | 400         | Email address failed format validation                                            |
+| `WEAK_PASSWORD`           | 400         | Password fails policy: 8–72 chars with ≥1 uppercase and ≥1 lowercase              |
+| `REQUIRED`                | 400         | A required field is missing from the request                                      |
+| `DATABASE_ERROR`          | 500         | Unhandled database error                                                          |
+| `INTERNAL_SERVER_ERROR`   | 500         | Unhandled server error                                                            |
+| `SERVICE_UNAVAILABLE`     | 503         | Downstream service (AI provider, S3, etc.) is unreachable                         |
 
 > **Frontend note:** All RTK Query error responses will have `error.data.error.code` set to one of the above strings. Use these constants (not HTTP status codes) for conditional error handling in the UI.
+
+---
+
+## §10 Internationalization (i18n)
+
+> Code-canonical summary of the i18n architecture. Product rationale and the deferred email-localization epic live in Confluence space `NI`.
+
+Nicoflow ships in **English (`en`)**, **Hebrew (`he`)**, and **Russian (`ru`)**. `en` is the source-of-record and the fallback (`fallbackLng: 'en'`). Hebrew is **RTL**.
+
+### Ownership
+
+- **The frontend owns ~all user-facing copy.** It uses `react-i18next` with namespaced JSON locale files; UI strings, form labels, and toast/error messages are resolved client-side via `t('...')`.
+- **The backend emits almost no user-facing prose.** API error `message` fields are **developer-facing only** — the frontend localizes by mapping `error.code` (§4) to its own string and ignores the backend `message`. The only user-facing prose the API produces is the **2 transactional emails** (verify, reset), which remain **English-only for now** (see "Deferred").
+
+### Frontend architecture (`nicoflow-frontend`, live app in `src/`)
+
+- Library: `react-i18next` + `i18next` + `i18next-browser-languagedetector`. Config: `src/lib/i18n/index.ts`.
+- **Namespaces:** `common`, `auth`, `area`, `project`, `task`, `bucket`, `nav`, `errors` (`defaultNS: 'common'`). Locale files: `src/lib/i18n/locales/{en,he,ru}/<ns>.json`.
+- **Type-safe keys:** `src/lib/i18n/i18next.d.ts` derives the key type from the EN resource shape, so a missing/typo'd key fails `tsc` (consistent with the no-`any` rule). he/ru barrels are checked `satisfies Record<keyof Resources, unknown>` (permits CLDR plural variants like Russian `_few`/`_many`).
+- **`errors.json` ≡ error codes.** The `errors` namespace keys are exactly the §4 error-code strings (plus success-toast keys). `showErrorToast`/`showSuccessToast` (`src/lib/utils/utils/helpers.ts`) resolve `error.code` → `errors:<CODE>` with a `GENERAL_ERROR` fallback. **`error.code` (§4) is therefore the localization key** — adding/renaming an error code is a cross-repo change that must also land in the three `errors.json` files.
+- **Language preference:** stored in `localStorage('nicoflow-lang')` (mirrors the `next-themes` `nicoflow-theme` convention); detected via `localStorage` → `navigator`. **No server-side persistence** (see Deferred).
+- **RTL:** on language change an `i18n.on('languageChanged')` listener sets `<html lang>` and `<html dir>` from `i18n.dir(lng)` (`'rtl'` for `he`). Layout mirroring uses **logical Tailwind properties** (`ms-/me-/ps-/pe-/start-/end-/text-start/text-end`), not physical `left/right`. Directional icons use `rtl:rotate-180`.
+- **Switcher:** `src/components/LanguageSwitcher` (en/he/ru in native script), mounted in the Topbar.
+
+### Deferred (documented, not built)
+
+- **Localized transactional emails.** Requires a `users.language` column (migration), exposing it on the profile `PATCH`/`UserView`, plumbing stored language (or `Accept-Language`) into `pkg/emailutil/email.go`, and translating the 2 templates. Until then emails are English. This also enables **cross-device** language persistence (vs. the current `localStorage`-only).
+- Locale-aware number/date/currency formatting beyond i18next defaults (revisit with billing).
+- Languages beyond en/he/ru.
