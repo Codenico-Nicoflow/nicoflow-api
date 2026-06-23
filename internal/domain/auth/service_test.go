@@ -836,6 +836,33 @@ func TestRefreshToken_EmptyToken(t *testing.T) {
 	}
 }
 
+// TestRefreshToken_Expired guards the window where the hourly GC hasn't yet
+// purged an expired refresh token: the row still exists and its hash matches,
+// but its ExpiresAt is in the past, so refresh must reject it rather than mint a
+// fresh access token from a stale session.
+func TestRefreshToken_Expired(t *testing.T) {
+	const rawToken = "validrawtoken"
+	repo := happyRepo()
+	repo.deleteRefreshTokenReturningFn = func(_ context.Context, _ string) (auth.RefreshToken, error) {
+		hash, _ := hashutil.Hash(rawToken)
+		return auth.RefreshToken{
+			UserID:    "usr_abc123",
+			TokenHash: hash,
+			ExpiresAt: time.Now().Add(-time.Minute), // expired
+		}, nil
+	}
+
+	svc := auth.NewService(repo, testCfg())
+	_, err := svc.RefreshToken(context.Background(), rawToken)
+	if err == nil {
+		t.Fatal("expected error for expired refresh token, got nil")
+	}
+	var ae *apperror.AppError
+	if !errors.As(err, &ae) || ae.Code != apperror.ErrInvalidToken {
+		t.Fatalf("expected INVALID_TOKEN, got %v", err)
+	}
+}
+
 func TestVerifyEmail_EmptyToken(t *testing.T) {
 	svc := auth.NewService(happyRepo(), testCfg())
 	err := svc.VerifyEmail(context.Background(), auth.VerifyEmailRequest{Token: ""})
