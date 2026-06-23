@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/nicoflow/nicoflow-api/internal/config"
@@ -87,4 +88,42 @@ func TestRouter_PublicAuthRoutesNotProtected(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Errorf("public POST /v1/auth/logout status = %d, want 204", w.Code)
 	}
+}
+
+// TestRouter_SwaggerCSPOverride verifies the Swagger UI route serves a relaxed
+// Content-Security-Policy (so its JS/CSS and doc.json load in a browser) while
+// every other route keeps the locked-down default-src 'none'. A regression here
+// re-breaks the Swagger UI silently — curl/Postman ignore CSP, so it only shows
+// up in a real browser.
+func TestRouter_SwaggerCSPOverride(t *testing.T) {
+	h := handler.Handlers{Auth: auth.NewHandler(nopAuthService{}, auth.HandlerConfig{})}
+	// Non-production so the Swagger route is registered.
+	router := handler.New(config.Config{
+		JWTSecret: "test-secret-at-least-32-bytes-long!!",
+		AppEnv:    "staging",
+	}, nil, h)
+
+	t.Run("swagger route relaxes CSP", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/swagger/index.html", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		csp := w.Header().Get("Content-Security-Policy")
+		if csp == "default-src 'none'" {
+			t.Fatalf("swagger route still has locked-down CSP %q — UI will be blocked", csp)
+		}
+		if !strings.Contains(csp, "script-src 'self' 'unsafe-inline'") {
+			t.Errorf("swagger CSP = %q, want it to permit self+inline scripts", csp)
+		}
+	})
+
+	t.Run("non-swagger route keeps locked-down CSP", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/health", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		if csp := w.Header().Get("Content-Security-Policy"); csp != "default-src 'none'" {
+			t.Errorf("non-swagger CSP = %q, want \"default-src 'none'\"", csp)
+		}
+	})
 }
