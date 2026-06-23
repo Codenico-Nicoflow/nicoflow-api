@@ -55,8 +55,11 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 	r.Get("/v1/health", Health(pool))
 
 	// Swagger UI — auth API docs. Disabled in production to avoid exposing the surface.
+	// SwaggerCSP relaxes the global default-src 'none' CSP so the UI's JS/CSS and its
+	// doc.json fetch aren't blocked by the browser (curl/Postman ignore CSP, so this
+	// only ever mattered for the in-browser UI).
 	if cfg.AppEnv != "production" {
-		r.Get("/v1/swagger/*", httpSwagger.Handler(httpSwagger.URL("/v1/swagger/doc.json")))
+		r.With(mw.SwaggerCSP).Get("/v1/swagger/*", httpSwagger.Handler(httpSwagger.URL("/v1/swagger/doc.json")))
 	}
 
 	// WS — JWT validated inside the handler once implemented (E-022)
