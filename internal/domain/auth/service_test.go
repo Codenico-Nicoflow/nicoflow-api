@@ -133,6 +133,7 @@ func fixedUser() auth.User {
 		Username:      "johndoe",
 		Plan:          "free",
 		Theme:         "light",
+		Language:      "en",
 		Status:        "regular",
 		Timezone:      "UTC",
 		EmailVerified: true,
@@ -769,6 +770,54 @@ func TestUpdateMe_InvalidEmail(t *testing.T) {
 	var ae *apperror.AppError
 	if !errors.As(err, &ae) || ae.Code != apperror.ErrInvalidEmail {
 		t.Fatalf("expected INVALID_EMAIL, got %v", err)
+	}
+}
+
+func TestUpdateMe_Language(t *testing.T) {
+	tests := []struct {
+		name      string
+		language  string
+		wantError bool
+	}{
+		{name: "english", language: "en", wantError: false},
+		{name: "hebrew", language: "he", wantError: false},
+		{name: "russian", language: "ru", wantError: false},
+		{name: "unsupported", language: "de", wantError: true},
+		{name: "empty", language: "", wantError: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := happyRepo()
+			repo.updateUserFn = func(_ context.Context, _ string, req auth.UpdateMeRequest) (auth.User, error) {
+				u := fixedUser()
+				if req.Language != nil {
+					u.Language = *req.Language
+				}
+				return u, nil
+			}
+			svc := auth.NewService(repo, testCfg())
+
+			lang := tc.language
+			view, err := svc.UpdateMe(context.Background(), "usr_abc123", auth.UpdateMeRequest{Language: &lang})
+
+			if tc.wantError {
+				if err == nil {
+					t.Fatalf("expected error for language %q, got nil", tc.language)
+				}
+				var ae *apperror.AppError
+				if !errors.As(err, &ae) || ae.Code != apperror.ErrInvalidInput {
+					t.Fatalf("expected INVALID_INPUT, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("UpdateMe() error = %v", err)
+			}
+			if view.Language != tc.language {
+				t.Errorf("Language = %q, want %q", view.Language, tc.language)
+			}
+		})
 	}
 }
 

@@ -78,6 +78,7 @@ Create a new user account.
     "firstName": "...",
     "lastName": "...",
     "theme": "light",
+    "language": "en",
     "imageUrl": "",
     "status": "regular"
   }
@@ -269,6 +270,7 @@ Retrieve the authenticated user's profile.
   "firstName": "John",
   "lastName": "Doe",
   "theme": "light",
+  "language": "en",
   "imageUrl": "https://...",
   "plan": "free"
 }
@@ -292,9 +294,12 @@ Update user profile fields.
   "lastName": "Doe",
   "email": "new@example.com",
   "timezone": "Europe/London",
-  "theme": "dark"
+  "theme": "dark",
+  "language": "he"
 }
 ```
+
+`language` must be one of `en`, `he`, `ru` (validated in the service layer → `INVALID_INPUT` otherwise). Drives the UI language for logged-in users (and, later, localized emails). See §10.
 
 **Response — 200 OK** — Updated `IUser` object
 

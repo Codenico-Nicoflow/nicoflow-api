@@ -11,6 +11,7 @@ type User struct {
 	FirstName        string
 	LastName         string
 	Theme            string
+	Language         string
 	ImageURL         string
 	Status           string
 	Plan             string
@@ -112,6 +113,7 @@ type UpdateMeRequest struct {
 	Email     *string `json:"email"`
 	Timezone  *string `json:"timezone"`
 	Theme     *string `json:"theme"`
+	Language  *string `json:"language"`
 }
 
 // RegisterPushTokenRequest is the body for POST /v1/users/push-token.
@@ -136,6 +138,7 @@ type UserView struct {
 	FirstName string `json:"firstName"`
 	LastName  string `json:"lastName"`
 	Theme     string `json:"theme"`
+	Language  string `json:"language"`
 	ImageURL  string `json:"imageUrl"`
 	Status    string `json:"status"`
 }
@@ -148,6 +151,7 @@ func userToView(u User) UserView {
 		FirstName: u.FirstName,
 		LastName:  u.LastName,
 		Theme:     u.Theme,
+		Language:  u.Language,
 		ImageURL:  u.ImageURL,
 		Status:    u.Status,
 	}

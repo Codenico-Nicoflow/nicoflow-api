@@ -369,6 +369,11 @@ func (s *service) UpdateMe(ctx context.Context, userID string, req UpdateMeReque
 			return UserView{}, err
 		}
 	}
+	if req.Language != nil {
+		if err := validateLanguage(*req.Language); err != nil {
+			return UserView{}, err
+		}
+	}
 	user, err := s.repo.UpdateUser(ctx, userID, req)
 	if err != nil {
 		return UserView{}, err
@@ -438,6 +443,18 @@ func fingerprint(rawToken string) string {
 func validateEmail(email string) error {
 	if _, err := mail.ParseAddress(email); err != nil {
 		return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidEmail, "invalid email address")
+	}
+	return nil
+}
+
+// supportedLanguages is the allowlist for the user's UI language preference.
+// Kept in sync with the frontend SUPPORTED_LANGUAGES and SPEC §10. Validated in
+// the service layer (no DB CHECK) so adding a language is a code-only change.
+var supportedLanguages = map[string]bool{"en": true, "he": true, "ru": true}
+
+func validateLanguage(language string) error {
+	if !supportedLanguages[language] {
+		return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "unsupported language; must be one of en, he, ru")
 	}
 	return nil
 }
