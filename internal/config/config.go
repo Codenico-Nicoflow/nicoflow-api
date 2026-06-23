@@ -31,9 +31,7 @@ type Config struct {
 	AppEnv            string
 	Port              string
 	LogLevel          string
-	// SkipMigrations disables the run-migrations-on-boot step. Default false
-	// (migrations run automatically). Set true only when a deploy applies
-	// migrations out-of-band, or in tests that manage their own schema.
+	// SkipMigrations disables the run-on-boot migration step (default false).
 	SkipMigrations bool
 	MinIOEndpoint  string
 	MinIOAccessKey string

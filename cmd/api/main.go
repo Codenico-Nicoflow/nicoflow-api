@@ -60,9 +60,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	// Apply pending DB migrations on boot so a deploy can never run against a
-	// schema older than the code expects (the single-instance Render setup has no
-	// separate migration step). Idempotent; opt out with SKIP_MIGRATIONS=true.
+	// Apply pending migrations on boot so code never runs ahead of the schema.
 	if !cfg.SkipMigrations {
 		if err := db.Migrate(cfg.DatabaseURL); err != nil {
 			log.Fatal().Err(err).Msg("failed to apply database migrations")

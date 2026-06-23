@@ -73,10 +73,7 @@ func (s *limiterStore) cleanup() {
 func rateLimitMiddleware(store *limiterStore, keyFn func(*http.Request) string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// CORS preflights carry no body and are issued by the browser, not the
-			// caller — throttling them surfaces in the browser as a misleading CORS
-			// failure (a 429 lacks the Access-Control-Allow-Origin header). Never
-			// count them against any bucket; let the CORS middleware answer them.
+			// Never throttle CORS preflights — a 429 lacks ACAO and looks like a CORS error.
 			if r.Method == http.MethodOptions {
 				next.ServeHTTP(w, r)
 				return

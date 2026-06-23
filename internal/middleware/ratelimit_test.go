@@ -78,9 +78,7 @@ func TestParseCIDRs_SkipsInvalid(t *testing.T) {
 }
 
 func TestRateLimit_SkipsOptionsPreflight(t *testing.T) {
-	// A 1-token-per-minute limiter would normally 429 the second request. OPTIONS
-	// preflights must bypass the limiter entirely so a burst of preflights (e.g.
-	// during a page reload) never surfaces as a misleading CORS error.
+	// A 1/min limiter would 429 the 2nd request; OPTIONS must bypass it entirely.
 	mw := RateLimitIP(1, 1, nil)
 	var called int
 	h := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -88,7 +86,7 @@ func TestRateLimit_SkipsOptionsPreflight(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		r, _ := http.NewRequest(http.MethodOptions, "/v1/users/me", nil)
 		r.RemoteAddr = "203.0.113.9:1111"
 		rec := httptest.NewRecorder()

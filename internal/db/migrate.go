@@ -12,14 +12,8 @@ import (
 	"github.com/nicoflow/nicoflow-api/migrations"
 )
 
-// Migrate applies all pending up-migrations against the database at dsn, using
-// the embedded SQL files. It is idempotent (a fully-migrated DB is a no-op) and
-// safe to run on every boot. It never runs down-migrations.
-//
-// It opens its own short-lived connection (golang-migrate uses database/sql,
-// not pgx) and closes it before returning, so it does not touch the app's
-// pgxpool. On a dirty database (a prior migration failed mid-way) it returns an
-// error rather than guessing — that needs a human with `migrate force <ver>`.
+// Migrate applies pending up-migrations from the embedded SQL files. Idempotent,
+// safe on every boot; never runs down. Errors on a dirty DB rather than guessing.
 func Migrate(dsn string) error {
 	sourceDriver, err := iofs.New(migrations.FS, ".")
 	if err != nil {
