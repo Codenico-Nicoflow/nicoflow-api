@@ -39,6 +39,15 @@ func Auth(jwtSecret string) func(http.Handler) http.Handler {
 	}
 }
 
+// WithAuth returns a child context carrying the given userID and plan, mirroring
+// what the Auth middleware injects. Exposed so handler-layer tests can build an
+// authenticated request context without depending on the unexported key types.
+func WithAuth(ctx context.Context, userID, plan string) context.Context {
+	ctx = context.WithValue(ctx, ctxKeyUserID{}, userID)
+	ctx = context.WithValue(ctx, ctxKeyPlan{}, plan)
+	return ctx
+}
+
 // UserIDFromCtx returns the authenticated user's ID from the request context.
 func UserIDFromCtx(ctx context.Context) string {
 	id, _ := ctx.Value(ctxKeyUserID{}).(string)
