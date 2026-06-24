@@ -11,7 +11,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags='-w -s' -o nicoflow-api ./cmd/api
 # Stage 2 — runtime
 FROM gcr.io/distroless/static-debian12
 COPY --from=builder /app/nicoflow-api /nicoflow-api
-COPY --from=builder /app/migrations /migrations
+# Migrations are embedded into the binary (go:embed in migrations/embed.go) and
+# applied on boot, so they don't need to be copied into the runtime image.
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
 USER nonroot:nonroot

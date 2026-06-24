@@ -73,6 +73,12 @@ func (s *limiterStore) cleanup() {
 func rateLimitMiddleware(store *limiterStore, keyFn func(*http.Request) string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Never throttle CORS preflights — a 429 lacks ACAO and looks like a CORS error.
+			if r.Method == http.MethodOptions {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			key := keyFn(r)
 			if key == "" {
 				next.ServeHTTP(w, r)

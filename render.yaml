@@ -5,10 +5,7 @@
 # Apply via the Render dashboard: New + → Blueprint → point at this repo.
 #
 # Notes:
-# - The Docker image is distroless (no shell, no `migrate` binary), so DB migrations
-#   are NOT run from the image. Run them once from your laptop against the database's
-#   EXTERNAL connection string before the first deploy:
-#       migrate -path migrations -database "<external-db-url>" up
+# - DB migrations run automatically on boot (see internal/db/migrate.go); opt out with SKIP_MIGRATIONS=true.
 # - Secrets (sync: false) are intentionally left blank here and entered in the dashboard.
 # - Production is deliberately omitted for now (staging-first); clone this service block
 #   with prod values once staging is verified green.

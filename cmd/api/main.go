@@ -60,6 +60,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
+	// Apply pending migrations on boot so code never runs ahead of the schema.
+	if !cfg.SkipMigrations {
+		if err := db.Migrate(cfg.DatabaseURL); err != nil {
+			log.Fatal().Err(err).Msg("failed to apply database migrations")
+		}
+	}
+
 	pool, err := db.New(ctx, cfg.DatabaseURL)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to connect to database")

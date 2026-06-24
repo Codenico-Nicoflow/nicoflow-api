@@ -31,9 +31,11 @@ type Config struct {
 	AppEnv            string
 	Port              string
 	LogLevel          string
-	MinIOEndpoint     string
-	MinIOAccessKey    string
-	MinIOSecretKey    string
+	// SkipMigrations disables the run-on-boot migration step (default false).
+	SkipMigrations bool
+	MinIOEndpoint  string
+	MinIOAccessKey string
+	MinIOSecretKey string
 }
 
 func Load() Config {
@@ -81,6 +83,7 @@ func Load() Config {
 		AppEnv:                   os.Getenv("APP_ENV"),
 		Port:                     port,
 		LogLevel:                 logLevel,
+		SkipMigrations:           parseBool(os.Getenv("SKIP_MIGRATIONS"), false),
 		MinIOEndpoint:            os.Getenv("MINIO_ENDPOINT"),
 		MinIOAccessKey:           os.Getenv("MINIO_ACCESS_KEY"),
 		MinIOSecretKey:           os.Getenv("MINIO_SECRET_KEY"),
