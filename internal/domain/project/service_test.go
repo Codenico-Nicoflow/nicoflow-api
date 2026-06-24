@@ -91,12 +91,40 @@ func TestProjectService_Create(t *testing.T) {
 			wantName:      "Beta",
 		},
 		{
+			// boundary: 4 existing projects (one below the limit of 5) is allowed.
+			name:          "free plan boundary — N-1 allowed",
+			plan:          "free",
+			req:           project.CreateProjectRequest{Name: "Fifth"},
+			repoCount:     4,
+			createProject: project.Project{ID: "p5", Name: "Fifth", Status: "active", FolderIcon: "folder"},
+			wantName:      "Fifth",
+		},
+		{
+			// boundary: 5 existing projects (at the limit) blocks the 6th.
 			name:       "free plan at limit",
 			plan:       "free",
 			req:        project.CreateProjectRequest{Name: "Sixth"},
 			repoCount:  5,
 			wantCode:   apperror.ErrPlanLimitExceeded,
 			wantStatus: http.StatusForbidden,
+		},
+		{
+			// boundary: already over the limit (graceful-downgrade state) stays blocked.
+			name:       "free plan over limit — N+1 blocked",
+			plan:       "free",
+			req:        project.CreateProjectRequest{Name: "Seventh"},
+			repoCount:  6,
+			wantCode:   apperror.ErrPlanLimitExceeded,
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			// pro plan is never gated regardless of count.
+			name:          "pro plan ignores limit at high count",
+			plan:          "pro",
+			req:           project.CreateProjectRequest{Name: "Unlimited"},
+			repoCount:     999,
+			createProject: project.Project{ID: "pX", Name: "Unlimited", Status: "active", FolderIcon: "folder"},
+			wantName:      "Unlimited",
 		},
 		{
 			name:       "empty name",

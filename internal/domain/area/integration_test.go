@@ -387,21 +387,28 @@ func TestIntegration_Area_Patch_CrossUser_Returns404(t *testing.T) {
 	assertErrorCode(t, resp, apperror.ErrAreaNotFound)
 }
 
-func TestIntegration_Area_Delete_ProjectsSurviveWithNullAreaID(t *testing.T) {
+func TestIntegration_Area_Delete_CascadesProjectsAndTasks(t *testing.T) {
 	srv, pool := newAreaServer(t)
 	userID, token := mustCreateUser(t, pool, "pro")
 	areaID := mustCreateArea(t, srv, token, "ToDelete")
 
-	// Insert two projects into the area directly.
+	// Insert two projects into the area, each with a task, directly.
 	projIDs := []string{uuid.New().String(), uuid.New().String()}
+	taskIDs := []string{uuid.New().String(), uuid.New().String()}
 	for i, pid := range projIDs {
-		_, err := pool.Exec(context.Background(), `
+		if _, err := pool.Exec(context.Background(), `
 			INSERT INTO projects (id, user_id, area_id, name, status, folder_icon)
 			VALUES ($1, $2, $3, $4, 'active', 'folder')`,
 			pid, userID, areaID, fmt.Sprintf("Project %d", i+1),
-		)
-		if err != nil {
+		); err != nil {
 			t.Fatalf("insert project: %v", err)
+		}
+		if _, err := pool.Exec(context.Background(), `
+			INSERT INTO tasks (id, user_id, project_id, title, status)
+			VALUES ($1, $2, $3, $4, 'inbox')`,
+			taskIDs[i], userID, pid, fmt.Sprintf("Task %d", i+1),
+		); err != nil {
+			t.Fatalf("insert task: %v", err)
 		}
 	}
 
@@ -409,17 +416,28 @@ func TestIntegration_Area_Delete_ProjectsSurviveWithNullAreaID(t *testing.T) {
 	defer resp.Body.Close()
 	assertStatus(t, resp, http.StatusNoContent)
 
-	// Projects must still exist in DB with area_id = NULL.
+	// Deleting the area must cascade-delete its projects...
 	for _, pid := range projIDs {
-		var aID *string
-		err := pool.QueryRow(context.Background(),
-			`SELECT area_id FROM projects WHERE id = $1`, pid,
-		).Scan(&aID)
-		if err != nil {
-			t.Fatalf("query project %s: %v", pid, err)
+		var count int
+		if err := pool.QueryRow(context.Background(),
+			`SELECT COUNT(*) FROM projects WHERE id = $1`, pid).Scan(&count); err != nil {
+			t.Fatalf("count project %s: %v", pid, err)
 		}
-		if aID != nil {
-			t.Errorf("project %s: expected area_id = NULL after area delete, got %q", pid, *aID)
+		if count != 0 {
+			t.Errorf("project %s should be deleted with its area, still present", pid)
+		}
+	}
+	// ...while the projects' tasks survive, unfiled (project_id → NULL), matching
+	// the existing single-project delete behaviour (tasks are never destroyed by
+	// a project/area delete).
+	for _, tid := range taskIDs {
+		var pID *string
+		if err := pool.QueryRow(context.Background(),
+			`SELECT project_id FROM tasks WHERE id = $1`, tid).Scan(&pID); err != nil {
+			t.Fatalf("query task %s: %v", tid, err)
+		}
+		if pID != nil {
+			t.Errorf("task %s: expected project_id = NULL after cascade, got %q", tid, *pID)
 		}
 	}
 }
