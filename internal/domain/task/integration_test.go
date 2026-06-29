@@ -363,6 +363,44 @@ func TestIntegration_Task_ScheduleAndUnschedule(t *testing.T) {
 	assertErrCode(t, resp, "INVALID_DATE")
 }
 
+func listTasks(t *testing.T, env taskEnv, query string) []task.TaskView {
+	t.Helper()
+	resp := do(t, env.srv, http.MethodGet, "/v1/projects/"+env.projectID+"/tasks"+query, nil, env.token)
+	assertStatus(t, resp, http.StatusOK)
+	var out struct {
+		Data struct {
+			Items []task.TaskView `json:"items"`
+		} `json:"data"`
+	}
+	decode(t, resp, &out)
+	return out.Data.Items
+}
+
+func TestIntegration_Task_FilterSortSearch(t *testing.T) {
+	env := newTaskServer(t, "pro")
+	createTask(t, env, map[string]any{"title": "Write spec", "status": "active", "energy": "deep", "priority": "high"})
+	createTask(t, env, map[string]any{"title": "Quick reply", "status": "active", "energy": "low", "priority": "low"})
+	createTask(t, env, map[string]any{"title": "Read notes", "notes": "review the spec doc", "status": "inbox", "energy": "low"})
+
+	if got := listTasks(t, env, "?energy=low"); len(got) != 2 {
+		t.Errorf("energy=low len = %d, want 2", len(got))
+	}
+	if got := listTasks(t, env, "?status=active&energy=low"); len(got) != 1 || got[0].Title != "Quick reply" {
+		t.Errorf("combined filter wrong: %+v", got)
+	}
+	// search hits title OR notes, case-insensitive: "Write spec" + "review the spec doc"
+	if got := listTasks(t, env, "?search=SPEC"); len(got) != 2 {
+		t.Errorf("search=spec len = %d, want 2", len(got))
+	}
+	got := listTasks(t, env, "?sortField=title&sortOrder=asc")
+	if len(got) != 3 || got[0].Title != "Quick reply" {
+		t.Errorf("title sort wrong: first=%q", got[0].Title)
+	}
+	resp := do(t, env.srv, http.MethodGet, "/v1/projects/"+env.projectID+"/tasks?sortField=bogus", nil, env.token)
+	assertStatus(t, resp, http.StatusBadRequest)
+	assertErrCode(t, resp, "INVALID_INPUT")
+}
+
 func TestIntegration_Task_ReorderRepack(t *testing.T) {
 	env := newTaskServer(t, "pro")
 	a := createTask(t, env, map[string]any{"title": "a"})

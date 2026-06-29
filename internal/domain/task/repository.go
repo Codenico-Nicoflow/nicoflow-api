@@ -14,7 +14,7 @@ import (
 
 // Repository defines the data-access contract for the task domain.
 type Repository interface {
-	ListByProject(ctx context.Context, userID, projectID string) ([]Task, error)
+	ListByProject(ctx context.Context, userID, projectID string, f ListTasksFilter) ([]Task, error)
 	GetByID(ctx context.Context, userID, id string) (*Task, error)
 	Create(ctx context.Context, t Task) (Task, error)
 	Update(ctx context.Context, userID, id string, req UpdateTaskRequest, completedAt completedAtChange) (Task, error)
@@ -48,13 +48,12 @@ func scanTask(row pgx.Row, t *Task) error {
 	)
 }
 
-func (r *pgRepo) ListByProject(ctx context.Context, userID, projectID string) ([]Task, error) {
-	rows, err := r.db.Query(ctx,
-		`SELECT`+taskSelectCols+`FROM tasks
-		 WHERE user_id = @userID AND project_id = @projectID
-		 ORDER BY display_order ASC, id ASC`,
-		pgx.NamedArgs{"userID": userID, "projectID": projectID},
-	)
+func (r *pgRepo) ListByProject(ctx context.Context, userID, projectID string, f ListTasksFilter) ([]Task, error) {
+	suffix, args, err := buildListQuery(userID, projectID, f)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.db.Query(ctx, `SELECT`+taskSelectCols+`FROM tasks`+suffix, args)
 	if err != nil {
 		return nil, fmt.Errorf("task.ListByProject query: %w", err)
 	}
