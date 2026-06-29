@@ -97,6 +97,64 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	respond.NoContent(w)
 }
 
+// PATCH /v1/tasks/{id}/status
+func (h *Handler) SetStatus(w http.ResponseWriter, r *http.Request) {
+	userID := mw.UserIDFromCtx(r.Context())
+	plan := mw.PlanFromCtx(r.Context())
+	id := chi.URLParam(r, "id")
+
+	var req SetStatusRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respond.Error(w, http.StatusBadRequest, apperror.ErrInvalidInput, "invalid request body")
+		return
+	}
+
+	view, err := h.svc.SetStatus(r.Context(), userID, id, plan, req.Status)
+	if err != nil {
+		writeAppError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, view)
+}
+
+// PATCH /v1/tasks/{id}/schedule
+func (h *Handler) Schedule(w http.ResponseWriter, r *http.Request) {
+	userID := mw.UserIDFromCtx(r.Context())
+	id := chi.URLParam(r, "id")
+
+	var req ScheduleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respond.Error(w, http.StatusBadRequest, apperror.ErrInvalidInput, "invalid request body")
+		return
+	}
+
+	view, err := h.svc.Schedule(r.Context(), userID, id, req)
+	if err != nil {
+		writeAppError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, view)
+}
+
+// PATCH /v1/tasks/{id}/reorder
+func (h *Handler) ReorderOne(w http.ResponseWriter, r *http.Request) {
+	userID := mw.UserIDFromCtx(r.Context())
+	id := chi.URLParam(r, "id")
+
+	var req ReorderOneRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respond.Error(w, http.StatusBadRequest, apperror.ErrInvalidInput, "invalid request body")
+		return
+	}
+
+	view, err := h.svc.ReorderOne(r.Context(), userID, id, req.DisplayOrder)
+	if err != nil {
+		writeAppError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, view)
+}
+
 // ── not yet implemented (later E-013 stories) ────────────────────────────────
 
 func notImplemented(w http.ResponseWriter, _ *http.Request) {

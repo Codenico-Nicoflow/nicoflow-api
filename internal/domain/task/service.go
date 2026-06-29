@@ -24,6 +24,9 @@ const (
 	maxTitleLen = 255
 	maxNotesLen = 2000
 	maxURLLen   = 2048
+
+	// scheduledForLayout is the ISO date format for the soft scheduledFor field.
+	scheduledForLayout = "2006-01-02"
 )
 
 var (
@@ -41,6 +44,9 @@ type Service interface {
 	Create(ctx context.Context, userID, projectID, plan string, req CreateTaskRequest) (TaskView, error)
 	Update(ctx context.Context, userID, id, plan string, req UpdateTaskRequest) (TaskView, error)
 	Delete(ctx context.Context, userID, id string) error
+	SetStatus(ctx context.Context, userID, id, plan, status string) (TaskView, error)
+	Schedule(ctx context.Context, userID, id string, req ScheduleRequest) (TaskView, error)
+	ReorderOne(ctx context.Context, userID, id string, displayOrder int) (TaskView, error)
 }
 
 type service struct{ repo Repository }
@@ -156,6 +162,43 @@ func (s *service) Update(ctx context.Context, userID, id, plan string, req Updat
 
 func (s *service) Delete(ctx context.Context, userID, id string) error {
 	return s.repo.Delete(ctx, userID, id)
+}
+
+// SetStatus is a shorthand for a status-only PATCH (checkbox toggle, move to
+// someday, etc.). It reuses Update so completedAt side-effects and the plan
+// limit on moving into active/inbox are applied identically.
+func (s *service) SetStatus(ctx context.Context, userID, id, plan, status string) (TaskView, error) {
+	if status == "" {
+		return TaskView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "status is required")
+	}
+	return s.Update(ctx, userID, id, plan, UpdateTaskRequest{Status: &status})
+}
+
+// Schedule sets (or clears) the soft scheduledFor intention + rollsOver flag.
+func (s *service) Schedule(ctx context.Context, userID, id string, req ScheduleRequest) (TaskView, error) {
+	if req.ScheduledFor != nil {
+		if _, err := time.Parse(scheduledForLayout, *req.ScheduledFor); err != nil {
+			return TaskView{}, apperror.New(http.StatusBadRequest, apperror.ErrInvalidDate, "scheduledFor must be an ISO date (YYYY-MM-DD)")
+		}
+	}
+	t, err := s.repo.UpdateSchedule(ctx, userID, id, req.ScheduledFor, req.RollsOver)
+	if err != nil {
+		return TaskView{}, err
+	}
+	return TaskToView(t), nil
+}
+
+// ReorderOne moves a task to a target order and re-packs its siblings within
+// the project so orders stay contiguous.
+func (s *service) ReorderOne(ctx context.Context, userID, id string, displayOrder int) (TaskView, error) {
+	if displayOrder < 0 {
+		return TaskView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "displayOrder must be zero or greater")
+	}
+	t, err := s.repo.Repack(ctx, userID, id, displayOrder)
+	if err != nil {
+		return TaskView{}, err
+	}
+	return TaskToView(t), nil
 }
 
 func (s *service) enforceTaskLimit(ctx context.Context, userID, projectID string) error {
