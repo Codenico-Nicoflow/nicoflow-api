@@ -47,12 +47,24 @@ type Service interface {
 	SetStatus(ctx context.Context, userID, id, plan, status string) (TaskView, error)
 	Schedule(ctx context.Context, userID, id string, req ScheduleRequest) (TaskView, error)
 	ReorderOne(ctx context.Context, userID, id string, displayOrder int) (TaskView, error)
+	Focus(ctx context.Context, userID string, p FocusParams) (ListTasksResponse, error)
 }
 
-type service struct{ repo Repository }
+type service struct {
+	repo Repository
+	now  func() time.Time // injectable clock — Focus/Time-Spread read time only through this
+}
 
-// NewService creates a new task service.
-func NewService(repo Repository) Service { return &service{repo: repo} }
+// NewService creates a new task service with a real clock.
+func NewService(repo Repository) Service {
+	return &service{repo: repo, now: time.Now}
+}
+
+// NewServiceWithClock is like NewService but with an injected clock, for
+// deterministic tests of time-dependent endpoints (Focus, Time-Spread).
+func NewServiceWithClock(repo Repository, now func() time.Time) Service {
+	return &service{repo: repo, now: now}
+}
 
 func (s *service) ListByProject(ctx context.Context, userID, projectID string, f ListTasksFilter) (ListTasksResponse, error) {
 	if f.Status != nil && !allowedStatuses[*f.Status] {
@@ -172,6 +184,41 @@ func (s *service) Update(ctx context.Context, userID, id, plan string, req Updat
 
 func (s *service) Delete(ctx context.Context, userID, id string) error {
 	return s.repo.Delete(ctx, userID, id)
+}
+
+const (
+	defaultFocusLimit = 5
+	maxFocusLimit     = 20
+)
+
+// Focus returns a deterministically-ranked short list of the user's active+inbox
+// tasks that fit the given time/energy. Candidate set spans all projects;
+// someday/done/cancelled are excluded at the repo. Scoring is pure (focus.go).
+func (s *service) Focus(ctx context.Context, userID string, p FocusParams) (ListTasksResponse, error) {
+	if p.Energy != "" && !allowedEnergies[p.Energy] {
+		return ListTasksResponse{}, errInvalidEnergy()
+	}
+	if p.Available < 0 {
+		return ListTasksResponse{}, apperror.New(http.StatusBadRequest, apperror.ErrInvalidInput, "available must be zero or greater")
+	}
+	if p.Limit <= 0 {
+		p.Limit = defaultFocusLimit
+	}
+	if p.Limit > maxFocusLimit {
+		p.Limit = maxFocusLimit
+	}
+
+	candidates, err := s.repo.ListActiveInboxByUser(ctx, userID)
+	if err != nil {
+		return ListTasksResponse{}, err
+	}
+	ranked := rankFocus(candidates, p, s.now())
+
+	items := make([]TaskView, len(ranked))
+	for i, t := range ranked {
+		items[i] = TaskToView(t)
+	}
+	return ListTasksResponse{Items: items}, nil
 }
 
 // SetStatus is a shorthand for a status-only PATCH (checkbox toggle, move to

@@ -29,6 +29,9 @@ type Repository interface {
 	UpdateSchedule(ctx context.Context, userID, id string, scheduledFor *string, rollsOver *bool) (Task, error)
 	// Repack moves a task to targetOrder and renumbers its project siblings 0..n-1.
 	Repack(ctx context.Context, userID, id string, targetOrder int) (Task, error)
+	// ListActiveInboxByUser returns the user's active+inbox tasks across ALL
+	// projects — the candidate set for Focus and Time-Spread.
+	ListActiveInboxByUser(ctx context.Context, userID string) ([]Task, error)
 }
 
 type pgRepo struct{ db *pgxpool.Pool }
@@ -64,6 +67,28 @@ func (r *pgRepo) ListByProject(ctx context.Context, userID, projectID string, f 
 		var t Task
 		if err := scanTask(rows, &t); err != nil {
 			return nil, fmt.Errorf("task.ListByProject scan: %w", err)
+		}
+		tasks = append(tasks, t)
+	}
+	return tasks, rows.Err()
+}
+
+func (r *pgRepo) ListActiveInboxByUser(ctx context.Context, userID string) ([]Task, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT`+taskSelectCols+`FROM tasks
+		 WHERE user_id = @userID AND status IN ('active', 'inbox')`,
+		pgx.NamedArgs{"userID": userID},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("task.ListActiveInboxByUser: %w", err)
+	}
+	defer rows.Close()
+
+	var tasks []Task
+	for rows.Next() {
+		var t Task
+		if err := scanTask(rows, &t); err != nil {
+			return nil, fmt.Errorf("task.ListActiveInboxByUser scan: %w", err)
 		}
 		tasks = append(tasks, t)
 	}
