@@ -25,6 +25,10 @@ type Repository interface {
 	CountActiveInbox(ctx context.Context, userID, projectID string) (int, error)
 	// NextDisplayOrder returns the order to append a new task at the end of a project.
 	NextDisplayOrder(ctx context.Context, userID, projectID string) (int, error)
+	// UpdateSchedule sets (scheduledFor=nil clears) the soft schedule + optional rollsOver.
+	UpdateSchedule(ctx context.Context, userID, id string, scheduledFor *string, rollsOver *bool) (Task, error)
+	// Repack moves a task to targetOrder and renumbers its project siblings 0..n-1.
+	Repack(ctx context.Context, userID, id string, targetOrder int) (Task, error)
 }
 
 type pgRepo struct{ db *pgxpool.Pool }
@@ -241,6 +245,108 @@ func (r *pgRepo) NextDisplayOrder(ctx context.Context, userID, projectID string)
 		return 0, fmt.Errorf("task.NextDisplayOrder: %w", err)
 	}
 	return next, nil
+}
+
+func (r *pgRepo) UpdateSchedule(ctx context.Context, userID, id string, scheduledFor *string, rollsOver *bool) (Task, error) {
+	var t Task
+	err := scanTask(
+		r.db.QueryRow(ctx, `
+			UPDATE tasks SET
+				scheduled_for = @scheduledFor,
+				rolls_over    = COALESCE(@rollsOver, rolls_over),
+				updated_at    = NOW()
+			WHERE id = @id AND user_id = @userID
+			RETURNING`+taskSelectCols,
+			pgx.NamedArgs{"scheduledFor": scheduledFor, "rollsOver": rollsOver, "id": id, "userID": userID},
+		),
+		&t,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Task{}, apperror.New(http.StatusNotFound, apperror.ErrTaskNotFound, "task not found")
+		}
+		return Task{}, fmt.Errorf("task.UpdateSchedule: %w", err)
+	}
+	return t, nil
+}
+
+// Repack moves the task to targetOrder within its project and renumbers all
+// siblings to a contiguous 0..n-1 sequence, in a single transaction.
+func (r *pgRepo) Repack(ctx context.Context, userID, id string, targetOrder int) (Task, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return Task{}, fmt.Errorf("task.Repack begin: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	var projectID string
+	var moved Task
+	if err := scanTask(
+		tx.QueryRow(ctx, `SELECT`+taskSelectCols+`FROM tasks WHERE id = @id AND user_id = @userID FOR UPDATE`,
+			pgx.NamedArgs{"id": id, "userID": userID}),
+		&moved,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Task{}, apperror.New(http.StatusNotFound, apperror.ErrTaskNotFound, "task not found")
+		}
+		return Task{}, fmt.Errorf("task.Repack lock: %w", err)
+	}
+	projectID = moved.ProjectID
+
+	// Current sibling ids in order, excluding the moved task.
+	rows, err := tx.Query(ctx,
+		`SELECT id FROM tasks WHERE user_id = @userID AND project_id = @projectID AND id <> @id
+		 ORDER BY display_order ASC, id ASC`,
+		pgx.NamedArgs{"userID": userID, "projectID": projectID, "id": id},
+	)
+	if err != nil {
+		return Task{}, fmt.Errorf("task.Repack siblings: %w", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var sid string
+		if err := rows.Scan(&sid); err != nil {
+			rows.Close()
+			return Task{}, fmt.Errorf("task.Repack scan: %w", err)
+		}
+		ids = append(ids, sid)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return Task{}, fmt.Errorf("task.Repack rows: %w", err)
+	}
+
+	// Insert the moved task at the clamped target position.
+	pos := targetOrder
+	if pos > len(ids) {
+		pos = len(ids)
+	}
+	ordered := make([]string, 0, len(ids)+1)
+	ordered = append(ordered, ids[:pos]...)
+	ordered = append(ordered, id)
+	ordered = append(ordered, ids[pos:]...)
+
+	for order, sid := range ordered {
+		if _, err := tx.Exec(ctx,
+			`UPDATE tasks SET display_order = @order, updated_at = NOW() WHERE id = @id AND user_id = @userID`,
+			pgx.NamedArgs{"order": order, "id": sid, "userID": userID},
+		); err != nil {
+			return Task{}, fmt.Errorf("task.Repack update: %w", err)
+		}
+	}
+
+	if err := scanTask(
+		tx.QueryRow(ctx, `SELECT`+taskSelectCols+`FROM tasks WHERE id = @id AND user_id = @userID`,
+			pgx.NamedArgs{"id": id, "userID": userID}),
+		&moved,
+	); err != nil {
+		return Task{}, fmt.Errorf("task.Repack reload: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Task{}, fmt.Errorf("task.Repack commit: %w", err)
+	}
+	return moved, nil
 }
 
 func isForeignKeyViolation(err error) bool {

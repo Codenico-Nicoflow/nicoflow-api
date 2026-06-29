@@ -20,6 +20,8 @@ type mockRepo struct {
 	projectOwned     func(ctx context.Context, userID, projectID string) (bool, error)
 	countActiveInbox func(ctx context.Context, userID, projectID string) (int, error)
 	nextDisplayOrder func(ctx context.Context, userID, projectID string) (int, error)
+	updateSchedule   func(ctx context.Context, userID, id string, scheduledFor *string, rollsOver *bool) (Task, error)
+	repack           func(ctx context.Context, userID, id string, targetOrder int) (Task, error)
 }
 
 func (m *mockRepo) ListByProject(ctx context.Context, userID, projectID string) ([]Task, error) {
@@ -43,6 +45,12 @@ func (m *mockRepo) CountActiveInbox(ctx context.Context, userID, projectID strin
 }
 func (m *mockRepo) NextDisplayOrder(ctx context.Context, userID, projectID string) (int, error) {
 	return m.nextDisplayOrder(ctx, userID, projectID)
+}
+func (m *mockRepo) UpdateSchedule(ctx context.Context, userID, id string, scheduledFor *string, rollsOver *bool) (Task, error) {
+	return m.updateSchedule(ctx, userID, id, scheduledFor, rollsOver)
+}
+func (m *mockRepo) Repack(ctx context.Context, userID, id string, targetOrder int) (Task, error) {
+	return m.repack(ctx, userID, id, targetOrder)
 }
 
 func appErr(err error) *apperror.AppError {
@@ -275,5 +283,79 @@ func TestService_ListByProject_NotOwned(t *testing.T) {
 	_, err := svc.ListByProject(context.Background(), "u1", "p1")
 	if ae := appErr(err); ae == nil || ae.Code != apperror.ErrProjectNotFound {
 		t.Fatalf("want PROJECT_NOT_FOUND, got %+v", err)
+	}
+}
+
+// ── quick actions ──────────────────────────────────────────────────────────────
+
+func TestService_SetStatus_EmptyRejected(t *testing.T) {
+	svc := NewService(&mockRepo{})
+	_, err := svc.SetStatus(context.Background(), "u1", "t1", "pro", "")
+	if ae := appErr(err); ae == nil || ae.Code != apperror.ErrInvalidInput {
+		t.Fatalf("want INVALID_INPUT, got %+v", err)
+	}
+}
+
+func TestService_SetStatus_DelegatesToUpdate(t *testing.T) {
+	var gotChange completedAtChange
+	repo := &mockRepo{
+		getByID: func(_ context.Context, _, _ string) (*Task, error) {
+			return &Task{ID: "t1", ProjectID: "p1", Status: "active"}, nil
+		},
+		countActiveInbox: func(_ context.Context, _, _ string) (int, error) { return 0, nil },
+		update: func(_ context.Context, _, _ string, _ UpdateTaskRequest, ca completedAtChange) (Task, error) {
+			gotChange = ca
+			return Task{ID: "t1", Status: "done"}, nil
+		},
+	}
+	v, err := NewService(repo).SetStatus(context.Background(), "u1", "t1", "pro", "done")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotChange != completedAtSetNow {
+		t.Errorf("status=done should set completedAt, got change %d", gotChange)
+	}
+	if v.Status != "done" {
+		t.Errorf("status = %q", v.Status)
+	}
+}
+
+func TestService_Schedule(t *testing.T) {
+	tests := []struct {
+		name     string
+		date     *string
+		wantErr  bool
+		wantCode string
+	}{
+		{name: "valid ISO date", date: ptr("2026-07-01")},
+		{name: "null unschedules", date: nil},
+		{name: "bad date rejected", date: ptr("July 1st"), wantErr: true, wantCode: apperror.ErrInvalidDate},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &mockRepo{
+				updateSchedule: func(_ context.Context, _, _ string, sf *string, _ *bool) (Task, error) {
+					return Task{ID: "t1", ScheduledFor: sf}, nil
+				},
+			}
+			_, err := NewService(repo).Schedule(context.Background(), "u1", "t1", ScheduleRequest{ScheduledFor: tt.date})
+			if tt.wantErr {
+				if ae := appErr(err); ae == nil || ae.Code != tt.wantCode {
+					t.Fatalf("want %s, got %+v", tt.wantCode, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestService_ReorderOne_NegativeRejected(t *testing.T) {
+	svc := NewService(&mockRepo{})
+	_, err := svc.ReorderOne(context.Background(), "u1", "t1", -1)
+	if ae := appErr(err); ae == nil || ae.Code != apperror.ErrInvalidInput {
+		t.Fatalf("want INVALID_INPUT, got %+v", err)
 	}
 }

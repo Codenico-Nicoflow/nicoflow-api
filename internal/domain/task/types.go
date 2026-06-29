@@ -78,6 +78,24 @@ type UpdateTaskRequest struct {
 	URL              *string    `json:"url"`
 }
 
+// SetStatusRequest is the body for PATCH /tasks/:id/status.
+type SetStatusRequest struct {
+	Status string `json:"status"`
+}
+
+// ScheduleRequest is the body for PATCH /tasks/:id/schedule.
+// scheduledFor is the primary field of this endpoint, so null/absent both mean
+// "unschedule"; a value sets the soft intention.
+type ScheduleRequest struct {
+	ScheduledFor *string `json:"scheduledFor"`
+	RollsOver    *bool   `json:"rollsOver"`
+}
+
+// ReorderOneRequest is the body for PATCH /tasks/:id/reorder.
+type ReorderOneRequest struct {
+	DisplayOrder int `json:"displayOrder"`
+}
+
 // TaskToView maps the domain model to its JSON response shape.
 func TaskToView(t Task) TaskView {
 	v := TaskView{

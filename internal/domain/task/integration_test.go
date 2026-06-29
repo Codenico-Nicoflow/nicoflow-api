@@ -308,3 +308,91 @@ func TestIntegration_Task_Create_ProjectNotOwned_Returns404(t *testing.T) {
 	assertStatus(t, resp, http.StatusNotFound)
 	assertErrCode(t, resp, "PROJECT_NOT_FOUND")
 }
+
+// ── quick actions ──────────────────────────────────────────────────────────────
+
+func patchTask(t *testing.T, env taskEnv, path string, body any) task.TaskView {
+	t.Helper()
+	resp := do(t, env.srv, http.MethodPatch, path, body, env.token)
+	assertStatus(t, resp, http.StatusOK)
+	var out struct {
+		Data task.TaskView `json:"data"`
+	}
+	decode(t, resp, &out)
+	return out.Data
+}
+
+func TestIntegration_Task_StatusToggle(t *testing.T) {
+	env := newTaskServer(t, "pro")
+	created := createTask(t, env, map[string]any{"title": "t", "status": "inbox"})
+
+	active := patchTask(t, env, "/v1/tasks/"+created.ID+"/status", map[string]any{"status": "active"})
+	if active.Status != "active" || active.CompletedAt != nil {
+		t.Fatalf("active wrong: %+v", active)
+	}
+
+	done := patchTask(t, env, "/v1/tasks/"+created.ID+"/status", map[string]any{"status": "done"})
+	if done.Status != "done" || done.CompletedAt == nil {
+		t.Fatalf("done should set completedAt: %+v", done)
+	}
+}
+
+func TestIntegration_Task_ScheduleAndUnschedule(t *testing.T) {
+	env := newTaskServer(t, "pro")
+	created := createTask(t, env, map[string]any{"title": "t"})
+
+	scheduled := patchTask(t, env, "/v1/tasks/"+created.ID+"/schedule",
+		map[string]any{"scheduledFor": "2026-07-01", "rollsOver": false})
+	if scheduled.ScheduledFor == nil || *scheduled.ScheduledFor != "2026-07-01" {
+		t.Fatalf("scheduledFor wrong: %+v", scheduled.ScheduledFor)
+	}
+	if scheduled.RollsOver {
+		t.Errorf("rollsOver should be false")
+	}
+
+	unscheduled := patchTask(t, env, "/v1/tasks/"+created.ID+"/schedule",
+		map[string]any{"scheduledFor": nil})
+	if unscheduled.ScheduledFor != nil {
+		t.Fatalf("scheduledFor should clear, got %v", *unscheduled.ScheduledFor)
+	}
+
+	// bad date -> 400 INVALID_DATE
+	resp := do(t, env.srv, http.MethodPatch, "/v1/tasks/"+created.ID+"/schedule",
+		map[string]any{"scheduledFor": "not-a-date"}, env.token)
+	assertStatus(t, resp, http.StatusBadRequest)
+	assertErrCode(t, resp, "INVALID_DATE")
+}
+
+func TestIntegration_Task_ReorderRepack(t *testing.T) {
+	env := newTaskServer(t, "pro")
+	a := createTask(t, env, map[string]any{"title": "a"})
+	b := createTask(t, env, map[string]any{"title": "b"})
+	c := createTask(t, env, map[string]any{"title": "c"})
+	// initial order: a(0) b(1) c(2)
+
+	// Move c to position 0.
+	patchTask(t, env, "/v1/tasks/"+c.ID+"/reorder", map[string]any{"displayOrder": 0})
+
+	// List should now be c, a, b with contiguous 0,1,2.
+	resp := do(t, env.srv, http.MethodGet, "/v1/projects/"+env.projectID+"/tasks", nil, env.token)
+	assertStatus(t, resp, http.StatusOK)
+	var listEnv struct {
+		Data struct {
+			Items []task.TaskView `json:"items"`
+		} `json:"data"`
+	}
+	decode(t, resp, &listEnv)
+	got := listEnv.Data.Items
+	if len(got) != 3 {
+		t.Fatalf("want 3 tasks, got %d", len(got))
+	}
+	wantOrder := []string{c.ID, a.ID, b.ID}
+	for i, w := range wantOrder {
+		if got[i].ID != w {
+			t.Errorf("position %d = %s, want %s", i, got[i].ID, w)
+		}
+		if got[i].DisplayOrder != i {
+			t.Errorf("task %d displayOrder = %d, want %d", i, got[i].DisplayOrder, i)
+		}
+	}
+}
