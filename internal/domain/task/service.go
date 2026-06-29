@@ -39,7 +39,7 @@ var (
 
 // Service defines the task business logic interface.
 type Service interface {
-	ListByProject(ctx context.Context, userID, projectID string) (ListTasksResponse, error)
+	ListByProject(ctx context.Context, userID, projectID string, f ListTasksFilter) (ListTasksResponse, error)
 	Get(ctx context.Context, userID, id string) (TaskView, error)
 	Create(ctx context.Context, userID, projectID, plan string, req CreateTaskRequest) (TaskView, error)
 	Update(ctx context.Context, userID, id, plan string, req UpdateTaskRequest) (TaskView, error)
@@ -54,7 +54,17 @@ type service struct{ repo Repository }
 // NewService creates a new task service.
 func NewService(repo Repository) Service { return &service{repo: repo} }
 
-func (s *service) ListByProject(ctx context.Context, userID, projectID string) (ListTasksResponse, error) {
+func (s *service) ListByProject(ctx context.Context, userID, projectID string, f ListTasksFilter) (ListTasksResponse, error) {
+	if f.Status != nil && !allowedStatuses[*f.Status] {
+		return ListTasksResponse{}, errInvalidStatus()
+	}
+	if f.Priority != nil && !allowedPriorities[*f.Priority] {
+		return ListTasksResponse{}, errInvalidPriority()
+	}
+	if f.Energy != nil && !allowedEnergies[*f.Energy] {
+		return ListTasksResponse{}, errInvalidEnergy()
+	}
+
 	owned, err := s.repo.ProjectOwned(ctx, userID, projectID)
 	if err != nil {
 		return ListTasksResponse{}, err
@@ -63,7 +73,7 @@ func (s *service) ListByProject(ctx context.Context, userID, projectID string) (
 		return ListTasksResponse{}, apperror.New(http.StatusNotFound, apperror.ErrProjectNotFound, "project not found")
 	}
 
-	tasks, err := s.repo.ListByProject(ctx, userID, projectID)
+	tasks, err := s.repo.ListByProject(ctx, userID, projectID, f)
 	if err != nil {
 		return ListTasksResponse{}, err
 	}

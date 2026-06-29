@@ -24,12 +24,33 @@ func (h *Handler) ListByProject(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())
 	projectID := chi.URLParam(r, "projectId")
 
-	resp, err := h.svc.ListByProject(r.Context(), userID, projectID)
+	resp, err := h.svc.ListByProject(r.Context(), userID, projectID, parseTaskListFilter(r))
 	if err != nil {
 		writeAppError(w, r, err)
 		return
 	}
 	respond.JSON(w, http.StatusOK, resp)
+}
+
+// parseTaskListFilter reads filter/sort/search query params. Value validation
+// (allowed enums, sort whitelist) happens in the service/query builder.
+func parseTaskListFilter(r *http.Request) ListTasksFilter {
+	q := r.URL.Query()
+	f := ListTasksFilter{
+		Search:    q.Get("search"),
+		SortField: q.Get("sortField"),
+		SortOrder: q.Get("sortOrder"),
+	}
+	if v := q.Get("status"); v != "" {
+		f.Status = &v
+	}
+	if v := q.Get("priority"); v != "" {
+		f.Priority = &v
+	}
+	if v := q.Get("energy"); v != "" {
+		f.Energy = &v
+	}
+	return f
 }
 
 // GET /v1/tasks/{id}

@@ -12,7 +12,7 @@ import (
 // ── mock repository ───────────────────────────────────────────────────────────
 
 type mockRepo struct {
-	listByProject    func(ctx context.Context, userID, projectID string) ([]Task, error)
+	listByProject    func(ctx context.Context, userID, projectID string, f ListTasksFilter) ([]Task, error)
 	getByID          func(ctx context.Context, userID, id string) (*Task, error)
 	create           func(ctx context.Context, t Task) (Task, error)
 	update           func(ctx context.Context, userID, id string, req UpdateTaskRequest, ca completedAtChange) (Task, error)
@@ -24,8 +24,8 @@ type mockRepo struct {
 	repack           func(ctx context.Context, userID, id string, targetOrder int) (Task, error)
 }
 
-func (m *mockRepo) ListByProject(ctx context.Context, userID, projectID string) ([]Task, error) {
-	return m.listByProject(ctx, userID, projectID)
+func (m *mockRepo) ListByProject(ctx context.Context, userID, projectID string, f ListTasksFilter) ([]Task, error) {
+	return m.listByProject(ctx, userID, projectID, f)
 }
 func (m *mockRepo) GetByID(ctx context.Context, userID, id string) (*Task, error) {
 	return m.getByID(ctx, userID, id)
@@ -280,7 +280,7 @@ func TestService_ListByProject_NotOwned(t *testing.T) {
 	}
 	svc := NewService(repo)
 
-	_, err := svc.ListByProject(context.Background(), "u1", "p1")
+	_, err := svc.ListByProject(context.Background(), "u1", "p1", ListTasksFilter{})
 	if ae := appErr(err); ae == nil || ae.Code != apperror.ErrProjectNotFound {
 		t.Fatalf("want PROJECT_NOT_FOUND, got %+v", err)
 	}
