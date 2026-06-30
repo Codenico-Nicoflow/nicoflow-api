@@ -49,6 +49,18 @@ type ListTasksResponse struct {
 	Items []TaskView `json:"items"`
 }
 
+// ListTasksFilter holds the parsed query params for the project task list.
+// Nil pointer = filter not applied. SortField/SortOrder default to
+// display_order asc when empty.
+type ListTasksFilter struct {
+	Status    *string
+	Priority  *string
+	Energy    *string
+	Search    string
+	SortField string
+	SortOrder string
+}
+
 // CreateTaskRequest is the body for POST /projects/:projectId/tasks.
 // Only title is required; everything else has a server-side default.
 type CreateTaskRequest struct {

@@ -39,7 +39,7 @@ var (
 
 // Service defines the task business logic interface.
 type Service interface {
-	ListByProject(ctx context.Context, userID, projectID string) (ListTasksResponse, error)
+	ListByProject(ctx context.Context, userID, projectID string, f ListTasksFilter) (ListTasksResponse, error)
 	Get(ctx context.Context, userID, id string) (TaskView, error)
 	Create(ctx context.Context, userID, projectID, plan string, req CreateTaskRequest) (TaskView, error)
 	Update(ctx context.Context, userID, id, plan string, req UpdateTaskRequest) (TaskView, error)
@@ -47,14 +47,37 @@ type Service interface {
 	SetStatus(ctx context.Context, userID, id, plan, status string) (TaskView, error)
 	Schedule(ctx context.Context, userID, id string, req ScheduleRequest) (TaskView, error)
 	ReorderOne(ctx context.Context, userID, id string, displayOrder int) (TaskView, error)
+	Focus(ctx context.Context, userID string, p FocusParams) (ListTasksResponse, error)
+	TimeSpread(ctx context.Context, userID string) (TimeSpreadResponse, error)
 }
 
-type service struct{ repo Repository }
+type service struct {
+	repo Repository
+	now  func() time.Time // injectable clock — Focus/Time-Spread read time only through this
+}
 
-// NewService creates a new task service.
-func NewService(repo Repository) Service { return &service{repo: repo} }
+// NewService creates a new task service with a real clock.
+func NewService(repo Repository) Service {
+	return &service{repo: repo, now: time.Now}
+}
 
-func (s *service) ListByProject(ctx context.Context, userID, projectID string) (ListTasksResponse, error) {
+// NewServiceWithClock is like NewService but with an injected clock, for
+// deterministic tests of time-dependent endpoints (Focus, Time-Spread).
+func NewServiceWithClock(repo Repository, now func() time.Time) Service {
+	return &service{repo: repo, now: now}
+}
+
+func (s *service) ListByProject(ctx context.Context, userID, projectID string, f ListTasksFilter) (ListTasksResponse, error) {
+	if f.Status != nil && !allowedStatuses[*f.Status] {
+		return ListTasksResponse{}, errInvalidStatus()
+	}
+	if f.Priority != nil && !allowedPriorities[*f.Priority] {
+		return ListTasksResponse{}, errInvalidPriority()
+	}
+	if f.Energy != nil && !allowedEnergies[*f.Energy] {
+		return ListTasksResponse{}, errInvalidEnergy()
+	}
+
 	owned, err := s.repo.ProjectOwned(ctx, userID, projectID)
 	if err != nil {
 		return ListTasksResponse{}, err
@@ -63,7 +86,7 @@ func (s *service) ListByProject(ctx context.Context, userID, projectID string) (
 		return ListTasksResponse{}, apperror.New(http.StatusNotFound, apperror.ErrProjectNotFound, "project not found")
 	}
 
-	tasks, err := s.repo.ListByProject(ctx, userID, projectID)
+	tasks, err := s.repo.ListByProject(ctx, userID, projectID, f)
 	if err != nil {
 		return ListTasksResponse{}, err
 	}
@@ -162,6 +185,52 @@ func (s *service) Update(ctx context.Context, userID, id, plan string, req Updat
 
 func (s *service) Delete(ctx context.Context, userID, id string) error {
 	return s.repo.Delete(ctx, userID, id)
+}
+
+const (
+	defaultFocusLimit = 5
+	maxFocusLimit     = 20
+)
+
+// Focus returns a deterministically-ranked short list of the user's active+inbox
+// tasks that fit the given time/energy. Candidate set spans all projects;
+// someday/done/cancelled are excluded at the repo. Scoring is pure (focus.go).
+func (s *service) Focus(ctx context.Context, userID string, p FocusParams) (ListTasksResponse, error) {
+	if p.Energy != "" && !allowedEnergies[p.Energy] {
+		return ListTasksResponse{}, errInvalidEnergy()
+	}
+	if p.Available < 0 {
+		return ListTasksResponse{}, apperror.New(http.StatusBadRequest, apperror.ErrInvalidInput, "available must be zero or greater")
+	}
+	if p.Limit <= 0 {
+		p.Limit = defaultFocusLimit
+	}
+	if p.Limit > maxFocusLimit {
+		p.Limit = maxFocusLimit
+	}
+
+	candidates, err := s.repo.ListActiveInboxByUser(ctx, userID)
+	if err != nil {
+		return ListTasksResponse{}, err
+	}
+	ranked := rankFocus(candidates, p, s.now())
+
+	items := make([]TaskView, len(ranked))
+	for i, t := range ranked {
+		items[i] = TaskToView(t)
+	}
+	return ListTasksResponse{Items: items}, nil
+}
+
+// TimeSpread buckets the user's active+inbox tasks into today/tomorrow/this-week
+// with the no-guilt roll-forward. Bucketing is pure (timespread.go); the clock
+// is injected so tests are reproducible.
+func (s *service) TimeSpread(ctx context.Context, userID string) (TimeSpreadResponse, error) {
+	candidates, err := s.repo.ListActiveInboxByUser(ctx, userID)
+	if err != nil {
+		return TimeSpreadResponse{}, err
+	}
+	return bucketTimeSpread(candidates, s.now()), nil
 }
 
 // SetStatus is a shorthand for a status-only PATCH (checkbox toggle, move to

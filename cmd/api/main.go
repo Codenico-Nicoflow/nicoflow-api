@@ -88,15 +88,16 @@ func main() {
 	projectRepo := project.NewRepository(pool)
 	projectSvc := project.NewService(projectRepo)
 
-	// Task domain.
+	// Task domain (incl. subtasks).
 	taskRepo := task.NewRepository(pool)
 	taskSvc := task.NewService(taskRepo)
+	subtaskSvc := task.NewSubtaskService(task.NewSubtaskRepository(pool))
 
 	handlers := handler.Handlers{
 		Auth:    auth.NewHandler(authSvc, cookieCfg),
 		Area:    area.NewHandler(areaSvc),
 		Project: project.NewHandler(projectSvc),
-		Task:    task.NewHandler(taskSvc),
+		Task:    task.NewHandler(taskSvc, subtaskSvc),
 		Bucket:  bucket.NewHandler(nil),
 		AI:      ai.NewHandler(nil),
 		Billing: billing.NewHandler(nil),
