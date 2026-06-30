@@ -59,9 +59,13 @@ func TestIntegration_Subtask_Lifecycle(t *testing.T) {
 		t.Errorf("subtask should be done after patch")
 	}
 
-	// Reorder b to position 0.
+	// Reorder: move b ahead of a by giving it a lower position.
+	// (Subtask position is a direct set — the caller assigns distinct values.)
 	resp = do(t, env.srv, http.MethodPatch, "/v1/tasks/"+parent.ID+"/subtasks/"+b.ID,
 		map[string]any{"position": 0}, env.token)
+	assertStatus(t, resp, http.StatusOK)
+	resp = do(t, env.srv, http.MethodPatch, "/v1/tasks/"+parent.ID+"/subtasks/"+a.ID,
+		map[string]any{"position": 1}, env.token)
 	assertStatus(t, resp, http.StatusOK)
 
 	got := listSubtasks(t, env, parent.ID)

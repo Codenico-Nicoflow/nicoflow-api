@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,6 +60,20 @@ func cleanTaskTestData(t *testing.T, pool *pgxpool.Pool) {
 	}
 }
 
+// sanitizeEmail makes a test name safe for the local-part of an email address.
+func sanitizeEmail(name string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			return r
+		case r >= 'A' && r <= 'Z':
+			return r + ('a' - 'A')
+		default:
+			return '-'
+		}
+	}, name)
+}
+
 func insertUser(t *testing.T, pool *pgxpool.Pool, email, plan string) (string, string) {
 	t.Helper()
 	userID := uuid.New().String()
@@ -88,7 +103,10 @@ func newTaskServer(t *testing.T, plan string) taskEnv {
 		RefreshTokenExpiry: 7 * 24 * time.Hour,
 	}
 
-	userID, token := insertUser(t, pool, "user"+plan+testEmailDomain, plan)
+	// Unique email per test so concurrently-cleaned, same-plan tests never
+	// collide on the (user_id, email) constraint or wipe each other's rows.
+	email := "user-" + sanitizeEmail(t.Name()) + "-" + plan + testEmailDomain
+	userID, token := insertUser(t, pool, email, plan)
 
 	h := handler.Handlers{
 		Auth:    auth.NewHandler(auth.NewService(auth.NewRepository(pool), cfg), auth.HandlerConfig{}),
