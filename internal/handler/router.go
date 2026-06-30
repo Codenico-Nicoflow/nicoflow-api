@@ -157,6 +157,9 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		r.Delete("/bucket/{id}", h.Bucket.Delete)
 		r.Post("/bucket/{id}/process", h.Bucket.Process)
 
+		// Focus — "what can I do right now?" (deterministic ranked list)
+		r.Get("/focus", h.Task.Focus)
+
 		// Time Spread + Search
 		r.Get("/time-spread", h.Task.TimeSpread)
 		r.Get("/search", h.Task.Search)

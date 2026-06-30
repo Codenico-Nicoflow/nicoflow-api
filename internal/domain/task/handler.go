@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog/log"
@@ -181,13 +182,55 @@ func (h *Handler) ReorderOne(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, view)
 }
 
+// GET /v1/focus?available=<minutes>&energy=<low|medium|deep>&limit=<n>
+func (h *Handler) Focus(w http.ResponseWriter, r *http.Request) {
+	userID := mw.UserIDFromCtx(r.Context())
+	q := r.URL.Query()
+
+	p := FocusParams{Energy: q.Get("energy")}
+	if v := q.Get("available"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			respond.Error(w, http.StatusBadRequest, apperror.ErrInvalidInput, "available must be an integer")
+			return
+		}
+		p.Available = n
+	}
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			respond.Error(w, http.StatusBadRequest, apperror.ErrInvalidInput, "limit must be an integer")
+			return
+		}
+		p.Limit = n
+	}
+
+	resp, err := h.svc.Focus(r.Context(), userID, p)
+	if err != nil {
+		writeAppError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, resp)
+}
+
+// GET /v1/time-spread
+func (h *Handler) TimeSpread(w http.ResponseWriter, r *http.Request) {
+	userID := mw.UserIDFromCtx(r.Context())
+
+	resp, err := h.svc.TimeSpread(r.Context(), userID)
+	if err != nil {
+		writeAppError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, resp)
+}
+
 // ── not yet implemented (later E-013 stories) ────────────────────────────────
 
 func notImplemented(w http.ResponseWriter, _ *http.Request) {
 	respond.Error(w, http.StatusNotImplemented, apperror.ErrInternalServerError, "not implemented")
 }
 
-func (h *Handler) TimeSpread(w http.ResponseWriter, r *http.Request)         { notImplemented(w, r) }
 func (h *Handler) Search(w http.ResponseWriter, r *http.Request)             { notImplemented(w, r) }
 func (h *Handler) ListAttachments(w http.ResponseWriter, r *http.Request)    { notImplemented(w, r) }
 func (h *Handler) CreateAttachment(w http.ResponseWriter, r *http.Request)   { notImplemented(w, r) }

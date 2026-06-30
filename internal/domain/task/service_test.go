@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
 )
@@ -22,6 +23,7 @@ type mockRepo struct {
 	nextDisplayOrder func(ctx context.Context, userID, projectID string) (int, error)
 	updateSchedule   func(ctx context.Context, userID, id string, scheduledFor *string, rollsOver *bool) (Task, error)
 	repack           func(ctx context.Context, userID, id string, targetOrder int) (Task, error)
+	listActiveInbox  func(ctx context.Context, userID string) ([]Task, error)
 }
 
 func (m *mockRepo) ListByProject(ctx context.Context, userID, projectID string, f ListTasksFilter) ([]Task, error) {
@@ -51,6 +53,9 @@ func (m *mockRepo) UpdateSchedule(ctx context.Context, userID, id string, schedu
 }
 func (m *mockRepo) Repack(ctx context.Context, userID, id string, targetOrder int) (Task, error) {
 	return m.repack(ctx, userID, id, targetOrder)
+}
+func (m *mockRepo) ListActiveInboxByUser(ctx context.Context, userID string) ([]Task, error) {
+	return m.listActiveInbox(ctx, userID)
 }
 
 func appErr(err error) *apperror.AppError {
@@ -358,4 +363,55 @@ func TestService_ReorderOne_NegativeRejected(t *testing.T) {
 	if ae := appErr(err); ae == nil || ae.Code != apperror.ErrInvalidInput {
 		t.Fatalf("want INVALID_INPUT, got %+v", err)
 	}
+}
+
+func TestService_Focus(t *testing.T) {
+	now := func() time.Time { return time.Date(2026, 6, 15, 9, 0, 0, 0, time.UTC) }
+
+	t.Run("invalid energy rejected", func(t *testing.T) {
+		svc := NewServiceWithClock(&mockRepo{}, now)
+		_, err := svc.Focus(context.Background(), "u1", FocusParams{Energy: "bogus"})
+		if ae := appErr(err); ae == nil || ae.Code != apperror.ErrInvalidInput {
+			t.Fatalf("want INVALID_INPUT, got %+v", err)
+		}
+	})
+
+	t.Run("ranks + clamps to default limit", func(t *testing.T) {
+		candidates := make([]Task, 8)
+		for i := range candidates {
+			candidates[i] = Task{ID: string(rune('a' + i)), Energy: "low", Priority: "low", Status: "active"}
+		}
+		repo := &mockRepo{
+			listActiveInbox: func(_ context.Context, _ string) ([]Task, error) { return candidates, nil },
+		}
+		svc := NewServiceWithClock(repo, now)
+		resp, err := svc.Focus(context.Background(), "u1", FocusParams{}) // no limit → default 5
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(resp.Items) != defaultFocusLimit {
+			t.Errorf("len = %d, want %d", len(resp.Items), defaultFocusLimit)
+		}
+	})
+
+	t.Run("excludes nothing extra — repo provides candidate set", func(t *testing.T) {
+		var gotUser string
+		repo := &mockRepo{
+			listActiveInbox: func(_ context.Context, userID string) ([]Task, error) {
+				gotUser = userID
+				return nil, nil
+			},
+		}
+		svc := NewServiceWithClock(repo, now)
+		resp, err := svc.Focus(context.Background(), "u9", FocusParams{Limit: 999})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if gotUser != "u9" {
+			t.Errorf("candidate query scoped to %q, want u9", gotUser)
+		}
+		if len(resp.Items) != 0 {
+			t.Errorf("empty candidates → empty result, got %d", len(resp.Items))
+		}
+	})
 }
