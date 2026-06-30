@@ -621,7 +621,39 @@ Delete a project and all its tasks.
 
 ### 3.4 Tasks
 
-> **`ITask` shape** — all IDs are strings. Fields: `id: string`, `projectId: string`, `title: string`, `notes?: string | null`, `status: "inbox"|"active"|"done"|"cancelled"`, `priority: "low"|"medium"|"high"`, `dueDate?: string | null`, `scheduledFor?: string | null`, `estimatedMinutes?: number | null`, `url?: string | null`, `displayOrder?: number`, `completedAt?: string | null`, `createdAt: string`, `updatedAt: string`.
+> **Calm / energy-aware contract.** Tasks carry an **`energy`** dimension (`low|medium|deep`) alongside `priority`, and distinguish a **hard `dueDate`** (a real deadline — timestamp) from a **soft `scheduledFor`** intention (a date you *mean* to do it). A past soft `scheduledFor` does **not** go overdue — with **`rollsOver: true`** (the default) it carries forward to today, no guilt. Two extra statuses support this: **`someday`** (parked, off the active list) and **`cancelled`**.
+
+> **`ITask` shape** — all IDs are strings.
+> ```ts
+> interface ITask {
+>   id: string;
+>   projectId: string;
+>   title: string;
+>   notes?: string | null;
+>   status: "inbox" | "active" | "someday" | "done" | "cancelled";
+>   priority: "low" | "medium" | "high";          // default "medium"
+>   energy: "low" | "medium" | "deep";            // default "medium"
+>   rollsOver: boolean;                           // default true
+>   dueDate?: string | null;                      // HARD deadline — RFC3339 timestamp
+>   scheduledFor?: string | null;                 // SOFT intention — ISO date "YYYY-MM-DD"
+>   estimatedMinutes?: number | null;             // 1–1440
+>   url?: string | null;
+>   displayOrder: number;
+>   completedAt?: string | null;                  // set server-side when status→done
+>   createdAt: string;                            // RFC3339
+>   updatedAt: string;                            // RFC3339
+> }
+> ```
+>
+> **⚠️ `dueDate` vs `scheduledFor` — do not conflate.** `dueDate` is a full RFC3339 **timestamp** (a hard deadline). `scheduledFor` is a bare ISO **date string** `YYYY-MM-DD` (a soft, roll-forward intention) — **not** an enum like `today|tomorrow|this_week`. The today/tomorrow/thisWeek grouping is *computed* server-side by `GET /v1/time-spread` (§3.7) from these two fields; it is never a stored value. See §3.7 for the bucketing rules.
+
+> **List envelope.** List endpoints (`GET …/tasks`, `GET /focus`) return `{ "items": ITask[] }` inside the standard `data` envelope — i.e. `data.items`, **not** a bare `data: ITask[]`. The frontend `transformResponse` must unwrap to `.data.items`.
+
+> **⚠️ E-014 frontend type fix required (NIC-1382/1383/1384).** The live frontend `ITask` (`src/lib/types/interfaces/index.ts`) and `tasks/type.ts` are **out of sync** with the contract above and must be aligned (no `Number()`/string coercion — fix the types):
+> - `status` is typed off `TaskStatus { TODO, IN_PROGRESS, DONE }` → must become `"inbox" | "active" | "someday" | "done" | "cancelled"`.
+> - `scheduledFor` is typed `'today' | 'tomorrow' | 'this_week' | null` (an enum) → must become an **ISO date string** `string | null`. The `ScheduledFor` constant and its uses are obsolete; today/tomorrow/thisWeek is a *view* (`/time-spread`), not a stored field.
+> - Add the missing fields: **`energy: "low"|"medium"|"deep"`** and **`rollsOver: boolean`** (plus on the create/update request types).
+> - List responses unwrap to `.data.items` (currently typed `ITask[]`).
 
 #### GET /v1/projects/:projectId/tasks
 
@@ -631,14 +663,18 @@ List all tasks within a project.
 
 **Query parameters**
 
-| Param       | Type   | Description                                            |
-| ----------- | ------ | ------------------------------------------------------ |
-| `status`    | string | Filter by `inbox` \| `active` \| `done` \| `cancelled` |
-| `priority`  | string | Filter by `low` \| `medium` \| `high`                  |
-| `sortField` | string | `dueDate` \| `priority` \| `title` \| `createdAt`      |
-| `sortOrder` | string | `asc` \| `desc`                                        |
+| Param       | Type   | Description                                                            |
+| ----------- | ------ | --------------------------------------------------------------------- |
+| `status`    | string | Filter by `inbox` \| `active` \| `someday` \| `done` \| `cancelled`   |
+| `priority`  | string | Filter by `low` \| `medium` \| `high`                                 |
+| `energy`    | string | Filter by `low` \| `medium` \| `deep`                                 |
+| `search`    | string | Case-insensitive ILIKE over `title` + `notes`                         |
+| `sortField` | string | `displayOrder` \| `dueDate` \| `priority` \| `title` \| `createdAt` \| `energy` (default `displayOrder`) |
+| `sortOrder` | string | `asc` \| `desc` (default `asc`)                                       |
 
-**Response — 200 OK** — `ITask[]`
+**Response — 200 OK** — `{ "items": ITask[] }`
+
+**Errors:** `INVALID_INPUT` / `INVALID_STATUS` / `INVALID_PRIORITY` (422), `PROJECT_NOT_FOUND` (404)
 
 ---
 
@@ -650,15 +686,16 @@ Retrieve a single task.
 
 **Response — 200 OK** — `ITask`
 
-**Errors:** `RESOURCE_NOT_FOUND` (404), `PERMISSION_DENIED` (403)
+**Errors:** `TASK_NOT_FOUND` (404 — cross-user access returns 404, no existence leak)
 
 ---
 
 #### POST /v1/projects/:projectId/tasks
 
-Create a task inside a project.
+Create a task inside a project. **Title-only is valid** (quick-add); everything else defaults server-side.
 
 - **Auth required:** Yes
+- **Plan limit:** Free plan allows **50 active+inbox tasks per project**. Only `active` and `inbox` count — `someday`, `done`, and `cancelled` are free. Exceeding it (or a PATCH that moves a task *into* active/inbox over the cap) returns `PLAN_LIMIT_EXCEEDED` (403).
 
 **Request body**
 
@@ -667,71 +704,143 @@ Create a task inside a project.
   "title": "Write spec",
   "notes": "Write the full API specification",
   "priority": "high",
-  "dueDate": "2026-05-10",
+  "energy": "deep",
+  "rollsOver": true,
+  "dueDate": "2026-05-10T17:00:00Z",
+  "scheduledFor": "2026-05-02",
   "estimatedMinutes": 90,
-  "url": "https://notion.so/...",
-  "scheduledFor": "2026-05-02"
+  "url": "https://notion.so/..."
 }
 ```
 
-| Field              | Type   | Required | Constraints                                            |
-| ------------------ | ------ | -------- | ------------------------------------------------------ |
-| `title`            | string | Yes      | 1–255 characters                                       |
-| `notes`            | string | No       | Free-form text                                         |
-| `priority`         | string | No       | `"low"` \| `"medium"` \| `"high"` — default `"medium"` |
-| `dueDate`          | string | No       | ISO 8601 date                                          |
-| `estimatedMinutes` | number | No       | 1–1440                                                 |
-| `url`              | string | No       | Valid URL                                              |
-| `scheduledFor`     | string | No       | ISO 8601 date — for time-spread view                   |
+| Field              | Type    | Required | Constraints                                                       |
+| ------------------ | ------- | -------- | ----------------------------------------------------------------- |
+| `title`            | string  | Yes      | 1–255 characters (trimmed)                                        |
+| `notes`            | string  | No       | ≤ 2000 characters                                                 |
+| `status`           | string  | No       | `inbox` \| `active` \| `someday` \| `done` \| `cancelled` — default `inbox` |
+| `priority`         | string  | No       | `low` \| `medium` \| `high` — default `medium`                    |
+| `energy`           | string  | No       | `low` \| `medium` \| `deep` — default `medium`                    |
+| `rollsOver`        | boolean | No       | default `true` (a past `scheduledFor` carries forward)            |
+| `dueDate`          | string  | No       | **Hard deadline** — RFC3339 timestamp                             |
+| `scheduledFor`     | string  | No       | **Soft intention** — ISO date `YYYY-MM-DD`                        |
+| `estimatedMinutes` | number  | No       | 1–1440                                                            |
+| `url`              | string  | No       | ≤ 2048 characters                                                 |
 
 **Response — 201 Created** — `ITask`
 
-**Errors:** `RESOURCE_NOT_FOUND` (404 — project not found), `PERMISSION_DENIED` (403), `INVALID_INPUT` (422)
+**Errors:** `PROJECT_NOT_FOUND` (404), `PLAN_LIMIT_EXCEEDED` (403), `INVALID_INPUT` / `INVALID_STATUS` / `INVALID_PRIORITY` (422)
 
 ---
 
 #### PATCH /v1/tasks/:id
 
-Update a task.
+Partial update of any mutable field. `status→done` sets `completedAt` server-side; moving away from `done` clears it. A PATCH that moves a task into `active`/`inbox` is subject to the plan limit.
 
 - **Auth required:** Yes
 
-**Request body** (all fields optional)
+**Request body** (all fields optional; same types/constraints as create, plus `status`)
 
 ```json
 {
   "title": "Write spec v2",
-  "notes": "...",
   "status": "active",
-  "priority": "high",
-  "dueDate": "2026-05-15",
-  "estimatedMinutes": 120,
-  "url": "https://...",
-  "scheduledFor": "2026-05-03",
-  "displayOrder": 0,
-  "completedAt": "2026-05-10T14:30:00Z"
+  "energy": "medium",
+  "rollsOver": false,
+  "dueDate": "2026-05-15T09:00:00Z",
+  "scheduledFor": "2026-05-03"
 }
 ```
 
+> `completedAt` and `displayOrder` are **not** client-settable here — `completedAt` is derived from the status transition, and ordering is changed via `PATCH /tasks/:id/reorder`.
+
 **Response — 200 OK** — Updated `ITask`
 
-**Errors:** `RESOURCE_NOT_FOUND` (404), `PERMISSION_DENIED` (403), `INVALID_INPUT` (422)
+**Errors:** `TASK_NOT_FOUND` (404), `PLAN_LIMIT_EXCEEDED` (403), `INVALID_INPUT` / `INVALID_STATUS` / `INVALID_PRIORITY` (422)
+
+---
+
+#### PATCH /v1/tasks/:id/status
+
+Status-only shorthand (checkbox toggle, move to someday). Same `completedAt` side-effects and plan-limit semantics as the full PATCH.
+
+- **Auth required:** Yes
+
+**Request body**
+
+```json
+{ "status": "done" }
+```
+
+| Field    | Type   | Required | Values                                                       |
+| -------- | ------ | -------- | ------------------------------------------------------------ |
+| `status` | string | Yes      | `inbox` \| `active` \| `someday` \| `done` \| `cancelled`    |
+
+**Response — 200 OK** — Updated `ITask`
+
+**Errors:** `TASK_NOT_FOUND` (404), `PLAN_LIMIT_EXCEEDED` (403), `INVALID_INPUT` / `INVALID_STATUS` (422)
+
+---
+
+#### PATCH /v1/tasks/:id/schedule
+
+Set (or clear) the **soft** `scheduledFor` intention and the `rollsOver` flag. `scheduledFor` null **or absent** unschedules the task.
+
+- **Auth required:** Yes
+
+**Request body**
+
+```json
+{ "scheduledFor": "2026-05-03", "rollsOver": true }
+```
+
+| Field          | Type            | Required | Constraints                                          |
+| -------------- | --------------- | -------- | ---------------------------------------------------- |
+| `scheduledFor` | string \| null  | No       | ISO date `YYYY-MM-DD`; `null`/absent = unschedule    |
+| `rollsOver`    | boolean         | No       | Toggles roll-forward                                 |
+
+**Response — 200 OK** — Updated `ITask`
+
+**Errors:** `TASK_NOT_FOUND` (404), `INVALID_DATE` (400 — `scheduledFor` not a valid ISO date)
+
+---
+
+#### PATCH /v1/tasks/:id/reorder
+
+Move a task to a target `displayOrder`; siblings within the project are repacked to a contiguous `0..n-1` sequence (transactional).
+
+- **Auth required:** Yes
+
+**Request body**
+
+```json
+{ "displayOrder": 0 }
+```
+
+| Field          | Type   | Required | Constraints        |
+| -------------- | ------ | -------- | ------------------ |
+| `displayOrder` | number | Yes      | ≥ 0                |
+
+**Response — 200 OK** — The moved `ITask`
+
+**Errors:** `TASK_NOT_FOUND` (404), `INVALID_INPUT` (422)
 
 ---
 
 #### DELETE /v1/tasks/:id
 
-Delete a task.
+Hard-delete a task; its subtasks cascade.
 
 - **Auth required:** Yes
 
 **Response — 204 No Content**
 
-**Errors:** `RESOURCE_NOT_FOUND` (404), `PERMISSION_DENIED` (403)
+**Errors:** `TASK_NOT_FOUND` (404)
 
 ---
 
 ### 3.5 Subtasks
+
+> **`ISubtask` shape** — `{ id: string, taskId: string, title: string, done: boolean, position: number, createdAt: string, updatedAt: string }`. Ordered by `position` ascending.
 
 #### GET /v1/tasks/:taskId/subtasks
 
@@ -739,20 +848,22 @@ List subtasks for a task.
 
 - **Auth required:** Yes
 
-**Response — 200 OK**
+**Response — 200 OK** — `{ "items": ISubtask[] }`
 
 ```json
-[
-  {
-    "id": "sub_01J...",
-    "taskId": "01J...",
-    "title": "Draft outline",
-    "done": false,
-    "position": 0,
-    "createdAt": "...",
-    "updatedAt": "..."
-  }
-]
+{
+  "items": [
+    {
+      "id": "sub_01J...",
+      "taskId": "01J...",
+      "title": "Draft outline",
+      "done": false,
+      "position": 0,
+      "createdAt": "...",
+      "updatedAt": "..."
+    }
+  ]
+}
 ```
 
 ---
@@ -922,11 +1033,37 @@ Delete an inbox item.
 
 ---
 
-### 3.7 Time Spread View
+### 3.7 Focus & Time Spread View
+
+These two read-only endpoints derive their lists from the user's `active`+`inbox` tasks **across all projects**; `someday`/`done`/`cancelled` are excluded at the source. Both read the clock once, server-side (the result is deterministic for a given "now"), so no client date is sent.
+
+#### GET /v1/focus
+
+"What can I do right now?" — a deterministically-ranked short list that fits the given time/energy. Candidate set spans all projects.
+
+- **Auth required:** Yes
+
+**Query parameters**
+
+| Param       | Type   | Required | Description                                              |
+| ----------- | ------ | -------- | -------------------------------------------------------- |
+| `available` | number | No       | Minutes available; tasks whose `estimatedMinutes` exceed it are excluded. `0`/absent = no time filter. |
+| `energy`    | string | No       | Current energy `low` \| `medium` \| `deep` (match boosts score). Absent = no energy preference. |
+| `limit`     | number | No       | Max results — default `5`, clamped to max `20`.          |
+
+Ranking (deterministic, Free baseline) blends: energy match, time-budget fit (over-budget excluded), due/overdue escalation, soft-scheduled-for-today proximity (incl. rolled-over), and a small priority tiebreak. Ties break by `id`.
+
+**Response — 200 OK** — `{ "items": ITask[] }`
+
+**Errors:** `INVALID_INPUT` (400 — non-integer `available`/`limit`, or bad `energy`)
+
+> Phase 4 (Pro): a future `?explain=true` will let a Pro user get an AI re-rank with reasons. The deterministic engine here stays the Free baseline and the fallback.
+
+---
 
 #### GET /v1/time-spread
 
-Retrieve tasks bucketed into today / tomorrow / this week for the authenticated user.
+Tasks bucketed into today / tomorrow / this week, with the **no-guilt roll-forward**.
 
 - **Auth required:** Yes
 
@@ -934,13 +1071,22 @@ Retrieve tasks bucketed into today / tomorrow / this week for the authenticated 
 
 ```json
 {
-  "today": [ ...ITask[] ],
-  "tomorrow": [ ...ITask[] ],
-  "thisWeek": [ ...ITask[] ]
+  "today":    [ /* ITask[] */ ],
+  "tomorrow": [ /* ITask[] */ ],
+  "thisWeek": [ /* ITask[] */ ]
 }
 ```
 
-Tasks are included based on their `scheduledFor` or `dueDate` field relative to the server's evaluation of the current date in the user's timezone.
+**Bucketing rules** (per task, first match wins, evaluated in the server's timezone):
+
+1. **Soft `scheduledFor`** takes precedence when set:
+   - in the past **and `rollsOver: true`** → **today** (carried over, no guilt);
+   - in the past **and `rollsOver: false`** → **dropped** (no bucket);
+   - today → **today**; tomorrow → **tomorrow**; within the next 6 days → **thisWeek**; further out → no bucket.
+2. Otherwise a **hard `dueDate`**: today or earlier → **today**; tomorrow → **tomorrow**; within this week → **thisWeek**.
+3. No `scheduledFor` and no `dueDate` → not in any bucket.
+
+> A past `scheduledFor` never surfaces as "overdue" here — the calm tone (a neutral "carried over" chip, never red) is the frontend's job (E-014, NIC-1384).
 
 ---
 
