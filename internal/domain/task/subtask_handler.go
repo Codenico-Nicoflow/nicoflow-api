@@ -11,7 +11,16 @@ import (
 	"github.com/nicoflow/nicoflow-api/pkg/respond"
 )
 
-// GET /v1/tasks/{taskId}/subtasks
+// ListSubtasks godoc
+// @Summary      List subtasks
+// @Description  Lists a task's subtasks, ordered by position. Parent-task ownership is enforced.
+// @Tags         subtasks
+// @Produce      json
+// @Param        taskId  path      string  true  "Parent task ID"
+// @Security     BearerAuth
+// @Success      200  {object}  SubtaskListEnvelope  "List of subtasks"
+// @Failure      404  {object}  ErrorEnvelope        "RESOURCE_NOT_FOUND (task not found / not owned)"
+// @Router       /tasks/{taskId}/subtasks [get]
 func (h *Handler) ListSubtasks(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())
 	taskID := chi.URLParam(r, "taskId")
@@ -24,7 +33,19 @@ func (h *Handler) ListSubtasks(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, resp)
 }
 
-// POST /v1/tasks/{taskId}/subtasks
+// CreateSubtask godoc
+// @Summary      Create a subtask
+// @Description  Creates a subtask under a task. Appends to the end unless position is given.
+// @Tags         subtasks
+// @Accept       json
+// @Produce      json
+// @Param        taskId  path      string                true  "Parent task ID"
+// @Param        body    body      CreateSubtaskRequest  true  "Subtask (title required, position optional)"
+// @Security     BearerAuth
+// @Success      201  {object}  SubtaskEnvelope  "The created subtask"
+// @Failure      404  {object}  ErrorEnvelope    "RESOURCE_NOT_FOUND (task not found / not owned)"
+// @Failure      422  {object}  ErrorEnvelope    "INVALID_INPUT"
+// @Router       /tasks/{taskId}/subtasks [post]
 func (h *Handler) CreateSubtask(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())
 	taskID := chi.URLParam(r, "taskId")
@@ -43,7 +64,20 @@ func (h *Handler) CreateSubtask(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusCreated, view)
 }
 
-// PATCH /v1/tasks/{taskId}/subtasks/{subtaskId}
+// UpdateSubtask godoc
+// @Summary      Update a subtask
+// @Description  Partial update of a subtask (title, done, position). Parent-task ownership enforced.
+// @Tags         subtasks
+// @Accept       json
+// @Produce      json
+// @Param        taskId     path      string                true  "Parent task ID"
+// @Param        subtaskId  path      string                true  "Subtask ID"
+// @Param        body       body      UpdateSubtaskRequest  true  "Fields to update (all optional)"
+// @Security     BearerAuth
+// @Success      200  {object}  SubtaskEnvelope  "The updated subtask"
+// @Failure      404  {object}  ErrorEnvelope    "RESOURCE_NOT_FOUND"
+// @Failure      422  {object}  ErrorEnvelope    "INVALID_INPUT"
+// @Router       /tasks/{taskId}/subtasks/{subtaskId} [patch]
 func (h *Handler) UpdateSubtask(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())
 	taskID := chi.URLParam(r, "taskId")
@@ -63,7 +97,16 @@ func (h *Handler) UpdateSubtask(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, view)
 }
 
-// DELETE /v1/tasks/{taskId}/subtasks/{subtaskId}
+// DeleteSubtask godoc
+// @Summary      Delete a subtask
+// @Description  Deletes a subtask. Parent-task ownership enforced.
+// @Tags         subtasks
+// @Param        taskId     path  string  true  "Parent task ID"
+// @Param        subtaskId  path  string  true  "Subtask ID"
+// @Security     BearerAuth
+// @Success      204  "No Content"
+// @Failure      404  {object}  ErrorEnvelope  "RESOURCE_NOT_FOUND"
+// @Router       /tasks/{taskId}/subtasks/{subtaskId} [delete]
 func (h *Handler) DeleteSubtask(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())
 	taskID := chi.URLParam(r, "taskId")
