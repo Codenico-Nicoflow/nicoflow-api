@@ -1,5 +1,131 @@
 basePath: /v1
 definitions:
+  area.AreaEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/area.AreaView'
+      error: {}
+    type: object
+  area.AreaListEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/area.ListAreasResponse'
+      error: {}
+    type: object
+  area.AreaView:
+    properties:
+      color:
+        type: string
+      createdAt:
+        type: string
+      displayOrder:
+        type: integer
+      icon:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  area.AreaWithProjectsEnvelope:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/area.AreaWithProjectsView'
+        type: array
+      error: {}
+    type: object
+  area.AreaWithProjectsView:
+    properties:
+      color:
+        type: string
+      createdAt:
+        type: string
+      displayOrder:
+        type: integer
+      icon:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      projects:
+        items:
+          $ref: '#/definitions/project.ProjectView'
+        type: array
+      updatedAt:
+        type: string
+    type: object
+  area.CreateAreaRequest:
+    properties:
+      color:
+        type: string
+      icon:
+        type: string
+      name:
+        type: string
+    type: object
+  area.ErrorEnvelope:
+    properties:
+      data: {}
+      error:
+        $ref: '#/definitions/area.SwaggerError'
+    type: object
+  area.ListAreasResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/area.AreaView'
+        type: array
+      nextCursor:
+        type: string
+    type: object
+  area.ReorderItem:
+    properties:
+      displayOrder:
+        type: integer
+      id:
+        type: string
+    type: object
+  area.ReorderRequest:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/area.ReorderItem'
+        type: array
+    type: object
+  area.ReorderResult:
+    properties:
+      updated:
+        example: 3
+        type: integer
+    type: object
+  area.ReorderResultEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/area.ReorderResult'
+      error: {}
+    type: object
+  area.SwaggerError:
+    properties:
+      code:
+        example: AREA_NOT_FOUND
+        type: string
+      message:
+        example: area not found
+        type: string
+    type: object
+  area.UpdateAreaRequest:
+    properties:
+      color:
+        type: string
+      icon:
+        type: string
+      name:
+        type: string
+    type: object
   auth.AuthEnvelope:
     properties:
       data:
@@ -91,6 +217,8 @@ definitions:
         type: string
       firstName:
         type: string
+      language:
+        type: string
       lastName:
         type: string
       theme:
@@ -114,6 +242,8 @@ definitions:
         type: string
       imageUrl:
         type: string
+      language:
+        type: string
       lastName:
         type: string
       status:
@@ -128,13 +258,631 @@ definitions:
       token:
         type: string
     type: object
+  project.CreateProjectRequest:
+    properties:
+      description:
+        type: string
+      dueDate:
+        type: string
+      folderIcon:
+        type: string
+      isFavorite:
+        type: boolean
+      name:
+        type: string
+      status:
+        type: string
+    type: object
+  project.ErrorEnvelope:
+    properties:
+      data: {}
+      error:
+        $ref: '#/definitions/project.SwaggerError'
+    type: object
+  project.ListProjectsResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/project.ProjectView'
+        type: array
+      nextCursor:
+        type: string
+    type: object
+  project.ProjectEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/project.ProjectView'
+      error: {}
+    type: object
+  project.ProjectListEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/project.ListProjectsResponse'
+      error: {}
+    type: object
+  project.ProjectView:
+    properties:
+      areaId:
+        type: string
+      createdAt:
+        type: string
+      description:
+        type: string
+      displayOrder:
+        type: integer
+      dueDate:
+        type: string
+      folderIcon:
+        type: string
+      id:
+        type: string
+      isFavorite:
+        type: boolean
+      name:
+        type: string
+      status:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  project.ReorderItem:
+    properties:
+      displayOrder:
+        type: integer
+      id:
+        type: string
+    type: object
+  project.ReorderRequest:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/project.ReorderItem'
+        type: array
+    type: object
+  project.ReorderResult:
+    properties:
+      updated:
+        example: 3
+        type: integer
+    type: object
+  project.ReorderResultEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/project.ReorderResult'
+      error: {}
+    type: object
+  project.SwaggerError:
+    properties:
+      code:
+        example: PROJECT_NOT_FOUND
+        type: string
+      message:
+        example: project not found
+        type: string
+    type: object
+  project.UpdateProjectRequest:
+    properties:
+      areaId:
+        type: string
+      description:
+        type: string
+      dueDate:
+        type: string
+      folderIcon:
+        type: string
+      isFavorite:
+        type: boolean
+      name:
+        type: string
+      status:
+        type: string
+    type: object
+  task.CreateSubtaskRequest:
+    properties:
+      position:
+        type: integer
+      title:
+        type: string
+    type: object
+  task.CreateTaskRequest:
+    properties:
+      dueDate:
+        type: string
+      energy:
+        type: string
+      estimatedMinutes:
+        type: integer
+      notes:
+        type: string
+      priority:
+        type: string
+      rollsOver:
+        type: boolean
+      scheduledFor:
+        type: string
+      status:
+        type: string
+      title:
+        type: string
+      url:
+        type: string
+    type: object
+  task.ErrorEnvelope:
+    properties:
+      data: {}
+      error:
+        $ref: '#/definitions/task.SwaggerError'
+    type: object
+  task.ListSubtasksResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/task.SubtaskView'
+        type: array
+    type: object
+  task.ListTasksResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/task.TaskView'
+        type: array
+    type: object
+  task.ReorderOneRequest:
+    properties:
+      displayOrder:
+        type: integer
+    type: object
+  task.ScheduleRequest:
+    properties:
+      rollsOver:
+        type: boolean
+      scheduledFor:
+        type: string
+    type: object
+  task.SetStatusRequest:
+    properties:
+      status:
+        type: string
+    type: object
+  task.SubtaskEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/task.SubtaskView'
+      error: {}
+    type: object
+  task.SubtaskListEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/task.ListSubtasksResponse'
+      error: {}
+    type: object
+  task.SubtaskView:
+    properties:
+      createdAt:
+        type: string
+      done:
+        type: boolean
+      id:
+        type: string
+      position:
+        type: integer
+      taskId:
+        type: string
+      title:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  task.SwaggerError:
+    properties:
+      code:
+        example: TASK_NOT_FOUND
+        type: string
+      message:
+        example: task not found
+        type: string
+    type: object
+  task.TaskEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/task.TaskView'
+      error: {}
+    type: object
+  task.TaskListEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/task.ListTasksResponse'
+      error: {}
+    type: object
+  task.TaskView:
+    properties:
+      completedAt:
+        type: string
+      createdAt:
+        type: string
+      displayOrder:
+        type: integer
+      dueDate:
+        type: string
+      energy:
+        type: string
+      estimatedMinutes:
+        type: integer
+      id:
+        type: string
+      notes:
+        type: string
+      priority:
+        type: string
+      projectId:
+        type: string
+      rollsOver:
+        type: boolean
+      scheduledFor:
+        type: string
+      status:
+        type: string
+      title:
+        type: string
+      updatedAt:
+        type: string
+      url:
+        type: string
+    type: object
+  task.TimeSpreadEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/task.TimeSpreadResponse'
+      error: {}
+    type: object
+  task.TimeSpreadResponse:
+    properties:
+      thisWeek:
+        items:
+          $ref: '#/definitions/task.TaskView'
+        type: array
+      today:
+        items:
+          $ref: '#/definitions/task.TaskView'
+        type: array
+      tomorrow:
+        items:
+          $ref: '#/definitions/task.TaskView'
+        type: array
+    type: object
+  task.UpdateSubtaskRequest:
+    properties:
+      done:
+        type: boolean
+      position:
+        type: integer
+      title:
+        type: string
+    type: object
+  task.UpdateTaskRequest:
+    properties:
+      dueDate:
+        type: string
+      energy:
+        type: string
+      estimatedMinutes:
+        type: integer
+      notes:
+        type: string
+      priority:
+        type: string
+      rollsOver:
+        type: boolean
+      scheduledFor:
+        type: string
+      status:
+        type: string
+      title:
+        type: string
+      url:
+        type: string
+    type: object
 info:
   contact: {}
-  description: REST API for the Nicoflow GTD task-management platform. This spec currently
-    documents the authentication & user-management surface.
+  description: REST API for the Nicoflow GTD task-management platform. Covers authentication
+    & user management, Areas, Projects, Tasks (CRUD, quick actions, filter/sort/search),
+    Subtasks, Focus and Time-Spread.
   title: Nicoflow API
   version: "1.0"
 paths:
+  /areas:
+    get:
+      description: Lists the user's areas, cursor-paginated, with optional name search.
+      parameters:
+      - description: Search by area name
+        in: query
+        name: q
+        type: string
+      - description: Page size (1–100)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Paginated areas
+          schema:
+            $ref: '#/definitions/area.AreaListEnvelope'
+        "400":
+          description: INVALID_INPUT (bad limit/cursor)
+          schema:
+            $ref: '#/definitions/area.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: List areas
+      tags:
+      - areas
+    post:
+      consumes:
+      - application/json
+      description: Creates an area. Free plan allows up to 3 areas.
+      parameters:
+      - description: Area to create
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/area.CreateAreaRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: The created area
+          schema:
+            $ref: '#/definitions/area.AreaEnvelope'
+        "403":
+          description: PLAN_LIMIT_EXCEEDED
+          schema:
+            $ref: '#/definitions/area.ErrorEnvelope'
+        "409":
+          description: DUPLICATE_NAME
+          schema:
+            $ref: '#/definitions/area.ErrorEnvelope'
+        "422":
+          description: INVALID_INPUT
+          schema:
+            $ref: '#/definitions/area.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Create an area
+      tags:
+      - areas
+  /areas/{areaId}/projects:
+    get:
+      description: Lists the projects within one area, cursor-paginated, with optional
+        filters.
+      parameters:
+      - description: Area ID
+        in: path
+        name: areaId
+        required: true
+        type: string
+      - description: Search by project name
+        in: query
+        name: q
+        type: string
+      - description: Filter by status (active|completed|archived)
+        in: query
+        name: status
+        type: string
+      - description: Filter by favorite
+        in: query
+        name: isFavorite
+        type: boolean
+      - description: Page size (1–100)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Paginated projects
+          schema:
+            $ref: '#/definitions/project.ProjectListEnvelope'
+        "400":
+          description: INVALID_INPUT
+          schema:
+            $ref: '#/definitions/project.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: List projects in an area
+      tags:
+      - projects
+    post:
+      consumes:
+      - application/json
+      description: Creates a project inside an area. Free plan allows up to 5 projects
+        total.
+      parameters:
+      - description: Area ID
+        in: path
+        name: areaId
+        required: true
+        type: string
+      - description: Project to create
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/project.CreateProjectRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: The created project
+          schema:
+            $ref: '#/definitions/project.ProjectEnvelope'
+        "403":
+          description: PLAN_LIMIT_EXCEEDED
+          schema:
+            $ref: '#/definitions/project.ErrorEnvelope'
+        "404":
+          description: AREA_NOT_FOUND
+          schema:
+            $ref: '#/definitions/project.ErrorEnvelope'
+        "409":
+          description: DUPLICATE_NAME
+          schema:
+            $ref: '#/definitions/project.ErrorEnvelope'
+        "422":
+          description: INVALID_INPUT
+          schema:
+            $ref: '#/definitions/project.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Create a project
+      tags:
+      - projects
+  /areas/{id}:
+    delete:
+      description: Deletes an area; its projects are cascade-deleted (their tasks
+        survive unfiled).
+      parameters:
+      - description: Area ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: AREA_NOT_FOUND
+          schema:
+            $ref: '#/definitions/area.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Delete an area
+      tags:
+      - areas
+    get:
+      description: Retrieves a single area by ID. Cross-user access returns 404.
+      parameters:
+      - description: Area ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The area
+          schema:
+            $ref: '#/definitions/area.AreaEnvelope'
+        "404":
+          description: AREA_NOT_FOUND
+          schema:
+            $ref: '#/definitions/area.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Get an area
+      tags:
+      - areas
+    patch:
+      consumes:
+      - application/json
+      description: Partial update of an area (name, color, icon).
+      parameters:
+      - description: Area ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to update (all optional)
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/area.UpdateAreaRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The updated area
+          schema:
+            $ref: '#/definitions/area.AreaEnvelope'
+        "404":
+          description: AREA_NOT_FOUND
+          schema:
+            $ref: '#/definitions/area.ErrorEnvelope'
+        "409":
+          description: DUPLICATE_NAME
+          schema:
+            $ref: '#/definitions/area.ErrorEnvelope'
+        "422":
+          description: INVALID_INPUT
+          schema:
+            $ref: '#/definitions/area.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Update an area
+      tags:
+      - areas
+  /areas/reorder:
+    patch:
+      consumes:
+      - application/json
+      description: Bulk-updates area displayOrder in one transaction (atomic; a foreign
+        id rolls the whole batch back).
+      parameters:
+      - description: New order (id → displayOrder)
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/area.ReorderRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Number of rows updated
+          schema:
+            $ref: '#/definitions/area.ReorderResultEnvelope'
+        "404":
+          description: AREA_NOT_FOUND (a foreign id — whole batch rolled back)
+          schema:
+            $ref: '#/definitions/area.ErrorEnvelope'
+        "422":
+          description: INVALID_INPUT
+          schema:
+            $ref: '#/definitions/area.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Reorder areas
+      tags:
+      - areas
+  /areas/with-projects:
+    get:
+      description: Returns every area with its projects nested — the payload the board
+        renders from.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Areas with nested projects
+          schema:
+            $ref: '#/definitions/area.AreaWithProjectsEnvelope'
+      security:
+      - BearerAuth: []
+      summary: List areas with nested projects
+      tags:
+      - areas
   /auth/forgot-password:
     post:
       consumes:
@@ -390,6 +1138,655 @@ paths:
       summary: Verify email address
       tags:
       - auth
+  /focus:
+    get:
+      description: 'Returns a deterministically-ranked short list of the user''s active+inbox
+        tasks (across all projects) that fit the given time/energy. Scoring: energy
+        match, time-budget fit (over-budget excluded), due/overdue escalation, scheduled
+        proximity, priority tiebreak.'
+      parameters:
+      - description: Minutes available (over-budget tasks excluded)
+        in: query
+        name: available
+        type: integer
+      - description: Current energy (low|medium|deep)
+        in: query
+        name: energy
+        type: string
+      - description: Max results (default 5, max 20)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Ranked tasks
+          schema:
+            $ref: '#/definitions/task.TaskListEnvelope'
+        "400":
+          description: INVALID_INPUT (bad available/energy/limit)
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Focus — what can I do right now?
+      tags:
+      - tasks
+  /projects:
+    get:
+      description: Lists the user's projects across all areas, cursor-paginated, with
+        optional filters.
+      parameters:
+      - description: Search by project name
+        in: query
+        name: q
+        type: string
+      - description: Filter by area
+        in: query
+        name: areaId
+        type: string
+      - description: Filter by status (active|completed|archived)
+        in: query
+        name: status
+        type: string
+      - description: Filter by favorite
+        in: query
+        name: isFavorite
+        type: boolean
+      - description: Page size (1–100)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Paginated projects
+          schema:
+            $ref: '#/definitions/project.ProjectListEnvelope'
+        "400":
+          description: INVALID_INPUT
+          schema:
+            $ref: '#/definitions/project.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: List projects
+      tags:
+      - projects
+  /projects/{id}:
+    delete:
+      description: Deletes a project; its tasks are cascade-deleted.
+      parameters:
+      - description: Project ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: PROJECT_NOT_FOUND
+          schema:
+            $ref: '#/definitions/project.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Delete a project
+      tags:
+      - projects
+    get:
+      description: Retrieves a single project by ID. Cross-user access returns 404.
+      parameters:
+      - description: Project ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The project
+          schema:
+            $ref: '#/definitions/project.ProjectEnvelope'
+        "404":
+          description: PROJECT_NOT_FOUND
+          schema:
+            $ref: '#/definitions/project.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Get a project
+      tags:
+      - projects
+    patch:
+      consumes:
+      - application/json
+      description: Partial update of a project. Setting areaId moves the project between
+        areas (null detaches).
+      parameters:
+      - description: Project ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to update (all optional)
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/project.UpdateProjectRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The updated project
+          schema:
+            $ref: '#/definitions/project.ProjectEnvelope'
+        "404":
+          description: PROJECT_NOT_FOUND
+          schema:
+            $ref: '#/definitions/project.ErrorEnvelope'
+        "409":
+          description: DUPLICATE_NAME
+          schema:
+            $ref: '#/definitions/project.ErrorEnvelope'
+        "422":
+          description: INVALID_INPUT
+          schema:
+            $ref: '#/definitions/project.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Update a project
+      tags:
+      - projects
+  /projects/{projectId}/tasks:
+    get:
+      description: Lists the tasks within a project, with optional filtering, sorting
+        and case-insensitive ILIKE search over title+notes.
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Filter by status (inbox|active|someday|done|cancelled)
+        in: query
+        name: status
+        type: string
+      - description: Filter by priority (low|medium|high)
+        in: query
+        name: priority
+        type: string
+      - description: Filter by energy (low|medium|deep)
+        in: query
+        name: energy
+        type: string
+      - description: ILIKE search over title + notes
+        in: query
+        name: search
+        type: string
+      - description: Sort field (displayOrder|dueDate|priority|title|createdAt|energy)
+        in: query
+        name: sortField
+        type: string
+      - description: Sort order (asc|desc)
+        in: query
+        name: sortOrder
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of tasks
+          schema:
+            $ref: '#/definitions/task.TaskListEnvelope'
+        "400":
+          description: INVALID_INPUT (bad sortField/sortOrder or filter)
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
+        "404":
+          description: PROJECT_NOT_FOUND
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: List tasks in a project
+      tags:
+      - tasks
+    post:
+      consumes:
+      - application/json
+      description: Creates a task in a project. Title-only is valid (quick-add); other
+        fields default server-side (status=inbox, priority=medium, energy=medium,
+        rollsOver=true). Free plan allows 50 active+inbox tasks per project.
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Task to create (only title is required)
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/task.CreateTaskRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: The created task
+          schema:
+            $ref: '#/definitions/task.TaskEnvelope'
+        "403":
+          description: PLAN_LIMIT_EXCEEDED
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
+        "404":
+          description: PROJECT_NOT_FOUND
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
+        "422":
+          description: INVALID_INPUT / INVALID_STATUS / INVALID_PRIORITY
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Create a task
+      tags:
+      - tasks
+  /projects/reorder:
+    patch:
+      consumes:
+      - application/json
+      description: Bulk-updates project displayOrder in one transaction (atomic; a
+        foreign id rolls the whole batch back).
+      parameters:
+      - description: New order (id → displayOrder)
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/project.ReorderRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Number of rows updated
+          schema:
+            $ref: '#/definitions/project.ReorderResultEnvelope'
+        "404":
+          description: PROJECT_NOT_FOUND (a foreign id — whole batch rolled back)
+          schema:
+            $ref: '#/definitions/project.ErrorEnvelope'
+        "422":
+          description: INVALID_INPUT
+          schema:
+            $ref: '#/definitions/project.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Reorder projects
+      tags:
+      - projects
+  /tasks/{id}:
+    delete:
+      description: Hard-deletes a task; its subtasks cascade.
+      parameters:
+      - description: Task ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: TASK_NOT_FOUND
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Delete a task
+      tags:
+      - tasks
+    get:
+      description: Retrieves a single task by ID. Cross-user access returns 404 (no
+        existence leak).
+      parameters:
+      - description: Task ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The task
+          schema:
+            $ref: '#/definitions/task.TaskEnvelope'
+        "404":
+          description: TASK_NOT_FOUND
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Get a task
+      tags:
+      - tasks
+    patch:
+      consumes:
+      - application/json
+      description: Partial update of any mutable field. status→done sets completedAt
+        server-side; moving away from done clears it. A PATCH that moves a task into
+        active/inbox is subject to the plan limit.
+      parameters:
+      - description: Task ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to update (all optional)
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/task.UpdateTaskRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The updated task
+          schema:
+            $ref: '#/definitions/task.TaskEnvelope'
+        "403":
+          description: PLAN_LIMIT_EXCEEDED
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
+        "404":
+          description: TASK_NOT_FOUND
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
+        "422":
+          description: INVALID_INPUT / INVALID_STATUS / INVALID_PRIORITY
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Update a task
+      tags:
+      - tasks
+  /tasks/{id}/reorder:
+    patch:
+      consumes:
+      - application/json
+      description: Moves a task to a target displayOrder; siblings in the project
+        are repacked to a contiguous 0..n-1 sequence (transactional).
+      parameters:
+      - description: Task ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Target displayOrder
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/task.ReorderOneRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The moved task
+          schema:
+            $ref: '#/definitions/task.TaskEnvelope'
+        "404":
+          description: TASK_NOT_FOUND
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
+        "422":
+          description: INVALID_INPUT
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Reorder a task
+      tags:
+      - tasks
+  /tasks/{id}/schedule:
+    patch:
+      consumes:
+      - application/json
+      description: Sets the soft scheduledFor intention + rollsOver flag. scheduledFor
+        null (or absent) unschedules. A bad date returns 400 INVALID_DATE.
+      parameters:
+      - description: Task ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: scheduledFor (ISO date or null) + optional rollsOver
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/task.ScheduleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The updated task
+          schema:
+            $ref: '#/definitions/task.TaskEnvelope'
+        "400":
+          description: INVALID_DATE
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
+        "404":
+          description: TASK_NOT_FOUND
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Schedule a task (soft)
+      tags:
+      - tasks
+  /tasks/{id}/status:
+    patch:
+      consumes:
+      - application/json
+      description: Status-only update (checkbox toggle, move to someday). Same completedAt
+        side-effects and plan-limit semantics as the full PATCH.
+      parameters:
+      - description: Task ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: New status
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/task.SetStatusRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The updated task
+          schema:
+            $ref: '#/definitions/task.TaskEnvelope'
+        "403":
+          description: PLAN_LIMIT_EXCEEDED
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
+        "404":
+          description: TASK_NOT_FOUND
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
+        "422":
+          description: INVALID_INPUT / INVALID_STATUS
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Set task status (shorthand)
+      tags:
+      - tasks
+  /tasks/{taskId}/subtasks:
+    get:
+      description: Lists a task's subtasks, ordered by position. Parent-task ownership
+        is enforced.
+      parameters:
+      - description: Parent task ID
+        in: path
+        name: taskId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of subtasks
+          schema:
+            $ref: '#/definitions/task.SubtaskListEnvelope'
+        "404":
+          description: RESOURCE_NOT_FOUND (task not found / not owned)
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: List subtasks
+      tags:
+      - subtasks
+    post:
+      consumes:
+      - application/json
+      description: Creates a subtask under a task. Appends to the end unless position
+        is given.
+      parameters:
+      - description: Parent task ID
+        in: path
+        name: taskId
+        required: true
+        type: string
+      - description: Subtask (title required, position optional)
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/task.CreateSubtaskRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: The created subtask
+          schema:
+            $ref: '#/definitions/task.SubtaskEnvelope'
+        "404":
+          description: RESOURCE_NOT_FOUND (task not found / not owned)
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
+        "422":
+          description: INVALID_INPUT
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Create a subtask
+      tags:
+      - subtasks
+  /tasks/{taskId}/subtasks/{subtaskId}:
+    delete:
+      description: Deletes a subtask. Parent-task ownership enforced.
+      parameters:
+      - description: Parent task ID
+        in: path
+        name: taskId
+        required: true
+        type: string
+      - description: Subtask ID
+        in: path
+        name: subtaskId
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: RESOURCE_NOT_FOUND
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Delete a subtask
+      tags:
+      - subtasks
+    patch:
+      consumes:
+      - application/json
+      description: Partial update of a subtask (title, done, position). Parent-task
+        ownership enforced.
+      parameters:
+      - description: Parent task ID
+        in: path
+        name: taskId
+        required: true
+        type: string
+      - description: Subtask ID
+        in: path
+        name: subtaskId
+        required: true
+        type: string
+      - description: Fields to update (all optional)
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/task.UpdateSubtaskRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The updated subtask
+          schema:
+            $ref: '#/definitions/task.SubtaskEnvelope'
+        "404":
+          description: RESOURCE_NOT_FOUND
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
+        "422":
+          description: INVALID_INPUT
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Update a subtask
+      tags:
+      - subtasks
+  /time-spread:
+    get:
+      description: Buckets the user's active+inbox tasks into today/tomorrow/thisWeek
+        with the no-guilt roll-forward (a past soft-scheduled task with rollsOver=true
+        carries to today instead of going overdue). someday/done/cancelled are excluded.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Three-bucket task lists
+          schema:
+            $ref: '#/definitions/task.TimeSpreadEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Time spread (today / tomorrow / this week)
+      tags:
+      - tasks
   /users/me:
     delete:
       description: Soft-deletes the authenticated user (sets deleted_at) and revokes

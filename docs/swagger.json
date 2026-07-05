@@ -5,13 +5,467 @@
     ],
     "swagger": "2.0",
     "info": {
-        "description": "REST API for the Nicoflow GTD task-management platform. This spec currently documents the authentication \u0026 user-management surface.",
+        "description": "REST API for the Nicoflow GTD task-management platform. Covers authentication \u0026 user management, Areas, Projects, Tasks (CRUD, quick actions, filter/sort/search), Subtasks, Focus and Time-Spread.",
         "title": "Nicoflow API",
         "contact": {},
         "version": "1.0"
     },
     "basePath": "/v1",
     "paths": {
+        "/areas": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lists the user's areas, cursor-paginated, with optional name search.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "areas"
+                ],
+                "summary": "List areas",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Search by area name",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size (1–100)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Pagination cursor",
+                        "name": "cursor",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Paginated areas",
+                        "schema": {
+                            "$ref": "#/definitions/area.AreaListEnvelope"
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_INPUT (bad limit/cursor)",
+                        "schema": {
+                            "$ref": "#/definitions/area.ErrorEnvelope"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates an area. Free plan allows up to 3 areas.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "areas"
+                ],
+                "summary": "Create an area",
+                "parameters": [
+                    {
+                        "description": "Area to create",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/area.CreateAreaRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "The created area",
+                        "schema": {
+                            "$ref": "#/definitions/area.AreaEnvelope"
+                        }
+                    },
+                    "403": {
+                        "description": "PLAN_LIMIT_EXCEEDED",
+                        "schema": {
+                            "$ref": "#/definitions/area.ErrorEnvelope"
+                        }
+                    },
+                    "409": {
+                        "description": "DUPLICATE_NAME",
+                        "schema": {
+                            "$ref": "#/definitions/area.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT",
+                        "schema": {
+                            "$ref": "#/definitions/area.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/areas/reorder": {
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Bulk-updates area displayOrder in one transaction (atomic; a foreign id rolls the whole batch back).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "areas"
+                ],
+                "summary": "Reorder areas",
+                "parameters": [
+                    {
+                        "description": "New order (id → displayOrder)",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/area.ReorderRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Number of rows updated",
+                        "schema": {
+                            "$ref": "#/definitions/area.ReorderResultEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "AREA_NOT_FOUND (a foreign id — whole batch rolled back)",
+                        "schema": {
+                            "$ref": "#/definitions/area.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT",
+                        "schema": {
+                            "$ref": "#/definitions/area.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/areas/with-projects": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns every area with its projects nested — the payload the board renders from.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "areas"
+                ],
+                "summary": "List areas with nested projects",
+                "responses": {
+                    "200": {
+                        "description": "Areas with nested projects",
+                        "schema": {
+                            "$ref": "#/definitions/area.AreaWithProjectsEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/areas/{areaId}/projects": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lists the projects within one area, cursor-paginated, with optional filters.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "projects"
+                ],
+                "summary": "List projects in an area",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Area ID",
+                        "name": "areaId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Search by project name",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by status (active|completed|archived)",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Filter by favorite",
+                        "name": "isFavorite",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size (1–100)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Pagination cursor",
+                        "name": "cursor",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Paginated projects",
+                        "schema": {
+                            "$ref": "#/definitions/project.ProjectListEnvelope"
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_INPUT",
+                        "schema": {
+                            "$ref": "#/definitions/project.ErrorEnvelope"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a project inside an area. Free plan allows up to 5 projects total.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "projects"
+                ],
+                "summary": "Create a project",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Area ID",
+                        "name": "areaId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Project to create",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/project.CreateProjectRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "The created project",
+                        "schema": {
+                            "$ref": "#/definitions/project.ProjectEnvelope"
+                        }
+                    },
+                    "403": {
+                        "description": "PLAN_LIMIT_EXCEEDED",
+                        "schema": {
+                            "$ref": "#/definitions/project.ErrorEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "AREA_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/project.ErrorEnvelope"
+                        }
+                    },
+                    "409": {
+                        "description": "DUPLICATE_NAME",
+                        "schema": {
+                            "$ref": "#/definitions/project.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT",
+                        "schema": {
+                            "$ref": "#/definitions/project.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/areas/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Retrieves a single area by ID. Cross-user access returns 404.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "areas"
+                ],
+                "summary": "Get an area",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Area ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The area",
+                        "schema": {
+                            "$ref": "#/definitions/area.AreaEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "AREA_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/area.ErrorEnvelope"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Deletes an area; its projects are cascade-deleted (their tasks survive unfiled).",
+                "tags": [
+                    "areas"
+                ],
+                "summary": "Delete an area",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Area ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "AREA_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/area.ErrorEnvelope"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Partial update of an area (name, color, icon).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "areas"
+                ],
+                "summary": "Update an area",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Area ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to update (all optional)",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/area.UpdateAreaRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The updated area",
+                        "schema": {
+                            "$ref": "#/definitions/area.AreaEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "AREA_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/area.ErrorEnvelope"
+                        }
+                    },
+                    "409": {
+                        "description": "DUPLICATE_NAME",
+                        "schema": {
+                            "$ref": "#/definitions/area.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT",
+                        "schema": {
+                            "$ref": "#/definitions/area.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/forgot-password": {
             "post": {
                 "description": "Sends a password-reset email. Always returns 200 regardless of whether the email exists (no user enumeration).",
@@ -380,6 +834,994 @@
                 }
             }
         },
+        "/focus": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns a deterministically-ranked short list of the user's active+inbox tasks (across all projects) that fit the given time/energy. Scoring: energy match, time-budget fit (over-budget excluded), due/overdue escalation, scheduled proximity, priority tiebreak.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "summary": "Focus — what can I do right now?",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Minutes available (over-budget tasks excluded)",
+                        "name": "available",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Current energy (low|medium|deep)",
+                        "name": "energy",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max results (default 5, max 20)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Ranked tasks",
+                        "schema": {
+                            "$ref": "#/definitions/task.TaskListEnvelope"
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_INPUT (bad available/energy/limit)",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/projects": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lists the user's projects across all areas, cursor-paginated, with optional filters.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "projects"
+                ],
+                "summary": "List projects",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Search by project name",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by area",
+                        "name": "areaId",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by status (active|completed|archived)",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Filter by favorite",
+                        "name": "isFavorite",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size (1–100)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Pagination cursor",
+                        "name": "cursor",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Paginated projects",
+                        "schema": {
+                            "$ref": "#/definitions/project.ProjectListEnvelope"
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_INPUT",
+                        "schema": {
+                            "$ref": "#/definitions/project.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/projects/reorder": {
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Bulk-updates project displayOrder in one transaction (atomic; a foreign id rolls the whole batch back).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "projects"
+                ],
+                "summary": "Reorder projects",
+                "parameters": [
+                    {
+                        "description": "New order (id → displayOrder)",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/project.ReorderRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Number of rows updated",
+                        "schema": {
+                            "$ref": "#/definitions/project.ReorderResultEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "PROJECT_NOT_FOUND (a foreign id — whole batch rolled back)",
+                        "schema": {
+                            "$ref": "#/definitions/project.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT",
+                        "schema": {
+                            "$ref": "#/definitions/project.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/projects/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Retrieves a single project by ID. Cross-user access returns 404.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "projects"
+                ],
+                "summary": "Get a project",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The project",
+                        "schema": {
+                            "$ref": "#/definitions/project.ProjectEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "PROJECT_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/project.ErrorEnvelope"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Deletes a project; its tasks are cascade-deleted.",
+                "tags": [
+                    "projects"
+                ],
+                "summary": "Delete a project",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "PROJECT_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/project.ErrorEnvelope"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Partial update of a project. Setting areaId moves the project between areas (null detaches).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "projects"
+                ],
+                "summary": "Update a project",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to update (all optional)",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/project.UpdateProjectRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The updated project",
+                        "schema": {
+                            "$ref": "#/definitions/project.ProjectEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "PROJECT_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/project.ErrorEnvelope"
+                        }
+                    },
+                    "409": {
+                        "description": "DUPLICATE_NAME",
+                        "schema": {
+                            "$ref": "#/definitions/project.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT",
+                        "schema": {
+                            "$ref": "#/definitions/project.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/projects/{projectId}/tasks": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lists the tasks within a project, with optional filtering, sorting and case-insensitive ILIKE search over title+notes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "summary": "List tasks in a project",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by status (inbox|active|someday|done|cancelled)",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by priority (low|medium|high)",
+                        "name": "priority",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by energy (low|medium|deep)",
+                        "name": "energy",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "ILIKE search over title + notes",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort field (displayOrder|dueDate|priority|title|createdAt|energy)",
+                        "name": "sortField",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort order (asc|desc)",
+                        "name": "sortOrder",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "List of tasks",
+                        "schema": {
+                            "$ref": "#/definitions/task.TaskListEnvelope"
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_INPUT (bad sortField/sortOrder or filter)",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "PROJECT_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a task in a project. Title-only is valid (quick-add); other fields default server-side (status=inbox, priority=medium, energy=medium, rollsOver=true). Free plan allows 50 active+inbox tasks per project.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "summary": "Create a task",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Task to create (only title is required)",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/task.CreateTaskRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "The created task",
+                        "schema": {
+                            "$ref": "#/definitions/task.TaskEnvelope"
+                        }
+                    },
+                    "403": {
+                        "description": "PLAN_LIMIT_EXCEEDED",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "PROJECT_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT / INVALID_STATUS / INVALID_PRIORITY",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/tasks/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Retrieves a single task by ID. Cross-user access returns 404 (no existence leak).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "summary": "Get a task",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Task ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The task",
+                        "schema": {
+                            "$ref": "#/definitions/task.TaskEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "TASK_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Hard-deletes a task; its subtasks cascade.",
+                "tags": [
+                    "tasks"
+                ],
+                "summary": "Delete a task",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Task ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "TASK_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Partial update of any mutable field. status→done sets completedAt server-side; moving away from done clears it. A PATCH that moves a task into active/inbox is subject to the plan limit.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "summary": "Update a task",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Task ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to update (all optional)",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/task.UpdateTaskRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The updated task",
+                        "schema": {
+                            "$ref": "#/definitions/task.TaskEnvelope"
+                        }
+                    },
+                    "403": {
+                        "description": "PLAN_LIMIT_EXCEEDED",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "TASK_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT / INVALID_STATUS / INVALID_PRIORITY",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/tasks/{id}/reorder": {
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Moves a task to a target displayOrder; siblings in the project are repacked to a contiguous 0..n-1 sequence (transactional).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "summary": "Reorder a task",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Task ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Target displayOrder",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/task.ReorderOneRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The moved task",
+                        "schema": {
+                            "$ref": "#/definitions/task.TaskEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "TASK_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/tasks/{id}/schedule": {
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sets the soft scheduledFor intention + rollsOver flag. scheduledFor null (or absent) unschedules. A bad date returns 400 INVALID_DATE.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "summary": "Schedule a task (soft)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Task ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "scheduledFor (ISO date or null) + optional rollsOver",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/task.ScheduleRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The updated task",
+                        "schema": {
+                            "$ref": "#/definitions/task.TaskEnvelope"
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_DATE",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "TASK_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/tasks/{id}/status": {
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Status-only update (checkbox toggle, move to someday). Same completedAt side-effects and plan-limit semantics as the full PATCH.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "summary": "Set task status (shorthand)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Task ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "New status",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/task.SetStatusRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The updated task",
+                        "schema": {
+                            "$ref": "#/definitions/task.TaskEnvelope"
+                        }
+                    },
+                    "403": {
+                        "description": "PLAN_LIMIT_EXCEEDED",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "TASK_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT / INVALID_STATUS",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/tasks/{taskId}/subtasks": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lists a task's subtasks, ordered by position. Parent-task ownership is enforced.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "subtasks"
+                ],
+                "summary": "List subtasks",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Parent task ID",
+                        "name": "taskId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "List of subtasks",
+                        "schema": {
+                            "$ref": "#/definitions/task.SubtaskListEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "RESOURCE_NOT_FOUND (task not found / not owned)",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a subtask under a task. Appends to the end unless position is given.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "subtasks"
+                ],
+                "summary": "Create a subtask",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Parent task ID",
+                        "name": "taskId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Subtask (title required, position optional)",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/task.CreateSubtaskRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "The created subtask",
+                        "schema": {
+                            "$ref": "#/definitions/task.SubtaskEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "RESOURCE_NOT_FOUND (task not found / not owned)",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/tasks/{taskId}/subtasks/{subtaskId}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Deletes a subtask. Parent-task ownership enforced.",
+                "tags": [
+                    "subtasks"
+                ],
+                "summary": "Delete a subtask",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Parent task ID",
+                        "name": "taskId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Subtask ID",
+                        "name": "subtaskId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "RESOURCE_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Partial update of a subtask (title, done, position). Parent-task ownership enforced.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "subtasks"
+                ],
+                "summary": "Update a subtask",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Parent task ID",
+                        "name": "taskId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Subtask ID",
+                        "name": "subtaskId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to update (all optional)",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/task.UpdateSubtaskRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The updated subtask",
+                        "schema": {
+                            "$ref": "#/definitions/task.SubtaskEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "RESOURCE_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/time-spread": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Buckets the user's active+inbox tasks into today/tomorrow/thisWeek with the no-guilt roll-forward (a past soft-scheduled task with rollsOver=true carries to today instead of going overdue). someday/done/cancelled are excluded.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "summary": "Time spread (today / tomorrow / this week)",
+                "responses": {
+                    "200": {
+                        "description": "Three-bucket task lists",
+                        "schema": {
+                            "$ref": "#/definitions/task.TimeSpreadEnvelope"
+                        }
+                    }
+                }
+            }
+        },
         "/users/me": {
             "delete": {
                 "security": [
@@ -490,6 +1932,198 @@
         }
     },
     "definitions": {
+        "area.AreaEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/area.AreaView"
+                },
+                "error": {}
+            }
+        },
+        "area.AreaListEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/area.ListAreasResponse"
+                },
+                "error": {}
+            }
+        },
+        "area.AreaView": {
+            "type": "object",
+            "properties": {
+                "color": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "displayOrder": {
+                    "type": "integer"
+                },
+                "icon": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "area.AreaWithProjectsEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/area.AreaWithProjectsView"
+                    }
+                },
+                "error": {}
+            }
+        },
+        "area.AreaWithProjectsView": {
+            "type": "object",
+            "properties": {
+                "color": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "displayOrder": {
+                    "type": "integer"
+                },
+                "icon": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "projects": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/project.ProjectView"
+                    }
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "area.CreateAreaRequest": {
+            "type": "object",
+            "properties": {
+                "color": {
+                    "type": "string"
+                },
+                "icon": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "area.ErrorEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {},
+                "error": {
+                    "$ref": "#/definitions/area.SwaggerError"
+                }
+            }
+        },
+        "area.ListAreasResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/area.AreaView"
+                    }
+                },
+                "nextCursor": {
+                    "type": "string"
+                }
+            }
+        },
+        "area.ReorderItem": {
+            "type": "object",
+            "properties": {
+                "displayOrder": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                }
+            }
+        },
+        "area.ReorderRequest": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/area.ReorderItem"
+                    }
+                }
+            }
+        },
+        "area.ReorderResult": {
+            "type": "object",
+            "properties": {
+                "updated": {
+                    "type": "integer",
+                    "example": 3
+                }
+            }
+        },
+        "area.ReorderResultEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/area.ReorderResult"
+                },
+                "error": {}
+            }
+        },
+        "area.SwaggerError": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "example": "AREA_NOT_FOUND"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "area not found"
+                }
+            }
+        },
+        "area.UpdateAreaRequest": {
+            "type": "object",
+            "properties": {
+                "color": {
+                    "type": "string"
+                },
+                "icon": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
         "auth.AuthEnvelope": {
             "type": "object",
             "properties": {
@@ -629,6 +2263,9 @@
                 "firstName": {
                     "type": "string"
                 },
+                "language": {
+                    "type": "string"
+                },
                 "lastName": {
                     "type": "string"
                 },
@@ -664,6 +2301,9 @@
                 "imageUrl": {
                     "type": "string"
                 },
+                "language": {
+                    "type": "string"
+                },
                 "lastName": {
                     "type": "string"
                 },
@@ -682,6 +2322,500 @@
             "type": "object",
             "properties": {
                 "token": {
+                    "type": "string"
+                }
+            }
+        },
+        "project.CreateProjectRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "dueDate": {
+                    "type": "string"
+                },
+                "folderIcon": {
+                    "type": "string"
+                },
+                "isFavorite": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "project.ErrorEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {},
+                "error": {
+                    "$ref": "#/definitions/project.SwaggerError"
+                }
+            }
+        },
+        "project.ListProjectsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/project.ProjectView"
+                    }
+                },
+                "nextCursor": {
+                    "type": "string"
+                }
+            }
+        },
+        "project.ProjectEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/project.ProjectView"
+                },
+                "error": {}
+            }
+        },
+        "project.ProjectListEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/project.ListProjectsResponse"
+                },
+                "error": {}
+            }
+        },
+        "project.ProjectView": {
+            "type": "object",
+            "properties": {
+                "areaId": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "displayOrder": {
+                    "type": "integer"
+                },
+                "dueDate": {
+                    "type": "string"
+                },
+                "folderIcon": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "isFavorite": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "project.ReorderItem": {
+            "type": "object",
+            "properties": {
+                "displayOrder": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                }
+            }
+        },
+        "project.ReorderRequest": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/project.ReorderItem"
+                    }
+                }
+            }
+        },
+        "project.ReorderResult": {
+            "type": "object",
+            "properties": {
+                "updated": {
+                    "type": "integer",
+                    "example": 3
+                }
+            }
+        },
+        "project.ReorderResultEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/project.ReorderResult"
+                },
+                "error": {}
+            }
+        },
+        "project.SwaggerError": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "example": "PROJECT_NOT_FOUND"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "project not found"
+                }
+            }
+        },
+        "project.UpdateProjectRequest": {
+            "type": "object",
+            "properties": {
+                "areaId": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "dueDate": {
+                    "type": "string"
+                },
+                "folderIcon": {
+                    "type": "string"
+                },
+                "isFavorite": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "task.CreateSubtaskRequest": {
+            "type": "object",
+            "properties": {
+                "position": {
+                    "type": "integer"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "task.CreateTaskRequest": {
+            "type": "object",
+            "properties": {
+                "dueDate": {
+                    "type": "string"
+                },
+                "energy": {
+                    "type": "string"
+                },
+                "estimatedMinutes": {
+                    "type": "integer"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "priority": {
+                    "type": "string"
+                },
+                "rollsOver": {
+                    "type": "boolean"
+                },
+                "scheduledFor": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "task.ErrorEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {},
+                "error": {
+                    "$ref": "#/definitions/task.SwaggerError"
+                }
+            }
+        },
+        "task.ListSubtasksResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/task.SubtaskView"
+                    }
+                }
+            }
+        },
+        "task.ListTasksResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/task.TaskView"
+                    }
+                }
+            }
+        },
+        "task.ReorderOneRequest": {
+            "type": "object",
+            "properties": {
+                "displayOrder": {
+                    "type": "integer"
+                }
+            }
+        },
+        "task.ScheduleRequest": {
+            "type": "object",
+            "properties": {
+                "rollsOver": {
+                    "type": "boolean"
+                },
+                "scheduledFor": {
+                    "type": "string"
+                }
+            }
+        },
+        "task.SetStatusRequest": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "task.SubtaskEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/task.SubtaskView"
+                },
+                "error": {}
+            }
+        },
+        "task.SubtaskListEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/task.ListSubtasksResponse"
+                },
+                "error": {}
+            }
+        },
+        "task.SubtaskView": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "done": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "position": {
+                    "type": "integer"
+                },
+                "taskId": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "task.SwaggerError": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "example": "TASK_NOT_FOUND"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "task not found"
+                }
+            }
+        },
+        "task.TaskEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/task.TaskView"
+                },
+                "error": {}
+            }
+        },
+        "task.TaskListEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/task.ListTasksResponse"
+                },
+                "error": {}
+            }
+        },
+        "task.TaskView": {
+            "type": "object",
+            "properties": {
+                "completedAt": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "displayOrder": {
+                    "type": "integer"
+                },
+                "dueDate": {
+                    "type": "string"
+                },
+                "energy": {
+                    "type": "string"
+                },
+                "estimatedMinutes": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "priority": {
+                    "type": "string"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "rollsOver": {
+                    "type": "boolean"
+                },
+                "scheduledFor": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "task.TimeSpreadEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/task.TimeSpreadResponse"
+                },
+                "error": {}
+            }
+        },
+        "task.TimeSpreadResponse": {
+            "type": "object",
+            "properties": {
+                "thisWeek": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/task.TaskView"
+                    }
+                },
+                "today": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/task.TaskView"
+                    }
+                },
+                "tomorrow": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/task.TaskView"
+                    }
+                }
+            }
+        },
+        "task.UpdateSubtaskRequest": {
+            "type": "object",
+            "properties": {
+                "done": {
+                    "type": "boolean"
+                },
+                "position": {
+                    "type": "integer"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "task.UpdateTaskRequest": {
+            "type": "object",
+            "properties": {
+                "dueDate": {
+                    "type": "string"
+                },
+                "energy": {
+                    "type": "string"
+                },
+                "estimatedMinutes": {
+                    "type": "integer"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "priority": {
+                    "type": "string"
+                },
+                "rollsOver": {
+                    "type": "boolean"
+                },
+                "scheduledFor": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "url": {
                     "type": "string"
                 }
             }
