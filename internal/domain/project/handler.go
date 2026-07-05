@@ -20,7 +20,21 @@ type Handler struct{ svc Service }
 // NewHandler creates a new project Handler.
 func NewHandler(svc Service) *Handler { return &Handler{svc: svc} }
 
-// GET /v1/projects
+// List godoc
+// @Summary      List projects
+// @Description  Lists the user's projects across all areas, cursor-paginated, with optional filters.
+// @Tags         projects
+// @Produce      json
+// @Param        q           query     string  false  "Search by project name"
+// @Param        areaId      query     string  false  "Filter by area"
+// @Param        status      query     string  false  "Filter by status (active|completed|archived)"
+// @Param        isFavorite  query     bool    false  "Filter by favorite"
+// @Param        limit       query     int     false  "Page size (1–100)"
+// @Param        cursor      query     string  false  "Pagination cursor"
+// @Security     BearerAuth
+// @Success      200  {object}  ProjectListEnvelope  "Paginated projects"
+// @Failure      400  {object}  ErrorEnvelope        "INVALID_INPUT"
+// @Router       /projects [get]
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())
 	f, ok := parseProjectFilter(w, r)
@@ -35,7 +49,21 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, resp)
 }
 
-// GET /v1/areas/{areaId}/projects
+// ListByArea godoc
+// @Summary      List projects in an area
+// @Description  Lists the projects within one area, cursor-paginated, with optional filters.
+// @Tags         projects
+// @Produce      json
+// @Param        areaId      path      string  true   "Area ID"
+// @Param        q           query     string  false  "Search by project name"
+// @Param        status      query     string  false  "Filter by status (active|completed|archived)"
+// @Param        isFavorite  query     bool    false  "Filter by favorite"
+// @Param        limit       query     int     false  "Page size (1–100)"
+// @Param        cursor      query     string  false  "Pagination cursor"
+// @Security     BearerAuth
+// @Success      200  {object}  ProjectListEnvelope  "Paginated projects"
+// @Failure      400  {object}  ErrorEnvelope        "INVALID_INPUT"
+// @Router       /areas/{areaId}/projects [get]
 func (h *Handler) ListByArea(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())
 	areaID := chi.URLParam(r, "areaId")
@@ -51,7 +79,16 @@ func (h *Handler) ListByArea(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, resp)
 }
 
-// GET /v1/projects/{id}
+// Get godoc
+// @Summary      Get a project
+// @Description  Retrieves a single project by ID. Cross-user access returns 404.
+// @Tags         projects
+// @Produce      json
+// @Param        id   path      string  true  "Project ID"
+// @Security     BearerAuth
+// @Success      200  {object}  ProjectEnvelope  "The project"
+// @Failure      404  {object}  ErrorEnvelope    "PROJECT_NOT_FOUND"
+// @Router       /projects/{id} [get]
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())
 	id := chi.URLParam(r, "id")
@@ -64,7 +101,21 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, view)
 }
 
-// POST /v1/areas/{areaId}/projects
+// Create godoc
+// @Summary      Create a project
+// @Description  Creates a project inside an area. Free plan allows up to 5 projects total.
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Param        areaId  path      string                true  "Area ID"
+// @Param        body    body      CreateProjectRequest  true  "Project to create"
+// @Security     BearerAuth
+// @Success      201  {object}  ProjectEnvelope  "The created project"
+// @Failure      403  {object}  ErrorEnvelope    "PLAN_LIMIT_EXCEEDED"
+// @Failure      404  {object}  ErrorEnvelope    "AREA_NOT_FOUND"
+// @Failure      409  {object}  ErrorEnvelope    "DUPLICATE_NAME"
+// @Failure      422  {object}  ErrorEnvelope    "INVALID_INPUT"
+// @Router       /areas/{areaId}/projects [post]
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())
 	plan := mw.PlanFromCtx(r.Context())
@@ -84,7 +135,20 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusCreated, view)
 }
 
-// PATCH /v1/projects/{id}
+// Update godoc
+// @Summary      Update a project
+// @Description  Partial update of a project. Setting areaId moves the project between areas (null detaches).
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Param        id    path      string                true  "Project ID"
+// @Param        body  body      UpdateProjectRequest  true  "Fields to update (all optional)"
+// @Security     BearerAuth
+// @Success      200  {object}  ProjectEnvelope  "The updated project"
+// @Failure      404  {object}  ErrorEnvelope    "PROJECT_NOT_FOUND"
+// @Failure      409  {object}  ErrorEnvelope    "DUPLICATE_NAME"
+// @Failure      422  {object}  ErrorEnvelope    "INVALID_INPUT"
+// @Router       /projects/{id} [patch]
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())
 	id := chi.URLParam(r, "id")
@@ -103,7 +167,15 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, view)
 }
 
-// DELETE /v1/projects/{id}
+// Delete godoc
+// @Summary      Delete a project
+// @Description  Deletes a project; its tasks are cascade-deleted.
+// @Tags         projects
+// @Param        id   path  string  true  "Project ID"
+// @Security     BearerAuth
+// @Success      204  "No Content"
+// @Failure      404  {object}  ErrorEnvelope  "PROJECT_NOT_FOUND"
+// @Router       /projects/{id} [delete]
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())
 	id := chi.URLParam(r, "id")
@@ -115,7 +187,18 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	respond.NoContent(w)
 }
 
-// PATCH /v1/projects/reorder
+// Reorder godoc
+// @Summary      Reorder projects
+// @Description  Bulk-updates project displayOrder in one transaction (atomic; a foreign id rolls the whole batch back).
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Param        body  body      ReorderRequest  true  "New order (id → displayOrder)"
+// @Security     BearerAuth
+// @Success      200  {object}  ReorderResultEnvelope  "Number of rows updated"
+// @Failure      404  {object}  ErrorEnvelope          "PROJECT_NOT_FOUND (a foreign id — whole batch rolled back)"
+// @Failure      422  {object}  ErrorEnvelope          "INVALID_INPUT"
+// @Router       /projects/reorder [patch]
 func (h *Handler) Reorder(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())
 
