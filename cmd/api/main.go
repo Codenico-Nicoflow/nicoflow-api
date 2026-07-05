@@ -30,7 +30,7 @@ import (
 
 // @title           Nicoflow API
 // @version         1.0
-// @description     REST API for the Nicoflow GTD task-management platform. This spec currently documents the authentication & user-management surface.
+// @description     REST API for the Nicoflow GTD task-management platform. Covers authentication & user management, Areas, Projects, Tasks (CRUD, quick actions, filter/sort/search), Subtasks, Focus and Time-Spread.
 // @BasePath        /v1
 // @schemes         http https
 // @securityDefinitions.apikey  BearerAuth
