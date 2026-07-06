@@ -35,7 +35,7 @@ func NewHandler(svc Service, subtaskSvc SubtaskService) *Handler {
 // @Param        priority   query     string  false  "Filter by priority (low|medium|high)"
 // @Param        energy     query     string  false  "Filter by energy (low|medium|deep)"
 // @Param        search     query     string  false  "ILIKE search over title + notes"
-// @Param        sortField  query     string  false  "Sort field (displayOrder|dueDate|priority|title|createdAt|energy)"
+// @Param        sortField  query     string  false  "Sort field (displayOrder|scheduledFor|priority|title|createdAt|energy)"
 // @Param        sortOrder  query     string  false  "Sort order (asc|desc)"
 // @Security     BearerAuth
 // @Success      200  {object}  TaskListEnvelope  "List of tasks"

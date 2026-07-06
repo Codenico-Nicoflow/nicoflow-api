@@ -32,9 +32,9 @@ func TestBuildListQuery(t *testing.T) {
 			wantArgKeys: []string{"search"},
 		},
 		{
-			name:      "sort by dueDate desc",
-			filter:    ListTasksFilter{SortField: "dueDate", SortOrder: "desc"},
-			wantInSQL: []string{"ORDER BY due_date DESC"},
+			name:      "sort by scheduledFor desc",
+			filter:    ListTasksFilter{SortField: "scheduledFor", SortOrder: "desc"},
+			wantInSQL: []string{"ORDER BY scheduled_for DESC"},
 		},
 		{
 			name:    "unknown sortField rejected",

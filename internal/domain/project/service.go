@@ -139,7 +139,7 @@ func (s *service) Update(ctx context.Context, userID, id string, req UpdateProje
 	if req.FolderIcon != nil && !AllowedIcons[*req.FolderIcon] {
 		return ProjectView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "folderIcon is not valid")
 	}
-	if req.Description != nil && len(*req.Description) > 2000 {
+	if desc, ok := req.Description.Get(); ok && len(desc) > 2000 {
 		return ProjectView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "description must be 2000 characters or fewer")
 	}
 

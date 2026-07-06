@@ -40,13 +40,13 @@ type pgRepo struct{ db *pgxpool.Pool }
 func NewRepository(db *pgxpool.Pool) Repository { return &pgRepo{db: db} }
 
 const taskSelectCols = ` id, user_id, project_id, title, notes, status, priority, energy,
-	rolls_over, due_date, scheduled_for, estimated_minutes, url, display_order,
+	rolls_over, scheduled_for, estimated_minutes, url, display_order,
 	completed_at, created_at, updated_at `
 
 func scanTask(row pgx.Row, t *Task) error {
 	return row.Scan(
 		&t.ID, &t.UserID, &t.ProjectID, &t.Title, &t.Notes, &t.Status, &t.Priority, &t.Energy,
-		&t.RollsOver, &t.DueDate, &t.ScheduledFor, &t.EstimatedMinutes, &t.URL, &t.DisplayOrder,
+		&t.RollsOver, &t.ScheduledFor, &t.EstimatedMinutes, &t.URL, &t.DisplayOrder,
 		&t.CompletedAt, &t.CreatedAt, &t.UpdatedAt,
 	)
 }
@@ -118,11 +118,11 @@ func (r *pgRepo) Create(ctx context.Context, t Task) (Task, error) {
 		r.db.QueryRow(ctx, `
 			INSERT INTO tasks
 				(id, user_id, project_id, title, notes, status, priority, energy, rolls_over,
-				 due_date, scheduled_for, estimated_minutes, url, display_order, completed_at,
+				 scheduled_for, estimated_minutes, url, display_order, completed_at,
 				 created_at, updated_at)
 			VALUES
 				(@id, @userID, @projectID, @title, @notes, @status, @priority, @energy, @rollsOver,
-				 @dueDate, @scheduledFor, @estimatedMinutes, @url, @displayOrder, @completedAt,
+				 @scheduledFor, @estimatedMinutes, @url, @displayOrder, @completedAt,
 				 NOW(), NOW())
 			RETURNING`+taskSelectCols,
 			pgx.NamedArgs{
@@ -135,7 +135,6 @@ func (r *pgRepo) Create(ctx context.Context, t Task) (Task, error) {
 				"priority":         t.Priority,
 				"energy":           t.Energy,
 				"rollsOver":        t.RollsOver,
-				"dueDate":          t.DueDate,
 				"scheduledFor":     t.ScheduledFor,
 				"estimatedMinutes": t.EstimatedMinutes,
 				"url":              t.URL,
@@ -180,32 +179,34 @@ func (r *pgRepo) Update(ctx context.Context, userID, id string, req UpdateTaskRe
 		r.db.QueryRow(ctx, `
 			UPDATE tasks SET
 				title             = COALESCE(@title, title),
-				notes             = COALESCE(@notes, notes),
 				status            = COALESCE(@status, status),
 				priority          = COALESCE(@priority, priority),
 				energy            = COALESCE(@energy, energy),
 				rolls_over        = COALESCE(@rollsOver, rolls_over),
-				due_date          = COALESCE(@dueDate, due_date),
-				scheduled_for     = COALESCE(@scheduledFor, scheduled_for),
-				estimated_minutes = COALESCE(@estimatedMinutes, estimated_minutes),
-				url               = COALESCE(@url, url),
+				notes             = CASE WHEN @notesSet THEN @notes ELSE notes END,
+				scheduled_for     = CASE WHEN @scheduledForSet THEN @scheduledFor ELSE scheduled_for END,
+				estimated_minutes = CASE WHEN @estimatedMinutesSet THEN @estimatedMinutes ELSE estimated_minutes END,
+				url               = CASE WHEN @urlSet THEN @url ELSE url END,
 				completed_at      = `+completedExpr+`,
 				updated_at        = NOW()
 			WHERE id = @id AND user_id = @userID
 			RETURNING`+taskSelectCols,
 			pgx.NamedArgs{
-				"title":            req.Title,
-				"notes":            req.Notes,
-				"status":           req.Status,
-				"priority":         req.Priority,
-				"energy":           req.Energy,
-				"rollsOver":        req.RollsOver,
-				"dueDate":          req.DueDate,
-				"scheduledFor":     req.ScheduledFor,
-				"estimatedMinutes": req.EstimatedMinutes,
-				"url":              req.URL,
-				"id":               id,
-				"userID":           userID,
+				"title":               req.Title,
+				"status":              req.Status,
+				"priority":            req.Priority,
+				"energy":              req.Energy,
+				"rollsOver":           req.RollsOver,
+				"notes":               req.Notes.Value,
+				"notesSet":            req.Notes.Set,
+				"scheduledFor":        req.ScheduledFor.Value,
+				"scheduledForSet":     req.ScheduledFor.Set,
+				"estimatedMinutes":    req.EstimatedMinutes.Value,
+				"estimatedMinutesSet": req.EstimatedMinutes.Set,
+				"url":                 req.URL.Value,
+				"urlSet":              req.URL.Set,
+				"id":                  id,
+				"userID":              userID,
 			},
 		),
 		&t,

@@ -141,7 +141,6 @@ func (s *service) Create(ctx context.Context, userID, projectID, plan string, re
 		Priority:         req.Priority,
 		Energy:           req.Energy,
 		RollsOver:        rollsOver,
-		DueDate:          req.DueDate,
 		ScheduledFor:     req.ScheduledFor,
 		EstimatedMinutes: req.EstimatedMinutes,
 		URL:              req.URL,
@@ -354,7 +353,7 @@ func validateUpdate(req *UpdateTaskRequest) error {
 	if req.Energy != nil && !allowedEnergies[*req.Energy] {
 		return errInvalidEnergy()
 	}
-	return validateOptional(req.Notes, req.EstimatedMinutes, req.URL)
+	return validateOptional(req.Notes.Value, req.EstimatedMinutes.Value, req.URL.Value)
 }
 
 func validateOptional(notes *string, estimatedMinutes *int, url *string) error {

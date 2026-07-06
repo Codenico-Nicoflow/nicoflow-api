@@ -621,7 +621,7 @@ Delete a project and all its tasks.
 
 ### 3.4 Tasks
 
-> **Calm / energy-aware contract.** Tasks carry an **`energy`** dimension (`low|medium|deep`) alongside `priority`, and distinguish a **hard `dueDate`** (a real deadline — timestamp) from a **soft `scheduledFor`** intention (a date you *mean* to do it). A past soft `scheduledFor` does **not** go overdue — with **`rollsOver: true`** (the default) it carries forward to today, no guilt. Two extra statuses support this: **`someday`** (parked, off the active list) and **`cancelled`**.
+> **Calm / energy-aware contract.** Tasks carry an **`energy`** dimension (`low|medium|deep`) alongside `priority`, and a single **soft `scheduledFor`** intention (a date you *mean* to do it) — there is no hard deadline on a task. A past `scheduledFor` does **not** go overdue — with **`rollsOver: true`** (the default) it carries forward to today, no guilt. Two extra statuses support this: **`someday`** (parked, off the active list) and **`cancelled`**.
 
 > **`ITask` shape** — all IDs are strings.
 > ```ts
@@ -634,7 +634,6 @@ Delete a project and all its tasks.
 >   priority: "low" | "medium" | "high";          // default "medium"
 >   energy: "low" | "medium" | "deep";            // default "medium"
 >   rollsOver: boolean;                           // default true
->   dueDate?: string | null;                      // HARD deadline — RFC3339 timestamp
 >   scheduledFor?: string | null;                 // SOFT intention — ISO date "YYYY-MM-DD"
 >   estimatedMinutes?: number | null;             // 1–1440
 >   url?: string | null;
@@ -645,7 +644,7 @@ Delete a project and all its tasks.
 > }
 > ```
 >
-> **⚠️ `dueDate` vs `scheduledFor` — do not conflate.** `dueDate` is a full RFC3339 **timestamp** (a hard deadline). `scheduledFor` is a bare ISO **date string** `YYYY-MM-DD` (a soft, roll-forward intention) — **not** an enum like `today|tomorrow|this_week`. The today/tomorrow/thisWeek grouping is *computed* server-side by `GET /v1/time-spread` (§3.7) from these two fields; it is never a stored value. See §3.7 for the bucketing rules.
+> **⚠️ `scheduledFor` is the task's only date.** It is a bare ISO **date string** `YYYY-MM-DD` (a soft, roll-forward intention) — **not** a timestamp and **not** an enum like `today|tomorrow|this_week`. Tasks have **no** hard `dueDate` (that field was removed; a hard deadline lives only on **projects**). The today/tomorrow/thisWeek grouping is *computed* server-side by `GET /v1/time-spread` (§3.7) from `scheduledFor` + `rollsOver`; it is never a stored value. See §3.7 for the bucketing rules.
 
 > **List envelope.** List endpoints (`GET …/tasks`, `GET /focus`) return `{ "items": ITask[] }` inside the standard `data` envelope — i.e. `data.items`, **not** a bare `data: ITask[]`. The frontend `transformResponse` must unwrap to `.data.items`.
 
@@ -669,7 +668,7 @@ List all tasks within a project.
 | `priority`  | string | Filter by `low` \| `medium` \| `high`                                 |
 | `energy`    | string | Filter by `low` \| `medium` \| `deep`                                 |
 | `search`    | string | Case-insensitive ILIKE over `title` + `notes`                         |
-| `sortField` | string | `displayOrder` \| `dueDate` \| `priority` \| `title` \| `createdAt` \| `energy` (default `displayOrder`) |
+| `sortField` | string | `displayOrder` \| `scheduledFor` \| `priority` \| `title` \| `createdAt` \| `energy` (default `displayOrder`) |
 | `sortOrder` | string | `asc` \| `desc` (default `asc`)                                       |
 
 **Response — 200 OK** — `{ "items": ITask[] }`
@@ -706,7 +705,6 @@ Create a task inside a project. **Title-only is valid** (quick-add); everything 
   "priority": "high",
   "energy": "deep",
   "rollsOver": true,
-  "dueDate": "2026-05-10T17:00:00Z",
   "scheduledFor": "2026-05-02",
   "estimatedMinutes": 90,
   "url": "https://notion.so/..."
@@ -721,8 +719,7 @@ Create a task inside a project. **Title-only is valid** (quick-add); everything 
 | `priority`         | string  | No       | `low` \| `medium` \| `high` — default `medium`                    |
 | `energy`           | string  | No       | `low` \| `medium` \| `deep` — default `medium`                    |
 | `rollsOver`        | boolean | No       | default `true` (a past `scheduledFor` carries forward)            |
-| `dueDate`          | string  | No       | **Hard deadline** — RFC3339 timestamp                             |
-| `scheduledFor`     | string  | No       | **Soft intention** — ISO date `YYYY-MM-DD`                        |
+| `scheduledFor`     | string  | No       | **Soft intention** (the task's only date) — ISO date `YYYY-MM-DD`, nullable to clear |
 | `estimatedMinutes` | number  | No       | 1–1440                                                            |
 | `url`              | string  | No       | ≤ 2048 characters                                                 |
 
@@ -746,7 +743,6 @@ Partial update of any mutable field. `status→done` sets `completedAt` server-s
   "status": "active",
   "energy": "medium",
   "rollsOver": false,
-  "dueDate": "2026-05-15T09:00:00Z",
   "scheduledFor": "2026-05-03"
 }
 ```
@@ -1004,7 +1000,7 @@ Process an inbox item — convert it to a task or note, or trash it.
     "title": "Buy groceries",
     "notes": "Weekly shop",
     "priority": "medium",
-    "dueDate": "2026-05-05",
+    "scheduledFor": "2026-05-05",
     "estimatedMinutes": 60
   }
 }
@@ -1051,7 +1047,7 @@ These two read-only endpoints derive their lists from the user's `active`+`inbox
 | `energy`    | string | No       | Current energy `low` \| `medium` \| `deep` (match boosts score). Absent = no energy preference. |
 | `limit`     | number | No       | Max results — default `5`, clamped to max `20`.          |
 
-Ranking (deterministic, Free baseline) blends: energy match, time-budget fit (over-budget excluded), due/overdue escalation, soft-scheduled-for-today proximity (incl. rolled-over), and a small priority tiebreak. Ties break by `id`.
+Ranking (deterministic, Free baseline) blends: energy match, time-budget fit (over-budget excluded), `scheduledFor` proximity + escalation (a past-and-rolling-over schedule is the loudest signal, then today, then soon), and a small priority tiebreak. Ties break by `id`.
 
 **Response — 200 OK** — `{ "items": ITask[] }`
 
@@ -1079,12 +1075,11 @@ Tasks bucketed into today / tomorrow / this week, with the **no-guilt roll-forwa
 
 **Bucketing rules** (per task, first match wins, evaluated in the server's timezone):
 
-1. **Soft `scheduledFor`** takes precedence when set:
+Bucketing keys off the task's soft `scheduledFor` (its only date):
    - in the past **and `rollsOver: true`** → **today** (carried over, no guilt);
    - in the past **and `rollsOver: false`** → **dropped** (no bucket);
-   - today → **today**; tomorrow → **tomorrow**; within the next 6 days → **thisWeek**; further out → no bucket.
-2. Otherwise a **hard `dueDate`**: today or earlier → **today**; tomorrow → **tomorrow**; within this week → **thisWeek**.
-3. No `scheduledFor` and no `dueDate` → not in any bucket.
+   - today → **today**; tomorrow → **tomorrow**; within the next 6 days → **thisWeek**; further out → no bucket;
+   - no `scheduledFor` → not in any bucket.
 
 > A past `scheduledFor` never surfaces as "overdue" here — the calm tone (a neutral "carried over" chip, never red) is the frontend's job (E-014, NIC-1384).
 
@@ -1110,7 +1105,6 @@ Parse a natural-language string and extract scheduling intent.
 ```json
 {
   "scheduledFor": "2026-05-04",
-  "dueDate": null,
   "confidence": 0.92
 }
 ```

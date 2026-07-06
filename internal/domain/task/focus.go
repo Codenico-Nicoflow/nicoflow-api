@@ -30,15 +30,13 @@ const (
 	scoreFitsSnug        = 10 // estimate ≤ available
 	scoreNoEstimate      = 5  // unknown duration — mild preference, never excluded
 
-	// Due-date escalation: overdue is the loudest signal, then due soon.
-	scoreOverdue  = 50
-	scoreDueToday = 30
-	scoreDueSoon  = 15 // within dueSoonDays
-	dueSoonDays   = 3
-
-	// Scheduled proximity: a task softly scheduled for today (incl. a rolled-over
-	// past schedule still active) should surface.
-	scoreScheduledToday = 25
+	// Scheduled proximity + escalation: scheduledFor is the only date signal now.
+	// A past schedule that still rolls over is the loudest (the calm model's
+	// "carried over"), then today, then soon.
+	scoreScheduledOverdue = 50 // past scheduledFor, still rolling over
+	scoreScheduledToday   = 30
+	scoreScheduledSoon    = 15 // within scheduledSoonDays
+	scheduledSoonDays     = 3
 
 	// Priority tiebreak — small, only meaningful when other signals tie.
 	scorePriorityHigh   = 6
@@ -55,7 +53,6 @@ func scoreTask(t Task, p FocusParams, now time.Time) int {
 	score := 0
 	score += energyScore(t.Energy, p.Energy)
 	score += budgetScore(t.EstimatedMinutes, p.Available)
-	score += dueScore(t.DueDate, now)
 	score += scheduleScore(t.ScheduledFor, t.RollsOver, now)
 	score += priorityScore(t.Priority)
 	return score
@@ -89,24 +86,6 @@ func budgetScore(estimate *int, available int) int {
 	return scoreFitsSnug
 }
 
-func dueScore(due *time.Time, now time.Time) int {
-	if due == nil {
-		return 0
-	}
-	today := dayStart(now)
-	dueDay := dayStart(*due)
-	switch {
-	case dueDay.Before(today):
-		return scoreOverdue
-	case dueDay.Equal(today):
-		return scoreDueToday
-	case dueDay.Before(today.AddDate(0, 0, dueSoonDays+1)):
-		return scoreDueSoon
-	default:
-		return 0
-	}
-}
-
 func scheduleScore(scheduledFor *string, rollsOver bool, now time.Time) int {
 	if scheduledFor == nil {
 		return 0
@@ -117,11 +96,20 @@ func scheduleScore(scheduledFor *string, rollsOver bool, now time.Time) int {
 	}
 	today := dayStart(now)
 	schedDay := dayStart(sched)
-	// Scheduled for today, or a past schedule that rolls over → surfaces today.
-	if schedDay.Equal(today) || (schedDay.Before(today) && rollsOver) {
+	switch {
+	case schedDay.Before(today):
+		// A past schedule only escalates while it rolls over; otherwise it's inert.
+		if rollsOver {
+			return scoreScheduledOverdue
+		}
+		return 0
+	case schedDay.Equal(today):
 		return scoreScheduledToday
+	case schedDay.Before(today.AddDate(0, 0, scheduledSoonDays+1)):
+		return scoreScheduledSoon
+	default:
+		return 0
 	}
-	return 0
 }
 
 func priorityScore(priority string) int {

@@ -280,6 +280,82 @@ func TestIntegration_Task_CRUD(t *testing.T) {
 	assertErrCode(t, resp, "TASK_NOT_FOUND")
 }
 
+func TestIntegration_Task_Update_ClearNullableFields(t *testing.T) {
+	env := newTaskServer(t, "pro")
+	created := createTask(t, env, map[string]any{
+		"title":            "Task",
+		"notes":            "some notes",
+		"scheduledFor":     "2030-01-15",
+		"estimatedMinutes": 45,
+		"url":              "https://example.com",
+	})
+	if created.Notes == nil || created.ScheduledFor == nil ||
+		created.EstimatedMinutes == nil || created.URL == nil {
+		t.Fatalf("setup: expected all fields set, got %+v", created)
+	}
+
+	// Explicit null on every nullable field must clear it.
+	resp := do(t, env.srv, http.MethodPatch, "/v1/tasks/"+created.ID, map[string]any{
+		"notes":            nil,
+		"scheduledFor":     nil,
+		"estimatedMinutes": nil,
+		"url":              nil,
+	}, env.token)
+	assertStatus(t, resp, http.StatusOK)
+	var cleared struct {
+		Data task.TaskView `json:"data"`
+	}
+	decode(t, resp, &cleared)
+	if cleared.Data.Notes != nil {
+		t.Errorf("notes = %v, want null", *cleared.Data.Notes)
+	}
+	if cleared.Data.ScheduledFor != nil {
+		t.Errorf("scheduledFor = %v, want null", *cleared.Data.ScheduledFor)
+	}
+	if cleared.Data.EstimatedMinutes != nil {
+		t.Errorf("estimatedMinutes = %v, want null", *cleared.Data.EstimatedMinutes)
+	}
+	if cleared.Data.URL != nil {
+		t.Errorf("url = %v, want null", *cleared.Data.URL)
+	}
+}
+
+func TestIntegration_Task_Update_PartialPatchPreservesFields(t *testing.T) {
+	env := newTaskServer(t, "pro")
+	created := createTask(t, env, map[string]any{
+		"title":            "Task",
+		"status":           "active",
+		"notes":            "keep me",
+		"scheduledFor":     "2030-01-15",
+		"estimatedMinutes": 45,
+		"url":              "https://example.com",
+	})
+
+	// A status-only PATCH (fields absent, not null) must leave the rest untouched.
+	resp := do(t, env.srv, http.MethodPatch, "/v1/tasks/"+created.ID,
+		map[string]any{"priority": "high"}, env.token)
+	assertStatus(t, resp, http.StatusOK)
+	var out struct {
+		Data task.TaskView `json:"data"`
+	}
+	decode(t, resp, &out)
+	if out.Data.Priority != "high" {
+		t.Errorf("priority = %q, want high", out.Data.Priority)
+	}
+	if out.Data.Notes == nil || *out.Data.Notes != "keep me" {
+		t.Errorf("notes = %v, want preserved", out.Data.Notes)
+	}
+	if out.Data.ScheduledFor == nil {
+		t.Error("scheduledFor wiped by partial patch, want preserved")
+	}
+	if out.Data.EstimatedMinutes == nil || *out.Data.EstimatedMinutes != 45 {
+		t.Errorf("estimatedMinutes = %v, want preserved (45)", out.Data.EstimatedMinutes)
+	}
+	if out.Data.URL == nil || *out.Data.URL != "https://example.com" {
+		t.Errorf("url = %v, want preserved", out.Data.URL)
+	}
+}
+
 func TestIntegration_Task_PlanLimit_ActiveInboxOnly(t *testing.T) {
 	env := newTaskServer(t, "free")
 
