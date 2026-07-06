@@ -1191,7 +1191,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Sort field (displayOrder|dueDate|priority|title|createdAt|energy)",
+                        "description": "Sort field (displayOrder|scheduledFor|priority|title|createdAt|energy)",
                         "name": "sortField",
                         "in": "query"
                     },
@@ -2485,30 +2485,7 @@ const docTemplate = `{
             }
         },
         "project.UpdateProjectRequest": {
-            "type": "object",
-            "properties": {
-                "areaId": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "dueDate": {
-                    "type": "string"
-                },
-                "folderIcon": {
-                    "type": "string"
-                },
-                "isFavorite": {
-                    "type": "boolean"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "status": {
-                    "type": "string"
-                }
-            }
+            "type": "object"
         },
         "task.CreateSubtaskRequest": {
             "type": "object",
@@ -2524,9 +2501,6 @@ const docTemplate = `{
         "task.CreateTaskRequest": {
             "type": "object",
             "properties": {
-                "dueDate": {
-                    "type": "string"
-                },
                 "energy": {
                     "type": "string"
                 },
@@ -2701,9 +2675,6 @@ const docTemplate = `{
                 "displayOrder": {
                     "type": "integer"
                 },
-                "dueDate": {
-                    "type": "string"
-                },
                 "energy": {
                     "type": "string"
                 },
@@ -2789,39 +2760,7 @@ const docTemplate = `{
             }
         },
         "task.UpdateTaskRequest": {
-            "type": "object",
-            "properties": {
-                "dueDate": {
-                    "type": "string"
-                },
-                "energy": {
-                    "type": "string"
-                },
-                "estimatedMinutes": {
-                    "type": "integer"
-                },
-                "notes": {
-                    "type": "string"
-                },
-                "priority": {
-                    "type": "string"
-                },
-                "rollsOver": {
-                    "type": "boolean"
-                },
-                "scheduledFor": {
-                    "type": "string"
-                },
-                "status": {
-                    "type": "string"
-                },
-                "title": {
-                    "type": "string"
-                },
-                "url": {
-                    "type": "string"
-                }
-            }
+            "type": "object"
         }
     },
     "securityDefinitions": {

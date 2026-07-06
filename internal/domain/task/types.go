@@ -18,7 +18,6 @@ type Task struct {
 	Priority         string
 	Energy           string
 	RollsOver        bool
-	DueDate          *time.Time
 	ScheduledFor     *string
 	EstimatedMinutes *int
 	URL              *string
@@ -38,7 +37,6 @@ type TaskView struct {
 	Priority         string  `json:"priority"`
 	Energy           string  `json:"energy"`
 	RollsOver        bool    `json:"rollsOver"`
-	DueDate          *string `json:"dueDate"`
 	ScheduledFor     *string `json:"scheduledFor"`
 	EstimatedMinutes *int    `json:"estimatedMinutes"`
 	URL              *string `json:"url"`
@@ -68,30 +66,28 @@ type ListTasksFilter struct {
 // CreateTaskRequest is the body for POST /projects/:projectId/tasks.
 // Only title is required; everything else has a server-side default.
 type CreateTaskRequest struct {
-	Title            string     `json:"title"`
-	Notes            *string    `json:"notes"`
-	Status           string     `json:"status"`
-	Priority         string     `json:"priority"`
-	Energy           string     `json:"energy"`
-	RollsOver        *bool      `json:"rollsOver"`
-	DueDate          *time.Time `json:"dueDate"`
-	ScheduledFor     *string    `json:"scheduledFor"`
-	EstimatedMinutes *int       `json:"estimatedMinutes"`
-	URL              *string    `json:"url"`
+	Title            string  `json:"title"`
+	Notes            *string `json:"notes"`
+	Status           string  `json:"status"`
+	Priority         string  `json:"priority"`
+	Energy           string  `json:"energy"`
+	RollsOver        *bool   `json:"rollsOver"`
+	ScheduledFor     *string `json:"scheduledFor"`
+	EstimatedMinutes *int    `json:"estimatedMinutes"`
+	URL              *string `json:"url"`
 }
 
 // UpdateTaskRequest is the body for PATCH /tasks/:id — all fields optional.
 type UpdateTaskRequest struct {
-	Title            *string                   `json:"title"`
-	Status           *string                   `json:"status"`
-	Priority         *string                   `json:"priority"`
-	Energy           *string                   `json:"energy"`
-	RollsOver        *bool                     `json:"rollsOver"`
-	Notes            optional.Field[string]    `json:"notes"`
-	DueDate          optional.Field[time.Time] `json:"dueDate"`
-	ScheduledFor     optional.Field[string]    `json:"scheduledFor"`
-	EstimatedMinutes optional.Field[int]       `json:"estimatedMinutes"`
-	URL              optional.Field[string]    `json:"url"`
+	Title            *string                `json:"title"`
+	Status           *string                `json:"status"`
+	Priority         *string                `json:"priority"`
+	Energy           *string                `json:"energy"`
+	RollsOver        *bool                  `json:"rollsOver"`
+	Notes            optional.Field[string] `json:"notes"`
+	ScheduledFor     optional.Field[string] `json:"scheduledFor"`
+	EstimatedMinutes optional.Field[int]    `json:"estimatedMinutes"`
+	URL              optional.Field[string] `json:"url"`
 }
 
 // SetStatusRequest is the body for PATCH /tasks/:id/status.
@@ -129,10 +125,6 @@ func TaskToView(t Task) TaskView {
 		DisplayOrder:     t.DisplayOrder,
 		CreatedAt:        t.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:        t.UpdatedAt.UTC().Format(time.RFC3339),
-	}
-	if t.DueDate != nil {
-		s := t.DueDate.UTC().Format(time.RFC3339)
-		v.DueDate = &s
 	}
 	if t.CompletedAt != nil {
 		s := t.CompletedAt.UTC().Format(time.RFC3339)

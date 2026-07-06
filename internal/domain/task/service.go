@@ -141,7 +141,6 @@ func (s *service) Create(ctx context.Context, userID, projectID, plan string, re
 		Priority:         req.Priority,
 		Energy:           req.Energy,
 		RollsOver:        rollsOver,
-		DueDate:          req.DueDate,
 		ScheduledFor:     req.ScheduledFor,
 		EstimatedMinutes: req.EstimatedMinutes,
 		URL:              req.URL,

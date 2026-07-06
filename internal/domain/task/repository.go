@@ -40,13 +40,13 @@ type pgRepo struct{ db *pgxpool.Pool }
 func NewRepository(db *pgxpool.Pool) Repository { return &pgRepo{db: db} }
 
 const taskSelectCols = ` id, user_id, project_id, title, notes, status, priority, energy,
-	rolls_over, due_date, scheduled_for, estimated_minutes, url, display_order,
+	rolls_over, scheduled_for, estimated_minutes, url, display_order,
 	completed_at, created_at, updated_at `
 
 func scanTask(row pgx.Row, t *Task) error {
 	return row.Scan(
 		&t.ID, &t.UserID, &t.ProjectID, &t.Title, &t.Notes, &t.Status, &t.Priority, &t.Energy,
-		&t.RollsOver, &t.DueDate, &t.ScheduledFor, &t.EstimatedMinutes, &t.URL, &t.DisplayOrder,
+		&t.RollsOver, &t.ScheduledFor, &t.EstimatedMinutes, &t.URL, &t.DisplayOrder,
 		&t.CompletedAt, &t.CreatedAt, &t.UpdatedAt,
 	)
 }
@@ -118,11 +118,11 @@ func (r *pgRepo) Create(ctx context.Context, t Task) (Task, error) {
 		r.db.QueryRow(ctx, `
 			INSERT INTO tasks
 				(id, user_id, project_id, title, notes, status, priority, energy, rolls_over,
-				 due_date, scheduled_for, estimated_minutes, url, display_order, completed_at,
+				 scheduled_for, estimated_minutes, url, display_order, completed_at,
 				 created_at, updated_at)
 			VALUES
 				(@id, @userID, @projectID, @title, @notes, @status, @priority, @energy, @rollsOver,
-				 @dueDate, @scheduledFor, @estimatedMinutes, @url, @displayOrder, @completedAt,
+				 @scheduledFor, @estimatedMinutes, @url, @displayOrder, @completedAt,
 				 NOW(), NOW())
 			RETURNING`+taskSelectCols,
 			pgx.NamedArgs{
@@ -135,7 +135,6 @@ func (r *pgRepo) Create(ctx context.Context, t Task) (Task, error) {
 				"priority":         t.Priority,
 				"energy":           t.Energy,
 				"rollsOver":        t.RollsOver,
-				"dueDate":          t.DueDate,
 				"scheduledFor":     t.ScheduledFor,
 				"estimatedMinutes": t.EstimatedMinutes,
 				"url":              t.URL,
@@ -185,7 +184,6 @@ func (r *pgRepo) Update(ctx context.Context, userID, id string, req UpdateTaskRe
 				energy            = COALESCE(@energy, energy),
 				rolls_over        = COALESCE(@rollsOver, rolls_over),
 				notes             = CASE WHEN @notesSet THEN @notes ELSE notes END,
-				due_date          = CASE WHEN @dueDateSet THEN @dueDate ELSE due_date END,
 				scheduled_for     = CASE WHEN @scheduledForSet THEN @scheduledFor ELSE scheduled_for END,
 				estimated_minutes = CASE WHEN @estimatedMinutesSet THEN @estimatedMinutes ELSE estimated_minutes END,
 				url               = CASE WHEN @urlSet THEN @url ELSE url END,
@@ -201,8 +199,6 @@ func (r *pgRepo) Update(ctx context.Context, userID, id string, req UpdateTaskRe
 				"rollsOver":           req.RollsOver,
 				"notes":               req.Notes.Value,
 				"notesSet":            req.Notes.Set,
-				"dueDate":             req.DueDate.Value,
-				"dueDateSet":          req.DueDate.Set,
 				"scheduledFor":        req.ScheduledFor.Value,
 				"scheduledForSet":     req.ScheduledFor.Set,
 				"estimatedMinutes":    req.EstimatedMinutes.Value,
