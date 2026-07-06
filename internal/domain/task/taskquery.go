@@ -14,7 +14,7 @@ import (
 var sortColumns = map[string]string{
 	"":             "display_order",
 	"displayOrder": "display_order",
-	"dueDate":      "due_date",
+	"scheduledFor": "scheduled_for",
 	"priority":     "priority",
 	"title":        "title",
 	"createdAt":    "created_at",

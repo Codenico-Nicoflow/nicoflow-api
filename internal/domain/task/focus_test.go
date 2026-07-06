@@ -50,31 +50,6 @@ func TestBudgetScore(t *testing.T) {
 	}
 }
 
-func TestDueScore(t *testing.T) {
-	mk := func(daysFromNow int) *time.Time {
-		d := fixedNow.AddDate(0, 0, daysFromNow)
-		return &d
-	}
-	tests := []struct {
-		name string
-		due  *time.Time
-		exp  int
-	}{
-		{"no due", nil, 0},
-		{"overdue", mk(-1), scoreOverdue},
-		{"due today", mk(0), scoreDueToday},
-		{"due in 2 days", mk(2), scoreDueSoon},
-		{"due far", mk(10), 0},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := dueScore(tt.due, fixedNow); got != tt.exp {
-				t.Errorf("dueScore = %d, want %d", got, tt.exp)
-			}
-		})
-	}
-}
-
 func TestScheduleScore(t *testing.T) {
 	day := func(d int) *string {
 		s := fixedNow.AddDate(0, 0, d).Format(scheduledForLayout)
@@ -88,9 +63,10 @@ func TestScheduleScore(t *testing.T) {
 	}{
 		{"unscheduled", nil, true, 0},
 		{"scheduled today", day(0), true, scoreScheduledToday},
-		{"past + rollsOver", day(-2), true, scoreScheduledToday},
+		{"past + rollsOver escalates", day(-2), true, scoreScheduledOverdue},
 		{"past + no rollsOver", day(-2), false, 0},
-		{"future", day(3), true, 0},
+		{"scheduled soon", day(2), true, scoreScheduledSoon},
+		{"future far", day(10), true, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

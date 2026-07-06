@@ -285,12 +285,11 @@ func TestIntegration_Task_Update_ClearNullableFields(t *testing.T) {
 	created := createTask(t, env, map[string]any{
 		"title":            "Task",
 		"notes":            "some notes",
-		"dueDate":          "2030-01-15T00:00:00Z",
 		"scheduledFor":     "2030-01-15",
 		"estimatedMinutes": 45,
 		"url":              "https://example.com",
 	})
-	if created.Notes == nil || created.DueDate == nil || created.ScheduledFor == nil ||
+	if created.Notes == nil || created.ScheduledFor == nil ||
 		created.EstimatedMinutes == nil || created.URL == nil {
 		t.Fatalf("setup: expected all fields set, got %+v", created)
 	}
@@ -298,7 +297,6 @@ func TestIntegration_Task_Update_ClearNullableFields(t *testing.T) {
 	// Explicit null on every nullable field must clear it.
 	resp := do(t, env.srv, http.MethodPatch, "/v1/tasks/"+created.ID, map[string]any{
 		"notes":            nil,
-		"dueDate":          nil,
 		"scheduledFor":     nil,
 		"estimatedMinutes": nil,
 		"url":              nil,
@@ -310,9 +308,6 @@ func TestIntegration_Task_Update_ClearNullableFields(t *testing.T) {
 	decode(t, resp, &cleared)
 	if cleared.Data.Notes != nil {
 		t.Errorf("notes = %v, want null", *cleared.Data.Notes)
-	}
-	if cleared.Data.DueDate != nil {
-		t.Errorf("dueDate = %v, want null", *cleared.Data.DueDate)
 	}
 	if cleared.Data.ScheduledFor != nil {
 		t.Errorf("scheduledFor = %v, want null", *cleared.Data.ScheduledFor)
@@ -331,7 +326,7 @@ func TestIntegration_Task_Update_PartialPatchPreservesFields(t *testing.T) {
 		"title":            "Task",
 		"status":           "active",
 		"notes":            "keep me",
-		"dueDate":          "2030-01-15T00:00:00Z",
+		"scheduledFor":     "2030-01-15",
 		"estimatedMinutes": 45,
 		"url":              "https://example.com",
 	})
@@ -350,8 +345,8 @@ func TestIntegration_Task_Update_PartialPatchPreservesFields(t *testing.T) {
 	if out.Data.Notes == nil || *out.Data.Notes != "keep me" {
 		t.Errorf("notes = %v, want preserved", out.Data.Notes)
 	}
-	if out.Data.DueDate == nil {
-		t.Error("dueDate wiped by partial patch, want preserved")
+	if out.Data.ScheduledFor == nil {
+		t.Error("scheduledFor wiped by partial patch, want preserved")
 	}
 	if out.Data.EstimatedMinutes == nil || *out.Data.EstimatedMinutes != 45 {
 		t.Errorf("estimatedMinutes = %v, want preserved (45)", out.Data.EstimatedMinutes)

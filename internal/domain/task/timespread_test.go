@@ -12,11 +12,6 @@ func schedTask(id string, dayOffset int, rollsOver bool) Task {
 	return Task{ID: id, Status: "active", RollsOver: rollsOver, ScheduledFor: &s}
 }
 
-func dueTask(id string, dayOffset int) Task {
-	d := tsNow.AddDate(0, 0, dayOffset)
-	return Task{ID: id, Status: "active", DueDate: &d}
-}
-
 func inBucket(items []TaskView, id string) bool {
 	for _, it := range items {
 		if it.ID == id {
@@ -34,21 +29,19 @@ func TestBucketTimeSpread(t *testing.T) {
 		schedTask("rolled-over", -2, true),    // past + rollsOver → today
 		schedTask("dropped", -2, false),       // past + no rollsOver → nowhere
 		schedTask("far-future", 30, true),     // beyond this week → nowhere
-		dueTask("due-past", -3),               // hard past due → today
-		dueTask("due-tomorrow", 1),            // hard due tomorrow → tomorrow
-		{ID: "unscheduled", Status: "active"}, // no schedule, no due → nowhere
+		{ID: "unscheduled", Status: "active"}, // no schedule → nowhere
 	}
 
 	got := bucketTimeSpread(candidates, tsNow)
 
 	// today
-	for _, id := range []string{"sched-today", "rolled-over", "due-past"} {
+	for _, id := range []string{"sched-today", "rolled-over"} {
 		if !inBucket(got.Today, id) {
 			t.Errorf("%s should be in today", id)
 		}
 	}
 	// tomorrow
-	for _, id := range []string{"sched-tomorrow", "due-tomorrow"} {
+	for _, id := range []string{"sched-tomorrow"} {
 		if !inBucket(got.Tomorrow, id) {
 			t.Errorf("%s should be in tomorrow", id)
 		}

@@ -14,11 +14,10 @@ type TimeSpreadResponse struct {
 // roll-forward. Pure: `now` is injected, never read here.
 //
 // Placement, first match wins:
-//   - a soft scheduledFor for today, OR a past scheduledFor that rollsOver,
-//     OR a hard dueDate that is today or in the past → today
-//   - scheduledFor or dueDate tomorrow → tomorrow
-//   - scheduledFor or dueDate within the rest of this week (≤ 6 days out) → thisWeek
-//   - a past soft scheduledFor with rollsOver=false → dropped (no bucket)
+//   - a scheduledFor for today, OR a past scheduledFor that rollsOver → today
+//   - scheduledFor tomorrow → tomorrow
+//   - scheduledFor within the rest of this week (≤ 6 days out) → thisWeek
+//   - a past scheduledFor with rollsOver=false → dropped (no bucket)
 //   - anything else (unscheduled / far future) → no bucket
 func bucketTimeSpread(candidates []Task, now time.Time) TimeSpreadResponse {
 	loc := now.Location()
@@ -53,43 +52,27 @@ const (
 )
 
 func placeTask(t Task, loc *time.Location, today, tomorrow, weekEnd time.Time) bucket {
-	// Soft scheduled day (parsed in the user's location) takes precedence for
-	// roll-forward semantics.
-	if t.ScheduledFor != nil {
-		if sched, err := time.ParseInLocation(scheduledForLayout, *t.ScheduledFor, loc); err == nil {
-			schedDay := dayStart(sched)
-			switch {
-			case schedDay.Before(today):
-				if t.RollsOver {
-					return bucketToday // carried over, no guilt
-				}
-				return bucketNone // missed and doesn't roll → drops off
-			case schedDay.Equal(today):
-				return bucketToday
-			case schedDay.Equal(tomorrow):
-				return bucketTomorrow
-			case schedDay.Before(weekEnd):
-				return bucketThisWeek
-			default:
-				return bucketNone
-			}
-		}
+	if t.ScheduledFor == nil {
+		return bucketNone // unscheduled → not in any time bucket
 	}
-
-	// Hard due date: a past or today due always surfaces today (tone is the FE's job).
-	if t.DueDate != nil {
-		dueDay := dayStart(t.DueDate.In(loc))
-		switch {
-		case !dueDay.After(today): // today or past
-			return bucketToday
-		case dueDay.Equal(tomorrow):
-			return bucketTomorrow
-		case dueDay.Before(weekEnd):
-			return bucketThisWeek
-		default:
-			return bucketNone
-		}
+	sched, err := time.ParseInLocation(scheduledForLayout, *t.ScheduledFor, loc)
+	if err != nil {
+		return bucketNone
 	}
-
-	return bucketNone // unscheduled, no hard due → not in any time bucket
+	schedDay := dayStart(sched)
+	switch {
+	case schedDay.Before(today):
+		if t.RollsOver {
+			return bucketToday // carried over, no guilt
+		}
+		return bucketNone // missed and doesn't roll → drops off
+	case schedDay.Equal(today):
+		return bucketToday
+	case schedDay.Equal(tomorrow):
+		return bucketTomorrow
+	case schedDay.Before(weekEnd):
+		return bucketThisWeek
+	default:
+		return bucketNone
+	}
 }
