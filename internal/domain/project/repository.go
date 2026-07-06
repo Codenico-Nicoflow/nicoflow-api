@@ -146,14 +146,16 @@ func (r *pgRepository) Update(ctx context.Context, userID, id string, req Update
 	// areaID update requires special handling: nil pointer = don't change; pointer to "" = set NULL; pointer to id = set value.
 	var areaIDExpr string
 	args := pgx.NamedArgs{
-		"name":        req.Name,
-		"status":      req.Status,
-		"folderIcon":  req.FolderIcon,
-		"dueDate":     req.DueDate,
-		"isFavorite":  req.IsFavorite,
-		"description": req.Description,
-		"id":          id,
-		"userID":      userID,
+		"name":           req.Name,
+		"status":         req.Status,
+		"folderIcon":     req.FolderIcon,
+		"isFavorite":     req.IsFavorite,
+		"dueDate":        req.DueDate.Value,
+		"dueDateSet":     req.DueDate.Set,
+		"description":    req.Description.Value,
+		"descriptionSet": req.Description.Set,
+		"id":             id,
+		"userID":         userID,
 	}
 
 	if req.AreaID == nil {
@@ -171,9 +173,9 @@ func (r *pgRepository) Update(ctx context.Context, userID, id string, req Update
 			name        = COALESCE(@name, name),
 			status      = COALESCE(@status, status),
 			folder_icon = COALESCE(@folderIcon, folder_icon),
-			due_date    = COALESCE(@dueDate, due_date),
 			is_favorite = COALESCE(@isFavorite, is_favorite),
-			description = COALESCE(@description, description),
+			due_date    = CASE WHEN @dueDateSet THEN @dueDate ELSE due_date END,
+			description = CASE WHEN @descriptionSet THEN @description ELSE description END,
 			area_id     = `+areaIDExpr+`,
 			updated_at  = NOW()
 		WHERE id = @id AND user_id = @userID

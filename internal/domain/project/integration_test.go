@@ -380,7 +380,7 @@ func TestIntegration_Project_Update_MoveToAnotherArea(t *testing.T) {
 	p := createProject(t, env.srv, env.token, env.areaID, "Moveable")
 
 	resp := do(t, env.srv, http.MethodPatch, "/v1/projects/"+p.ID,
-		project.UpdateProjectRequest{AreaID: &areaB}, env.token)
+		map[string]any{"areaId": areaB}, env.token)
 	assertStatus(t, resp, http.StatusOK)
 
 	var pEnv struct {
@@ -417,9 +417,8 @@ func TestIntegration_Project_Update_DetachFromArea(t *testing.T) {
 	env := newProjectServer(t)
 	p := createProject(t, env.srv, env.token, env.areaID, "Detachable")
 
-	emptyArea := ""
 	resp := do(t, env.srv, http.MethodPatch, "/v1/projects/"+p.ID,
-		project.UpdateProjectRequest{AreaID: &emptyArea}, env.token)
+		map[string]any{"areaId": ""}, env.token)
 	assertStatus(t, resp, http.StatusOK)
 
 	var pEnv struct {
@@ -622,5 +621,75 @@ func TestIntegration_Project_Reorder_CrossUserRejected(t *testing.T) {
 	decodeBody(t, getResp, &getEnv)
 	if getEnv.Data.DisplayOrder == 10 {
 		t.Error("expected atomic rollback: user B's project displayOrder must not have changed")
+	}
+}
+
+func TestIntegration_Project_Update_ClearNullableFields(t *testing.T) {
+	env := newProjectServer(t)
+	resp := do(t, env.srv, http.MethodPost, fmt.Sprintf("/v1/areas/%s/projects", env.areaID),
+		map[string]any{
+			"name":        "P",
+			"status":      "active",
+			"folderIcon":  "folder",
+			"dueDate":     "2030-01-15T00:00:00Z",
+			"description": "some description",
+		}, env.token)
+	assertStatus(t, resp, http.StatusCreated)
+	var created struct {
+		Data project.ProjectView `json:"data"`
+	}
+	decodeBody(t, resp, &created)
+	if created.Data.DueDate == nil || created.Data.Description == nil {
+		t.Fatalf("setup: expected dueDate + description set, got %+v", created.Data)
+	}
+
+	// Explicit null must clear both.
+	resp = do(t, env.srv, http.MethodPatch, "/v1/projects/"+created.Data.ID,
+		map[string]any{"dueDate": nil, "description": nil}, env.token)
+	assertStatus(t, resp, http.StatusOK)
+	var cleared struct {
+		Data project.ProjectView `json:"data"`
+	}
+	decodeBody(t, resp, &cleared)
+	if cleared.Data.DueDate != nil {
+		t.Errorf("dueDate = %v, want null", *cleared.Data.DueDate)
+	}
+	if cleared.Data.Description != nil {
+		t.Errorf("description = %v, want null", *cleared.Data.Description)
+	}
+}
+
+func TestIntegration_Project_Update_PartialPatchPreservesFields(t *testing.T) {
+	env := newProjectServer(t)
+	resp := do(t, env.srv, http.MethodPost, fmt.Sprintf("/v1/areas/%s/projects", env.areaID),
+		map[string]any{
+			"name":        "P",
+			"status":      "active",
+			"folderIcon":  "folder",
+			"dueDate":     "2030-01-15T00:00:00Z",
+			"description": "keep me",
+		}, env.token)
+	assertStatus(t, resp, http.StatusCreated)
+	var created struct {
+		Data project.ProjectView `json:"data"`
+	}
+	decodeBody(t, resp, &created)
+
+	// A name-only PATCH (dueDate + description absent) must preserve them.
+	resp = do(t, env.srv, http.MethodPatch, "/v1/projects/"+created.Data.ID,
+		map[string]any{"name": "Renamed"}, env.token)
+	assertStatus(t, resp, http.StatusOK)
+	var out struct {
+		Data project.ProjectView `json:"data"`
+	}
+	decodeBody(t, resp, &out)
+	if out.Data.Name != "Renamed" {
+		t.Errorf("name = %q, want Renamed", out.Data.Name)
+	}
+	if out.Data.DueDate == nil {
+		t.Error("dueDate wiped by partial patch, want preserved")
+	}
+	if out.Data.Description == nil || *out.Data.Description != "keep me" {
+		t.Errorf("description = %v, want preserved", out.Data.Description)
 	}
 }

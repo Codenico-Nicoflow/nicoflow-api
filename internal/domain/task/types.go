@@ -1,7 +1,11 @@
 // Package task contains the task and subtask domain.
 package task
 
-import "time"
+import (
+	"time"
+
+	"github.com/nicoflow/nicoflow-api/pkg/optional"
+)
 
 // Task is the internal domain model for a task.
 type Task struct {
@@ -78,16 +82,16 @@ type CreateTaskRequest struct {
 
 // UpdateTaskRequest is the body for PATCH /tasks/:id — all fields optional.
 type UpdateTaskRequest struct {
-	Title            *string    `json:"title"`
-	Notes            *string    `json:"notes"`
-	Status           *string    `json:"status"`
-	Priority         *string    `json:"priority"`
-	Energy           *string    `json:"energy"`
-	RollsOver        *bool      `json:"rollsOver"`
-	DueDate          *time.Time `json:"dueDate"`
-	ScheduledFor     *string    `json:"scheduledFor"`
-	EstimatedMinutes *int       `json:"estimatedMinutes"`
-	URL              *string    `json:"url"`
+	Title            *string                   `json:"title"`
+	Status           *string                   `json:"status"`
+	Priority         *string                   `json:"priority"`
+	Energy           *string                   `json:"energy"`
+	RollsOver        *bool                     `json:"rollsOver"`
+	Notes            optional.Field[string]    `json:"notes"`
+	DueDate          optional.Field[time.Time] `json:"dueDate"`
+	ScheduledFor     optional.Field[string]    `json:"scheduledFor"`
+	EstimatedMinutes optional.Field[int]       `json:"estimatedMinutes"`
+	URL              optional.Field[string]    `json:"url"`
 }
 
 // SetStatusRequest is the body for PATCH /tasks/:id/status.

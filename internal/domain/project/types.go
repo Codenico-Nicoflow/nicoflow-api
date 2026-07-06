@@ -1,6 +1,10 @@
 package project
 
-import "time"
+import (
+	"time"
+
+	"github.com/nicoflow/nicoflow-api/pkg/optional"
+)
 
 // Project is the internal domain model.
 type Project struct {
@@ -51,13 +55,13 @@ type CreateProjectRequest struct {
 
 // UpdateProjectRequest is the body for PATCH /projects/:id — all fields optional.
 type UpdateProjectRequest struct {
-	Name        *string    `json:"name"`
-	AreaID      *string    `json:"areaId"`
-	Status      *string    `json:"status"`
-	FolderIcon  *string    `json:"folderIcon"`
-	DueDate     *time.Time `json:"dueDate"`
-	IsFavorite  *bool      `json:"isFavorite"`
-	Description *string    `json:"description"`
+	Name        *string                   `json:"name"`
+	AreaID      *string                   `json:"areaId"`
+	Status      *string                   `json:"status"`
+	FolderIcon  *string                   `json:"folderIcon"`
+	IsFavorite  *bool                     `json:"isFavorite"`
+	DueDate     optional.Field[time.Time] `json:"dueDate"`
+	Description optional.Field[string]    `json:"description"`
 }
 
 // ReorderItem is a single entry in a reorder request.
