@@ -48,7 +48,7 @@ type Service interface {
 	Schedule(ctx context.Context, userID, id string, req ScheduleRequest) (TaskView, error)
 	ReorderOne(ctx context.Context, userID, id string, displayOrder int) (TaskView, error)
 	Focus(ctx context.Context, userID string, p FocusParams) (ListTasksResponse, error)
-	TimeSpread(ctx context.Context, userID string) (TimeSpreadResponse, error)
+	TimeSpread(ctx context.Context, userID string, loc *time.Location) (TimeSpreadResponse, error)
 }
 
 type service struct {
@@ -223,13 +223,17 @@ func (s *service) Focus(ctx context.Context, userID string, p FocusParams) (List
 
 // TimeSpread buckets the user's active+inbox tasks into today/tomorrow/this-week
 // with the no-guilt roll-forward. Bucketing is pure (timespread.go); the clock
-// is injected so tests are reproducible.
-func (s *service) TimeSpread(ctx context.Context, userID string) (TimeSpreadResponse, error) {
+// is injected so tests are reproducible. `loc` sets which day boundary counts as
+// "today" — the injected now is anchored to it before bucketing.
+func (s *service) TimeSpread(ctx context.Context, userID string, loc *time.Location) (TimeSpreadResponse, error) {
+	if loc == nil {
+		loc = time.UTC
+	}
 	candidates, err := s.repo.ListActiveInboxByUser(ctx, userID)
 	if err != nil {
 		return TimeSpreadResponse{}, err
 	}
-	return bucketTimeSpread(candidates, s.now()), nil
+	return bucketTimeSpread(candidates, s.now().In(loc)), nil
 }
 
 // SetStatus is a shorthand for a status-only PATCH (checkbox toggle, move to
