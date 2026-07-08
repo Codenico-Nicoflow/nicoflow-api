@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog/log"
@@ -326,17 +327,34 @@ func (h *Handler) Focus(w http.ResponseWriter, r *http.Request) {
 // @Tags         tasks
 // @Produce      json
 // @Security     BearerAuth
+// @Param        tz   query     string  false  "IANA timezone for day bucketing (e.g. Asia/Jerusalem); defaults to UTC"
 // @Success      200  {object}  TimeSpreadEnvelope  "Three-bucket task lists"
+// @Failure      400  {object}  ErrorEnvelope  "INVALID_INPUT — unknown timezone"
 // @Router       /time-spread [get]
 func (h *Handler) TimeSpread(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())
 
-	resp, err := h.svc.TimeSpread(r.Context(), userID)
+	loc, err := parseTimezone(r.URL.Query().Get("tz"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, apperror.ErrInvalidInput, "unknown timezone")
+		return
+	}
+
+	resp, err := h.svc.TimeSpread(r.Context(), userID, loc)
 	if err != nil {
 		writeAppError(w, r, err)
 		return
 	}
 	respond.JSON(w, http.StatusOK, resp)
+}
+
+// parseTimezone resolves an IANA tz name to a *time.Location. Empty → UTC.
+// An unknown zone returns an error the caller maps to 400 INVALID_INPUT.
+func parseTimezone(tz string) (*time.Location, error) {
+	if tz == "" {
+		return time.UTC, nil
+	}
+	return time.LoadLocation(tz)
 }
 
 // ── not yet implemented (later E-013 stories) ────────────────────────────────
