@@ -87,10 +87,20 @@ curl http://localhost:8080/health
 `http://localhost:8080/v1/swagger/index.html` (raw spec at `/v1/swagger/doc.json`). Regenerate after
 changing handler annotations with `make swagger`.
 
-**Postman:** import `docs/postman/Nicoflow-Auth.postman_collection.json` + the
-`docs/postman/Nicoflow-Local.postman_environment.json` environment. Run **Register → Login** (Login
-captures the access token into `{{authToken}}`), then the protected requests authenticate
-automatically. Paste reset/verify tokens (from the emails) into `{{resetToken}}` / `{{verifyToken}}`.
+**Postman:** import `docs/postman/Nicoflow-API.postman_collection.json` (the full API surface) plus
+**one** environment for your target:
+- `Nicoflow-Local.postman_environment.json` — `http://localhost:8080`
+- `Nicoflow-Staging.postman_environment.json` — `https://nicoflow-api-staging.onrender.com`
+- `Nicoflow-Production.postman_environment.json` — `https://api.nicoflow.app`
+
+Select the environment top-right, then run **Auth › Login** (it captures the access token into
+`{{accessToken}}`) — protected requests then authenticate automatically; create requests auto-capture
+`{{areaId}}` / `{{projectId}}` / `{{taskId}}` / `{{subtaskId}}` for chaining. Paste reset/verify tokens
+(from the emails) into `{{resetToken}}` / `{{verifyToken}}`. **`baseUrl` must NOT include `/v1`** — the
+collection paths already carry it; a `/v1` in `baseUrl` yields `/v1/v1/...` and 404s. Staging/production
+envs ship with placeholder creds — fill your own; passwords are `secret`-typed so they aren't persisted.
+Folders tagged **⚠ STUB 501** hit not-yet-implemented routes (bucket, search, attachments, ai,
+billing, notifications). Keep the collection in sync when endpoints change (see `SPEC.md` §3).
 
 **Tear down**
 
