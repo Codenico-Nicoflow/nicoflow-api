@@ -132,10 +132,15 @@ func (r *pgRepository) ListWithProjects(ctx context.Context, userID string) ([]A
 		}
 
 		if pID != nil {
+			// Joined on area_id = a.ID, so a matched project always carries this area.
+			areaID := a.ID
+			if pAreaID != nil {
+				areaID = *pAreaID
+			}
 			p := project.Project{
 				ID:          *pID,
 				UserID:      *pUserID,
-				AreaID:      pAreaID,
+				AreaID:      areaID,
 				Name:        *pName,
 				Status:      *pStatus,
 				FolderIcon:  *pFolderIcon,
