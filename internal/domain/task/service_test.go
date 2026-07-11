@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
+	"github.com/nicoflow/nicoflow-api/pkg/optional"
 )
 
 // ── mock repository ───────────────────────────────────────────────────────────
@@ -113,6 +114,21 @@ func TestService_Create(t *testing.T) {
 			owned:    true,
 			wantErr:  true,
 			wantCode: apperror.ErrInvalidPriority,
+		},
+		{
+			name:     "non-date scheduledFor rejected",
+			plan:     "free",
+			req:      CreateTaskRequest{Title: "x", ScheduledFor: ptr("low")},
+			owned:    true,
+			wantErr:  true,
+			wantCode: apperror.ErrInvalidDate,
+		},
+		{
+			name:       "ISO scheduledFor accepted",
+			plan:       "free",
+			req:        CreateTaskRequest{Title: "x", ScheduledFor: ptr("2026-07-15")},
+			owned:      true,
+			wantStatus: "inbox",
 		},
 		{
 			name:     "project not owned -> 404",
@@ -344,6 +360,42 @@ func TestService_Schedule(t *testing.T) {
 				},
 			}
 			_, err := NewService(repo).Schedule(context.Background(), "u1", "t1", ScheduleRequest{ScheduledFor: tt.date})
+			if tt.wantErr {
+				if ae := appErr(err); ae == nil || ae.Code != tt.wantCode {
+					t.Fatalf("want %s, got %+v", tt.wantCode, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestService_Update_ScheduledForValidation(t *testing.T) {
+	tests := []struct {
+		name     string
+		sf       optional.Field[string]
+		wantErr  bool
+		wantCode string
+	}{
+		{name: "ISO date accepted", sf: optional.Field[string]{Set: true, Value: ptr("2026-07-15")}},
+		{name: "clear (explicit null) accepted", sf: optional.Field[string]{Set: true, Value: nil}},
+		{name: "absent accepted", sf: optional.Field[string]{}},
+		{name: "non-date rejected", sf: optional.Field[string]{Set: true, Value: ptr("low")}, wantErr: true, wantCode: apperror.ErrInvalidDate},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &mockRepo{
+				getByID: func(_ context.Context, _, _ string) (*Task, error) {
+					return &Task{ID: "t1", Status: "active"}, nil
+				},
+				update: func(_ context.Context, _, _ string, _ UpdateTaskRequest, _ completedAtChange) (Task, error) {
+					return Task{ID: "t1"}, nil
+				},
+			}
+			_, err := NewService(repo).Update(context.Background(), "u1", "t1", "pro", UpdateTaskRequest{ScheduledFor: tt.sf})
 			if tt.wantErr {
 				if ae := appErr(err); ae == nil || ae.Code != tt.wantCode {
 					t.Fatalf("want %s, got %+v", tt.wantCode, err)
