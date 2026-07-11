@@ -246,12 +246,22 @@ func (s *service) SetStatus(ctx context.Context, userID, id, plan, status string
 	return s.Update(ctx, userID, id, plan, UpdateTaskRequest{Status: &status})
 }
 
+// validateScheduledFor rejects a non-ISO scheduledFor. It is a soft date
+// (YYYY-MM-DD), never an enum — nil means "unset" and passes.
+func validateScheduledFor(scheduledFor *string) error {
+	if scheduledFor == nil {
+		return nil
+	}
+	if _, err := time.Parse(scheduledForLayout, *scheduledFor); err != nil {
+		return apperror.New(http.StatusBadRequest, apperror.ErrInvalidDate, "scheduledFor must be an ISO date (YYYY-MM-DD)")
+	}
+	return nil
+}
+
 // Schedule sets (or clears) the soft scheduledFor intention + rollsOver flag.
 func (s *service) Schedule(ctx context.Context, userID, id string, req ScheduleRequest) (TaskView, error) {
-	if req.ScheduledFor != nil {
-		if _, err := time.Parse(scheduledForLayout, *req.ScheduledFor); err != nil {
-			return TaskView{}, apperror.New(http.StatusBadRequest, apperror.ErrInvalidDate, "scheduledFor must be an ISO date (YYYY-MM-DD)")
-		}
+	if err := validateScheduledFor(req.ScheduledFor); err != nil {
+		return TaskView{}, err
 	}
 	t, err := s.repo.UpdateSchedule(ctx, userID, id, req.ScheduledFor, req.RollsOver)
 	if err != nil {
@@ -329,6 +339,9 @@ func normalizeCreate(req CreateTaskRequest) (CreateTaskRequest, bool, error) {
 	if err := validateOptional(req.Notes, req.EstimatedMinutes, req.URL); err != nil {
 		return req, false, err
 	}
+	if err := validateScheduledFor(req.ScheduledFor); err != nil {
+		return req, false, err
+	}
 
 	rollsOver := true
 	if req.RollsOver != nil {
@@ -356,6 +369,9 @@ func validateUpdate(req *UpdateTaskRequest) error {
 	}
 	if req.Energy != nil && !allowedEnergies[*req.Energy] {
 		return errInvalidEnergy()
+	}
+	if err := validateScheduledFor(req.ScheduledFor.Value); err != nil {
+		return err
 	}
 	return validateOptional(req.Notes.Value, req.EstimatedMinutes.Value, req.URL.Value)
 }
