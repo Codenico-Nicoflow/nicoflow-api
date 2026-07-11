@@ -1600,3 +1600,52 @@ Nicoflow ships in **English (`en`)**, **Hebrew (`he`)**, and **Russian (`ru`)**.
 - **Localized transactional emails.** Requires a `users.language` column (migration), exposing it on the profile `PATCH`/`UserView`, plumbing stored language (or `Accept-Language`) into `pkg/emailutil/email.go`, and translating the 2 templates. Until then emails are English. This also enables **cross-device** language persistence (vs. the current `localStorage`-only).
 - Locale-aware number/date/currency formatting beyond i18next defaults (revisit with billing).
 - Languages beyond en/he/ru.
+
+---
+
+## §11 Observability & Error Tracking
+
+> Pointer only — product rationale and the full PRD (E-038, Phase 5) live in Confluence §2 (`2.38 PRD: E-038`, page `50462730`) · Jira epic NIC-1441.
+
+Today = **backend logging only**: `zerolog` → stdout → Render dashboard tail (ephemeral, no alerting), plus `request_id` middleware and `/v1/health`. No error tracking, no frontend observability, no persistent/alertable logs.
+
+**Plan (E-038): Sentry-first, OTel-ready.** Committed build = Sentry error tracking on the Go API (panic + `>=500` capture, PII scrubbing, `release`/`APP_ENV` tags, `request_id`) and the React SPA (ErrorBoundary + source maps); `request_id` surfaced to the client so FE errors ↔ BE logs correlate. DSNs are env-driven (`SENTRY_DSN` / `VITE_SENTRY_DSN`) — **absent DSN = no-op** (safe local dev/CI). Deliberately deferred: OpenTelemetry tracing, Datadog APM/metrics, and a Render Log Stream → external drain (fast-follow) — instrument via OTel if/when added so the vendor stays swappable.
+
+---
+
+## §12 Accessibility
+
+> Pointer only — full PRD (E-039, Phase 5) lives in Confluence §2 (`2.39 PRD: E-039`, page `50626563`) · Jira epic NIC-1442.
+
+**Target: WCAG 2.1 AA by Web v1.** Accessibility was never scoped into the design-system/component epics; this epic is a one-time **audit + fix** of shipped components plus a **cross-cutting DoD amendment** (§2.4) so new work stays compliant. Committed: `axe`/`jest-axe` + `@axe-core/playwright` gating covered surfaces at 0 violations in CI; full keyboard operability + visible focus + dialog focus-trap/restore; AA contrast (4.5:1 text / 3:1 UI) on tokens + `ColorField`; `prefers-reduced-motion` honored across Framer Motion; labeled controls + landmarks + live-region; DnD reorder operable by keyboard (dnd-kit `KeyboardSensor` + announcements) with a "Move up / Move down" menu alternative. RTL (he) already done. Deferred: WCAG 2.2 net-new criteria, AAA, native/mobile audit (Phase 6), paid certification/VPAT.
+
+---
+
+## §13 Launch-Readiness Epics (Phase 5)
+
+> Pointers only — full PRDs live in Confluence §2. Four epics that make the product legally + operationally shippable, added alongside E-029–032 (Billing · E2E · Web v1).
+
+| Epic | Jira | Confluence | What |
+| --- | --- | --- | --- |
+| **E-040 Legal & Compliance** | NIC-1443 | 2.40 (`50593797`) | ToS + Privacy + cookie/consent + signup consent; **GDPR** account-delete UX (wires existing `DELETE /v1/users/me` soft-delete) + data-export endpoint. Hard gate on Web v1; consent gates E-041. |
+| **E-041 Product Analytics (PostHog)** | NIC-1444 | 2.41 (`50921473`) | Behavioral event tracking (cross-platform web+mobile+desktop). Typed event taxonomy, funnels (signup→activation, free→Pro), consent-gated, `VITE_POSTHOG_KEY` (absent = no-op). Mobile SDK deferred to E-034+. |
+| **E-042 Help, Support & Static Content** | NIC-1445 | 2.42 (`50823171`) | Help/FAQ, support/contact, onboarding empty-states, marketing/public pages, **SEO/meta/OG** on shareable pages, README polish. |
+| **E-043 Uptime, Logs & Status (Betterstack)** | NIC-1446 | 2.43 (`50692109`) | Render Log Stream → Betterstack Logs (persistent/searchable/alertable), `/v1/health` uptime monitor + alerts, public status page. Infra layer — complements Sentry (E-038), no overlap. |
+
+**Three monitoring layers, no overlap:** Sentry (E-038) = errors · PostHog (E-041) = behavior · Betterstack (E-043) = infra logs/uptime. **Deferred (not now):** PWA/offline (native app covers mobile, Phase 6); error/empty-state polish folds into the E-039 a11y DoD, not a separate epic.
+
+---
+
+## §14 Production-Hardening Epics (Phase 5)
+
+> Pointers only — full PRDs in Confluence §2. Five epics that close operational + security gaps before Web v1. Two (⚠️) are launch-blockers to pull earlier.
+
+| Epic | Jira | Confluence | What |
+| --- | --- | --- | --- |
+| **⚠️ E-044 Email Deliverability** | NIC-1447 | 2.44 (`50659337`) | Mailtrap is a **dev sandbox — mail never delivers**. Swap a real ESP (Resend/Postmark) + SPF/DKIM/DMARC. Blocks verify/reset email in prod. |
+| **E-045 Bot & Abuse Defense** | NIC-1448 | 2.45 (`50626587`) | Cloudflare **Turnstile** on register + forgot-password (BE verify). IP rate-limits alone don't stop a distributed bot pool. No-op without a key. |
+| **⚠️ E-046 Backup & DR** | NIC-1449 | 2.46 (`50626609`) | Render free PG **expires + deletes ~30d**. Persistent plan + PITR + a *tested* restore runbook + retention policy. |
+| **E-047 Security Hardening** | NIC-1450 | 2.47 (`50659358`) | Dependabot + Trivy/govulncheck/pnpm-audit + gitleaks in CI + a pre-v1 security review. Lands the deferred vuln-rescan item. |
+| **E-048 Web Performance & Feature Flags** | NIC-1451 | 2.48 (`51019777`) | Lighthouse CI + bundle-size gate + code-split + **PostHog feature flags** (kill-switch/dark-launch) + cache/CDN headers. |
+
+**Green (post-launch, documented not built):** admin panel (user lookup / impersonate / moderation) · hard-purge job for soft-deleted accounts (GDPR retention, ties E-040/E-046) · in-app product tour. Revisit once there are real users.
