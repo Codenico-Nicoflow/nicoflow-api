@@ -21,6 +21,9 @@ func CORS(allowedOrigins string) func(http.Handler) http.Handler {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				// Required for browsers to send/receive cookies (e.g. HttpOnly refresh_token cookie).
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
+				// Let the SPA read the rate-limit headers cross-origin so it can show a
+				// "try again in Ns" countdown when throttled (429).
+				w.Header().Set("Access-Control-Expose-Headers", "Retry-After, X-RateLimit-Reset, X-RateLimit-Remaining, X-RateLimit-Limit")
 				// Prevents CDN/proxy from serving a cached response with a different Allow-Origin.
 				w.Header().Add("Vary", "Origin")
 			}
