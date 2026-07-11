@@ -102,13 +102,15 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "const _set = (k, v) => (pm.environment.name ? pm.environment : pm.collectionVariables).set(k, v);",
                   "const res = pm.response.json();",
                   "if (res && res.data && res.data.token) {",
-                  "  pm.collectionVariables.set('accessToken', res.data.token);",
-                  "  if (res.data.refreshToken) pm.collectionVariables.set('refreshToken', res.data.refreshToken);",
+                  "  _set('accessToken', res.data.token);",
+                  "  if (res.data.refreshToken) _set('refreshToken', res.data.refreshToken);",
                   "  console.log('accessToken captured');",
                   "}",
-                  "pm.test('200 OK', () => pm.response.code === 200);"
+                  "pm.test('2xx OK', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+                  ""
                 ]
               }
             }
@@ -138,13 +140,15 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "const _set = (k, v) => (pm.environment.name ? pm.environment : pm.collectionVariables).set(k, v);",
                   "const res = pm.response.json();",
                   "if (res && res.data && res.data.token) {",
-                  "  pm.collectionVariables.set('accessToken', res.data.token);",
-                  "  if (res.data.refreshToken) pm.collectionVariables.set('refreshToken', res.data.refreshToken);",
+                  "  _set('accessToken', res.data.token);",
+                  "  if (res.data.refreshToken) _set('refreshToken', res.data.refreshToken);",
                   "  console.log('accessToken captured');",
                   "}",
-                  "pm.test('200 OK', () => pm.response.code === 200);"
+                  "pm.test('2xx OK', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+                  ""
                 ]
               }
             }
@@ -630,9 +634,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "const _set = (k, v) => (pm.environment.name ? pm.environment : pm.collectionVariables).set(k, v);",
                   "const res = pm.response.json();",
                   "if (res && res.data && res.data.id) {",
-                  "  pm.collectionVariables.set('areaId', res.data.id);",
+                  "  _set('areaId', res.data.id);",
                   "  console.log('areaId =', res.data.id);",
                   "}"
                 ]
@@ -901,9 +906,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "const _set = (k, v) => (pm.environment.name ? pm.environment : pm.collectionVariables).set(k, v);",
                   "const res = pm.response.json();",
                   "if (res && res.data && res.data.id) {",
-                  "  pm.collectionVariables.set('projectId', res.data.id);",
+                  "  _set('projectId', res.data.id);",
                   "  console.log('projectId =', res.data.id);",
                   "}"
                 ]
@@ -1166,9 +1172,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "const _set = (k, v) => (pm.environment.name ? pm.environment : pm.collectionVariables).set(k, v);",
                   "const res = pm.response.json();",
                   "if (res && res.data && res.data.id) {",
-                  "  pm.collectionVariables.set('taskId', res.data.id);",
+                  "  _set('taskId', res.data.id);",
                   "  console.log('taskId =', res.data.id);",
                   "}"
                 ]
@@ -1505,9 +1512,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "const _set = (k, v) => (pm.environment.name ? pm.environment : pm.collectionVariables).set(k, v);",
                   "const res = pm.response.json();",
                   "if (res && res.data && res.data.id) {",
-                  "  pm.collectionVariables.set('subtaskId', res.data.id);",
+                  "  _set('subtaskId', res.data.id);",
                   "  console.log('subtaskId =', res.data.id);",
                   "}"
                 ]
