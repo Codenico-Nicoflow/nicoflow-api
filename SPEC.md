@@ -34,6 +34,8 @@ All request and response bodies are `application/json`.
 
 **Interactive docs (Swagger):** the authentication & user-management surface is annotated with swaggo and served at `GET /v1/swagger/index.html` (spec JSON at `/v1/swagger/doc.json`) in non-production environments. Regenerate from the handler annotations with `make swagger`.
 
+**Postman collection:** the full API surface lives in `docs/postman/Nicoflow-API.postman_collection.json` (v2.1) with three environments — `Nicoflow-Local` (`http://localhost:8080`), `Nicoflow-Staging` (`https://nicoflow-api-staging.onrender.com`), `Nicoflow-Production` (`https://api.nicoflow.app`). Import the collection + one environment, select it, and run **Auth › Login** first — its test script captures `accessToken` into a collection variable so every protected request works; create requests auto-capture `areaId`/`projectId`/`taskId`/`subtaskId` for chaining. The `baseUrl` must **not** include `/v1` (the collection paths already carry it; a `/v1` in `baseUrl` produces `/v1/v1/...` → 404). Folders tagged **⚠ STUB 501** hit routes whose handlers return `501 not implemented` (bucket, search, attachments, ai, billing, notifications). **Keep it in sync: whenever a feature adds, removes, or changes an endpoint (or a request/response DTO), update this collection in the same PR** — add the new request, drop the STUB tag once a domain lands, and correct the body. Verify each request against the live route table (`grep -rn '\.\(Get\|Post\|Patch\|Put\|Delete\)("' internal cmd`) before committing.
+
 ---
 
 ### 3.1 Authentication & Users
