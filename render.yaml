@@ -54,6 +54,12 @@ services:
       - key: REQUIRE_EMAIL_VERIFICATION
         value: "true"
 
+      # Observability (E-038): Sentry error tracking. Absent DSN = no-op, so this
+      # stays blank until the epic lands. When cloning this block for the prod
+      # service, carry LOG_LEVEL + SENTRY_DSN across.
+      - key: SENTRY_DSN
+        sync: false
+
       # --- token TTLs (defaults; here for visibility) ---
       - key: JWT_EXPIRY
         value: 15m
