@@ -101,15 +101,14 @@ func (s *service) Create(ctx context.Context, userID, areaID, plan string, req C
 		}
 	}
 
-	var areaIDPtr *string
-	if areaID != "" {
-		areaIDPtr = &areaID
+	if areaID == "" {
+		return ProjectView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "areaId is required")
 	}
 
 	p, err := s.repo.Create(ctx, Project{
 		ID:          uuid.New().String(),
 		UserID:      userID,
-		AreaID:      areaIDPtr,
+		AreaID:      areaID,
 		Name:        req.Name,
 		Status:      req.Status,
 		FolderIcon:  req.FolderIcon,
@@ -132,6 +131,9 @@ func (s *service) Update(ctx context.Context, userID, id string, req UpdateProje
 		if len(*req.Name) > 255 {
 			return ProjectView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "name must be 255 characters or fewer")
 		}
+	}
+	if req.AreaID != nil && strings.TrimSpace(*req.AreaID) == "" {
+		return ProjectView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "areaId cannot be empty")
 	}
 	if req.Status != nil && !allowedStatuses[*req.Status] {
 		return ProjectView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidStatus, "status must be one of: active, completed, archived")

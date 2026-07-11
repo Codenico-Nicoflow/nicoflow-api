@@ -10,7 +10,7 @@ import (
 type Project struct {
 	ID           string
 	UserID       string
-	AreaID       *string
+	AreaID       string
 	Name         string
 	Status       string
 	FolderIcon   string
@@ -25,7 +25,7 @@ type Project struct {
 // ProjectView is the JSON response shape for a single project.
 type ProjectView struct {
 	ID           string  `json:"id"`
-	AreaID       *string `json:"areaId"`
+	AreaID       string  `json:"areaId"`
 	Name         string  `json:"name"`
 	Status       string  `json:"status"`
 	FolderIcon   string  `json:"folderIcon"`

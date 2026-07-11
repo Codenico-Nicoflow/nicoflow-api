@@ -105,11 +105,16 @@ func (r *pgRepository) GetByID(ctx context.Context, userID, id string) (*Project
 }
 
 func (r *pgRepository) Create(ctx context.Context, p Project) (Project, error) {
+	// Source area_id from a user-scoped SELECT so a project can only be created in
+	// an area the caller owns; a foreign/missing area yields no row → NULL → the
+	// NOT NULL constraint rejects it, surfaced below as AREA_NOT_FOUND.
 	err := r.db.QueryRow(ctx, `
 		INSERT INTO projects
 			(id, user_id, area_id, name, status, folder_icon, due_date, is_favorite, description, display_order, created_at, updated_at)
 		VALUES
-			(@id, @userID, @areaID, @name, @status, @folderIcon, @dueDate, @isFavorite, @description, @displayOrder, NOW(), NOW())
+			(@id, @userID,
+			 (SELECT id FROM areas WHERE id = @areaID AND user_id = @userID),
+			 @name, @status, @folderIcon, @dueDate, @isFavorite, @description, @displayOrder, NOW(), NOW())
 		RETURNING`+projectSelectCols,
 		pgx.NamedArgs{
 			"id":           p.ID,
@@ -131,7 +136,7 @@ func (r *pgRepository) Create(ctx context.Context, p Project) (Project, error) {
 		if isUniqueViolation(err) {
 			return Project{}, apperror.New(http.StatusConflict, apperror.ErrDuplicateName, "a project with this name already exists")
 		}
-		if isForeignKeyViolation(err) {
+		if isForeignKeyViolation(err) || isNotNullViolation(err) {
 			return Project{}, apperror.New(http.StatusNotFound, apperror.ErrAreaNotFound, "area not found or does not belong to you")
 		}
 		if isCheckViolation(err) {
@@ -143,7 +148,9 @@ func (r *pgRepository) Create(ctx context.Context, p Project) (Project, error) {
 }
 
 func (r *pgRepository) Update(ctx context.Context, userID, id string, req UpdateProjectRequest) (Project, error) {
-	// areaID update requires special handling: nil pointer = don't change; pointer to "" = set NULL; pointer to id = set value.
+	// areaID update: nil pointer = don't change; pointer to id = move to that area.
+	// A project must always belong to an area, so detaching (empty id) is rejected
+	// upstream in the service and never reaches here.
 	var areaIDExpr string
 	args := pgx.NamedArgs{
 		"name":           req.Name,
@@ -160,10 +167,10 @@ func (r *pgRepository) Update(ctx context.Context, userID, id string, req Update
 
 	if req.AreaID == nil {
 		areaIDExpr = "area_id"
-	} else if *req.AreaID == "" {
-		areaIDExpr = "NULL"
 	} else {
-		areaIDExpr = "@newAreaID"
+		// User-scoped so a project can only move into an area the caller owns; a
+		// foreign/missing area yields NULL → NOT NULL violation → AREA_NOT_FOUND.
+		areaIDExpr = "(SELECT id FROM areas WHERE id = @newAreaID AND user_id = @userID)"
 		args["newAreaID"] = *req.AreaID
 	}
 
@@ -191,6 +198,9 @@ func (r *pgRepository) Update(ctx context.Context, userID, id string, req Update
 		}
 		if isUniqueViolation(err) {
 			return Project{}, apperror.New(http.StatusConflict, apperror.ErrDuplicateName, "a project with this name already exists")
+		}
+		if isForeignKeyViolation(err) || isNotNullViolation(err) {
+			return Project{}, apperror.New(http.StatusNotFound, apperror.ErrAreaNotFound, "area not found or does not belong to you")
 		}
 		if isCheckViolation(err) {
 			return Project{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "invalid project field value")
@@ -371,6 +381,17 @@ func isCheckViolation(err error) bool {
 	var pgErr interface{ SQLState() string }
 	if errors.As(err, &pgErr) {
 		return pgErr.SQLState() == "23514"
+	}
+	return false
+}
+
+// isNotNullViolation reports a NOT NULL constraint failure (23502). For project
+// writes this happens when the user-scoped area subquery finds no row (foreign or
+// missing area) and yields NULL into the now-required area_id column.
+func isNotNullViolation(err error) bool {
+	var pgErr interface{ SQLState() string }
+	if errors.As(err, &pgErr) {
+		return pgErr.SQLState() == "23502"
 	}
 	return false
 }

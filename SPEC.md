@@ -453,7 +453,7 @@ Batch-update `displayOrder` for a set of areas (transactional).
 
 #### DELETE /v1/areas/:id
 
-Delete an area. Contained projects have their `area_id` set to NULL (SET NULL cascade).
+Delete an area. Contained projects (and their tasks/subtasks) are deleted with it (`ON DELETE CASCADE`). A project always belongs to an area.
 
 - **Auth required:** Yes
 
@@ -465,7 +465,7 @@ Delete an area. Contained projects have their `area_id` set to NULL (SET NULL ca
 
 ### 3.3 Projects
 
-> **`IProject` shape** — all IDs are strings (UUID). Fields: `id: string`, `areaId: string | null`, `name: string`, `status: "active"|"completed"|"archived"`, `folderIcon: string`, `dueDate?: string | null` (RFC 3339), `isFavorite?: boolean`, `description?: string | null`, `displayOrder?: number`, `createdAt: string`, `updatedAt: string`. No embedded `area` object is returned.
+> **`IProject` shape** — all IDs are strings (UUID). A project always belongs to an area, so `areaId` is never null. Fields: `id: string`, `areaId: string`, `name: string`, `status: "active"|"completed"|"archived"`, `folderIcon: string`, `dueDate?: string | null` (RFC 3339), `isFavorite?: boolean`, `description?: string | null`, `displayOrder?: number`, `createdAt: string`, `updatedAt: string`. No embedded `area` object is returned.
 
 #### GET /v1/projects
 
@@ -558,7 +558,7 @@ Create a new project inside an area.
 
 #### PATCH /v1/projects/:id
 
-Update a project. All fields optional. Pass `areaId` to move the project to a different area; pass `areaId: null` to detach it from any area.
+Update a project. All fields optional. Pass `areaId` to move the project to a different area (the target area must exist and belong to you). A project must always belong to an area — omit `areaId` to leave it unchanged; an empty `areaId` is rejected with `INVALID_INPUT`.
 
 - **Auth required:** Yes
 
@@ -578,7 +578,7 @@ Update a project. All fields optional. Pass `areaId` to move the project to a di
 
 **Response — 200 OK** — Updated `IProject`
 
-**Errors:** `PROJECT_NOT_FOUND` (404), `INVALID_INPUT` (422), `INVALID_STATUS` (422), `DUPLICATE_NAME` (409)
+**Errors:** `PROJECT_NOT_FOUND` (404), `AREA_NOT_FOUND` (404 — target `areaId` not found or not yours), `INVALID_INPUT` (422 — includes empty `areaId`), `INVALID_STATUS` (422), `DUPLICATE_NAME` (409)
 
 ---
 

@@ -232,8 +232,8 @@ func TestIntegration_Project_Create_HappyPath(t *testing.T) {
 	if pEnv.Data.Name != "Q3 Launch" {
 		t.Errorf("name = %q, want %q", pEnv.Data.Name, "Q3 Launch")
 	}
-	if pEnv.Data.AreaID == nil || *pEnv.Data.AreaID != env.areaID {
-		t.Errorf("areaId = %v, want %q", pEnv.Data.AreaID, env.areaID)
+	if pEnv.Data.AreaID != env.areaID {
+		t.Errorf("areaId = %q, want %q", pEnv.Data.AreaID, env.areaID)
 	}
 	if pEnv.Data.DueDate != nil {
 		t.Errorf("dueDate = %v, want null", pEnv.Data.DueDate)
@@ -387,8 +387,8 @@ func TestIntegration_Project_Update_MoveToAnotherArea(t *testing.T) {
 		Data project.ProjectView `json:"data"`
 	}
 	decodeBody(t, resp, &pEnv)
-	if pEnv.Data.AreaID == nil || *pEnv.Data.AreaID != areaB {
-		t.Errorf("areaId = %v, want %q", pEnv.Data.AreaID, areaB)
+	if pEnv.Data.AreaID != areaB {
+		t.Errorf("areaId = %q, want %q", pEnv.Data.AreaID, areaB)
 	}
 
 	// Confirm it appears in area B's list.
@@ -412,22 +412,28 @@ func TestIntegration_Project_Update_MoveToAnotherArea(t *testing.T) {
 	}
 }
 
-// TestIntegration_Project_Update_DetachFromArea covers test matrix row #24.
-func TestIntegration_Project_Update_DetachFromArea(t *testing.T) {
+// TestIntegration_Project_Update_DetachRejected covers test matrix row #24:
+// a project must always belong to an area, so an empty areaId is rejected.
+func TestIntegration_Project_Update_DetachRejected(t *testing.T) {
 	env := newProjectServer(t)
 	p := createProject(t, env.srv, env.token, env.areaID, "Detachable")
 
 	resp := do(t, env.srv, http.MethodPatch, "/v1/projects/"+p.ID,
 		map[string]any{"areaId": ""}, env.token)
-	assertStatus(t, resp, http.StatusOK)
+	assertStatus(t, resp, http.StatusUnprocessableEntity)
+	assertHTTPErrCode(t, resp, apperror.ErrInvalidInput)
+}
 
-	var pEnv struct {
-		Data project.ProjectView `json:"data"`
-	}
-	decodeBody(t, resp, &pEnv)
-	if pEnv.Data.AreaID != nil {
-		t.Errorf("expected areaId: null, got %q", *pEnv.Data.AreaID)
-	}
+// TestIntegration_Project_Update_MoveToUnknownArea: moving into a foreign or
+// missing area is rejected by the user-scoped area subquery.
+func TestIntegration_Project_Update_MoveToUnknownArea(t *testing.T) {
+	env := newProjectServer(t)
+	p := createProject(t, env.srv, env.token, env.areaID, "Moveable")
+
+	resp := do(t, env.srv, http.MethodPatch, "/v1/projects/"+p.ID,
+		map[string]any{"areaId": "nonexistent-area-id"}, env.token)
+	assertStatus(t, resp, http.StatusNotFound)
+	assertHTTPErrCode(t, resp, apperror.ErrAreaNotFound)
 }
 
 // ── Tests: Delete ─────────────────────────────────────────────────────────────
