@@ -221,9 +221,15 @@ func TestProjectService_Update(t *testing.T) {
 			repoProj: project.Project{ID: "p1", Name: "Renamed"},
 		},
 		{
-			name:     "move to inbox (empty areaId)",
-			req:      project.UpdateProjectRequest{AreaID: strPtr("")},
-			repoProj: project.Project{ID: "p1", AreaID: nil},
+			name:       "empty areaId rejected — a project must keep an area",
+			req:        project.UpdateProjectRequest{AreaID: strPtr("")},
+			wantCode:   apperror.ErrInvalidInput,
+			wantStatus: http.StatusUnprocessableEntity,
+		},
+		{
+			name:     "move to another area",
+			req:      project.UpdateProjectRequest{AreaID: strPtr("a2")},
+			repoProj: project.Project{ID: "p1", AreaID: "a2"},
 		},
 		{
 			name:       "not found",

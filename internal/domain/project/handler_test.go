@@ -141,8 +141,7 @@ func TestHandler_Create(t *testing.T) {
 				if userID != "user1" || plan != "free" {
 					t.Errorf("ctx not propagated: userID=%q plan=%q", userID, plan)
 				}
-				aid := areaID
-				return project.ProjectView{ID: "p1", AreaID: &aid, Name: req.Name, Status: "active", FolderIcon: "folder"}, nil
+				return project.ProjectView{ID: "p1", AreaID: areaID, Name: req.Name, Status: "active", FolderIcon: "folder"}, nil
 			},
 		})
 		body, _ := json.Marshal(project.CreateProjectRequest{Name: "Q3 Launch", Status: "active"})
@@ -162,7 +161,7 @@ func TestHandler_Create(t *testing.T) {
 		if err := json.Unmarshal(e.Data, &view); err != nil {
 			t.Fatalf("decode data: %v", err)
 		}
-		if view.ID != "p1" || view.AreaID == nil || *view.AreaID != "a1" {
+		if view.ID != "p1" || view.AreaID != "a1" {
 			t.Errorf("unexpected view: %+v", view)
 		}
 	})
@@ -236,15 +235,17 @@ func TestHandler_Get_CrossUserNotFound(t *testing.T) {
 	assertErr(t, w, http.StatusNotFound, apperror.ErrProjectNotFound)
 }
 
-func TestHandler_Update_DetachToNull(t *testing.T) {
+func TestHandler_Update_MoveArea(t *testing.T) {
 	h := project.NewHandler(&mockService{
 		updateFn: func(_ context.Context, _, id string, req project.UpdateProjectRequest) (project.ProjectView, error) {
-			// areaId explicitly set to null in the body decodes to a nil *string;
-			// the view should reflect a detached project.
-			return project.ProjectView{ID: id, AreaID: nil, Name: "Detached"}, nil
+			// A project always belongs to an area; areaId carries the target area to move into.
+			if req.AreaID == nil {
+				t.Fatal("areaId should have decoded to a non-nil pointer")
+			}
+			return project.ProjectView{ID: id, AreaID: *req.AreaID, Name: "Moved"}, nil
 		},
 	})
-	r := withURLParam(authReq(http.MethodPatch, "/v1/projects/p1", "pro", []byte(`{"areaId":null}`)), "id", "p1")
+	r := withURLParam(authReq(http.MethodPatch, "/v1/projects/p1", "pro", []byte(`{"areaId":"a2"}`)), "id", "p1")
 	w := httptest.NewRecorder()
 
 	h.Update(w, r)
@@ -254,8 +255,8 @@ func TestHandler_Update_DetachToNull(t *testing.T) {
 	}
 	var view project.ProjectView
 	json.Unmarshal(decode(t, w).Data, &view)
-	if view.AreaID != nil {
-		t.Errorf("areaId: got %v, want nil", *view.AreaID)
+	if view.AreaID != "a2" {
+		t.Errorf("areaId: got %q, want a2", view.AreaID)
 	}
 }
 

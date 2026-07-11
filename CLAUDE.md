@@ -89,23 +89,26 @@ Dependency direction: Handler → Service interface → Repository interface. In
 - Never modify a deployed migration — always add a new numbered `.up.sql` / `.down.sql` pair.
 - `display_order` / `sort_order` use `INT DEFAULT 0`. Sparse ordering is intentional.
 
-### Migrations (001–025 applied)
+### Migrations (001–027 applied)
 
 ```
-001 create_users                     014 alter_users_add_profile_fields
-002 create_refresh_tokens            015 create_password_reset_tokens
-003 create_areas                     016 create_biometric_credentials
-004 create_projects                  017 users_login_lockout
-005 create_tasks                     018 users_email_partial_unique
-006 create_subtasks                  019 enrich_areas_projects
-007 create_user_plans                020 email_verification
-008 create_webhook_events            021 users_username_partial_unique
-009 create_ai_sessions               022 drop_folder_icon_check
-010 create_ai_messages               023 users_add_language
-011 create_ai_usage_monthly          024 projects_area_cascade
-012 users_soft_delete                025 tasks_energy_aware
-013 folder_icons_project
+001 create_users                     015 create_password_reset_tokens
+002 create_refresh_tokens            016 create_biometric_credentials
+003 create_areas                     017 users_login_lockout
+004 create_projects                  018 users_email_partial_unique
+005 create_tasks                     019 enrich_areas_projects
+006 create_subtasks                  020 email_verification
+007 create_user_plans                021 users_username_partial_unique
+008 create_webhook_events            022 drop_folder_icon_check
+009 create_ai_sessions               023 users_add_language
+010 create_ai_messages               024 projects_area_cascade
+011 create_ai_usage_monthly          025 tasks_energy_aware
+012 users_soft_delete                026 tasks_drop_due_date
+013 folder_icons_project             027 projects_area_required
+014 alter_users_add_profile_fields
 ```
+
+> **027 `projects_area_required`** makes `projects.area_id NOT NULL` — a project must always belong to an area (matches the `Area › Project › Task` hierarchy and 024's cascade). Area-less projects are deleted by the migration. Create/Update source `area_id` from a **user-scoped `SELECT`** so a project can only live in an area the caller owns; a foreign/missing area → `AREA_NOT_FOUND`.
 
 Run with `make migrate-up` / `make migrate-down` (one step) / `make docker-migrate-up` (against the docker Postgres). New pair: `make migrate-create name=<desc>`.
 
