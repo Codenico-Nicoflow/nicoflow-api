@@ -93,12 +93,15 @@ func main() {
 	taskSvc := task.NewService(taskRepo)
 	subtaskSvc := task.NewSubtaskService(task.NewSubtaskRepository(pool))
 
+	// Bucket (inbox) — process turns an item into a task via the task service.
+	bucketSvc := bucket.NewService(bucket.NewRepository(pool), taskSvc)
+
 	handlers := handler.Handlers{
 		Auth:    auth.NewHandler(authSvc, cookieCfg),
 		Area:    area.NewHandler(areaSvc),
 		Project: project.NewHandler(projectSvc),
 		Task:    task.NewHandler(taskSvc, subtaskSvc),
-		Bucket:  bucket.NewHandler(nil),
+		Bucket:  bucket.NewHandler(bucketSvc),
 		AI:      ai.NewHandler(nil),
 		Billing: billing.NewHandler(nil),
 	}
