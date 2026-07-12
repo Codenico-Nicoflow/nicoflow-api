@@ -1,7 +1,11 @@
 // Package bucket contains the inbox (quick-capture) domain.
 package bucket
 
-import "time"
+import (
+	"time"
+
+	"github.com/nicoflow/nicoflow-api/internal/domain/task"
+)
 
 // Processing result values for a bucket item.
 const (
@@ -64,14 +68,28 @@ type ProcessBucketRequest struct {
 
 // ProcessTaskDetails is the narrow subset of task fields the process dialog sends.
 // Energy/status/rollsOver/scheduledFor are intentionally omitted so the task
-// service fills its own defaults. The mapping to task.CreateTaskRequest lives in
-// the service layer (Story 3), where task creation is orchestrated.
+// service fills its own defaults.
 type ProcessTaskDetails struct {
 	Title            string  `json:"title"`
 	Notes            *string `json:"notes"`
 	Priority         *string `json:"priority"`
 	EstimatedMinutes *int    `json:"estimatedMinutes"`
 	URL              *string `json:"url"`
+}
+
+// toTaskCreateRequest maps the process details onto the task create contract.
+// Priority falls through to the task service default when nil.
+func (d ProcessTaskDetails) toTaskCreateRequest() task.CreateTaskRequest {
+	req := task.CreateTaskRequest{
+		Title:            d.Title,
+		Notes:            d.Notes,
+		EstimatedMinutes: d.EstimatedMinutes,
+		URL:              d.URL,
+	}
+	if d.Priority != nil {
+		req.Priority = *d.Priority
+	}
+	return req
 }
 
 // BucketToView maps the domain model to its JSON response shape.
