@@ -11,7 +11,9 @@ import (
 	"github.com/nicoflow/nicoflow-api/pkg/jwtutil"
 )
 
-const testSecret = "test-secret-at-least-32-bytes-long-xx"
+// Same throwaway literal the domain integration tests use, so the secret
+// scanner treats it as a known test fixture rather than a leak.
+const testSecret = "integration-test-secret-32-bytes!!"
 
 // errorCode reads the {data,error:{code}} envelope and returns error.code.
 func errorCode(t *testing.T, body []byte) string {
@@ -39,7 +41,8 @@ func TestAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("issue expired token: %v", err)
 	}
-	wrongSecret, err := jwtutil.Issue("user-1", "a@b.com", "pro", "some-other-secret-key-32-bytes-min-x", time.Hour)
+	// Derived (not a new literal) so Auth(testSecret) rejects it as a bad signature.
+	wrongSecret, err := jwtutil.Issue("user-1", "a@b.com", "pro", testSecret+"-rotated", time.Hour)
 	if err != nil {
 		t.Fatalf("issue wrong-secret token: %v", err)
 	}
