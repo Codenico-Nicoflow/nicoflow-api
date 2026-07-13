@@ -51,7 +51,7 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 	r.Use(mw.CORS(cfg.CORSOrigins))
 	// 6. Rate limit by IP (global)
 	trustedProxies := splitCSV(cfg.TrustedProxyCIDRs)
-	r.Use(mw.RateLimitIP(100, 20, trustedProxies))
+	r.Use(mw.RateLimitIP(cfg.RateLimitIPBurst, cfg.RateLimitIPPerMin, trustedProxies))
 
 	// ── Public routes ──────────────────────────────────────────────────────────
 	r.Get("/v1/health", Health(pool))
@@ -72,14 +72,17 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 
 	// Auth — stricter per-endpoint IP rate limits
 	r.Route("/v1/auth", func(r chi.Router) {
-		r.With(mw.RateLimitIP(5, 5, trustedProxies)).Post("/register", h.Auth.Register)
-		r.With(mw.RateLimitIP(10, 10, trustedProxies)).Post("/login", h.Auth.Login)
+		// login/register/verify-email share the tunable auth-write bucket.
+		authBurst, authRate := cfg.RateLimitAuthBurst, cfg.RateLimitAuthPerMin
+		r.With(mw.RateLimitIP(authBurst, authRate, trustedProxies)).Post("/register", h.Auth.Register)
+		r.With(mw.RateLimitIP(authBurst, authRate, trustedProxies)).Post("/login", h.Auth.Login)
 		r.Post("/refresh-token", h.Auth.Refresh)
-		r.With(mw.RateLimitIP(3, 3, trustedProxies)).Post("/forgot-password", h.Auth.ForgotPassword)
-		r.With(mw.RateLimitIP(5, 5, trustedProxies)).Post("/reset-password", h.Auth.ResetPassword)
-		// Email verification (public; token-bearing or email-bearing).
-		r.With(mw.RateLimitIP(10, 10, trustedProxies)).Post("/verify-email", h.Auth.VerifyEmail)
-		r.With(mw.RateLimitIP(3, 3, trustedProxies)).Post("/resend-verification", h.Auth.ResendVerification)
+		// forgot-password / reset-password / resend-verification stay deliberately
+		// strict (email/abuse-sensitive) and are not loosened by the auth knob.
+		r.With(mw.RateLimitIP(5, 10, trustedProxies)).Post("/forgot-password", h.Auth.ForgotPassword)
+		r.With(mw.RateLimitIP(5, 10, trustedProxies)).Post("/reset-password", h.Auth.ResetPassword)
+		r.With(mw.RateLimitIP(authBurst, authRate, trustedProxies)).Post("/verify-email", h.Auth.VerifyEmail)
+		r.With(mw.RateLimitIP(5, 10, trustedProxies)).Post("/resend-verification", h.Auth.ResendVerification)
 		// Logout authenticates off the HttpOnly refresh cookie (Path=/v1/auth,
 		// SameSite=Strict), not the access token — so an expired JWT can't trap
 		// the user in a session they can't end. The handler is idempotent (no
@@ -95,7 +98,7 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		// them on a separate /v1 Route block would be shadowed (404).
 		r.Group(func(r chi.Router) {
 			r.Use(mw.Auth(cfg.JWTSecret))
-			r.Use(mw.RateLimitUser(1000, 100))
+			r.Use(mw.RateLimitUser(cfg.RateLimitUserBurst, cfg.RateLimitUserPerMin))
 			// logout-all revokes by the userID claim, so it needs a live access token.
 			r.Post("/logout-all", h.Auth.LogoutAll)
 			r.Post("/biometric/register", h.Auth.BiometricRegister)
@@ -105,7 +108,7 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 	// ── Protected routes ───────────────────────────────────────────────────────
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(mw.Auth(cfg.JWTSecret))
-		r.Use(mw.RateLimitUser(1000, 100))
+		r.Use(mw.RateLimitUser(cfg.RateLimitUserBurst, cfg.RateLimitUserPerMin))
 
 		// User profile & settings
 		r.Get("/users/profile", h.Auth.GetProfile)

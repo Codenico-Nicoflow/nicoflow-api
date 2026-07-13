@@ -36,6 +36,17 @@ type Config struct {
 	MinIOEndpoint  string
 	MinIOAccessKey string
 	MinIOSecretKey string
+
+	// Rate limits. Each limiter is a token bucket: Burst tokens available
+	// immediately, refilled at PerMin tokens/minute. Burst must comfortably
+	// absorb one SPA page-load's fan-out of parallel requests, or a normal
+	// reload trips a 429. See RateLimitIP / RateLimitUser.
+	RateLimitIPBurst    int // global per-IP burst (public + protected)
+	RateLimitIPPerMin   int // global per-IP refill rate
+	RateLimitUserBurst  int // per-authenticated-user burst
+	RateLimitUserPerMin int // per-authenticated-user refill rate
+	RateLimitAuthBurst  int // per-IP burst on auth writes (login/register/verify)
+	RateLimitAuthPerMin int // per-IP refill rate on auth writes
 }
 
 func Load() Config {
@@ -87,6 +98,16 @@ func Load() Config {
 		MinIOEndpoint:            os.Getenv("MINIO_ENDPOINT"),
 		MinIOAccessKey:           os.Getenv("MINIO_ACCESS_KEY"),
 		MinIOSecretKey:           os.Getenv("MINIO_SECRET_KEY"),
+
+		// Defaults sized for an SPA that fires a burst of parallel queries per
+		// navigation (refresh-token + user + areas + tasks + …). A per-IP burst
+		// of 60 absorbs several such reloads; 300/min sustains ~5 req/s.
+		RateLimitIPBurst:    parseInt(os.Getenv("RATE_LIMIT_IP_BURST"), 60),
+		RateLimitIPPerMin:   parseInt(os.Getenv("RATE_LIMIT_IP_PER_MIN"), 300),
+		RateLimitUserBurst:  parseInt(os.Getenv("RATE_LIMIT_USER_BURST"), 200),
+		RateLimitUserPerMin: parseInt(os.Getenv("RATE_LIMIT_USER_PER_MIN"), 1000),
+		RateLimitAuthBurst:  parseInt(os.Getenv("RATE_LIMIT_AUTH_BURST"), 10),
+		RateLimitAuthPerMin: parseInt(os.Getenv("RATE_LIMIT_AUTH_PER_MIN"), 30),
 	}
 }
 
@@ -105,6 +126,17 @@ func parseDuration(s string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+func parseInt(s string, fallback int) int {
+	if s == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
 }
 
 func parseBool(s string, fallback bool) bool {

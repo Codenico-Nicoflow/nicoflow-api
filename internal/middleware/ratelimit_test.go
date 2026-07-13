@@ -77,6 +77,34 @@ func TestParseCIDRs_SkipsInvalid(t *testing.T) {
 	}
 }
 
+// TestRateLimit_BurstIsFirstArg pins the argument order: RateLimitIP(burst, ratePerMin).
+// A burst of 3 must allow exactly 3 immediate requests then 429 the 4th — regardless of
+// the (high) refill rate. Guards against the burst/rate swap that throttled real reloads.
+func TestRateLimit_BurstIsFirstArg(t *testing.T) {
+	const burst = 3
+	// High refill rate; within the tight loop no tokens refill, so only `burst` pass.
+	mw := RateLimitIP(burst, 6000, nil)
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	do := func() int {
+		r := req("203.0.113.20:2222", "")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		return rec.Code
+	}
+
+	for i := range burst {
+		if code := do(); code != http.StatusOK {
+			t.Fatalf("request #%d: status = %d, want 200 (within burst)", i+1, code)
+		}
+	}
+	if code := do(); code != http.StatusTooManyRequests {
+		t.Fatalf("request #%d: status = %d, want 429 (burst exhausted)", burst+1, code)
+	}
+}
+
 func TestRateLimit_SkipsOptionsPreflight(t *testing.T) {
 	// A 1/min limiter would 429 the 2nd request; OPTIONS must bypass it entirely.
 	mw := RateLimitIP(1, 1, nil)

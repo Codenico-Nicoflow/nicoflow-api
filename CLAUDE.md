@@ -174,18 +174,19 @@ recover → request_id → logger → security_headers → cors → ratelimit_ip
 
 ---
 
-## Rate Limits (per `router.go`)
+## Rate Limits (per `router.go`, env-tunable via `config`)
 
-| Limiter             | Scope  | Limit         | Burst |
-| ------------------- | ------ | ------------- | ----- |
-| IP-based (global)   | IP     | 100 req/min   | 20    |
-| User-based (global) | UserID | 1000 req/min  | 100   |
+Each limiter is a **token bucket**: `Burst` tokens available immediately, refilled at `Rate/min`. **`RateLimitIP(burst, ratePerMin, …)` — burst is the first arg.** Burst must absorb one SPA page-load's fan-out of parallel requests (refresh-token + user + areas + tasks + …), or a normal reload trips a 429. Defaults (all overridable by env):
 
-Auth-specific stricter per-IP buckets (via `r.With(mw.RateLimitIP(n, n, trustedProxies))`):
-- `POST /v1/register` — 5
-- `POST /v1/login` — 10
-- `POST /v1/forgot-password` — 3
-- `POST /v1/reset-password` — 5
+| Limiter             | Scope  | Rate/min | Burst | Env (`_BURST` / `_PER_MIN`) |
+| ------------------- | ------ | -------- | ----- | --------------------------- |
+| IP-based (global)   | IP     | 300      | 60    | `RATE_LIMIT_IP_*`           |
+| User-based (global) | UserID | 1000     | 200   | `RATE_LIMIT_USER_*`         |
+| Auth writes (IP)    | IP     | 30       | 10    | `RATE_LIMIT_AUTH_*`         |
+
+Auth-write bucket covers `POST /v1/auth/{register,login,verify-email}`. Abuse-sensitive routes stay hardcoded strict (not loosened by the auth knob): `forgot-password` / `reset-password` / `resend-verification` — burst 5, 10/min.
+
+> ⚠️ **Never swap burst/rate.** The old config passed `(100, 20)` / `(1000, 100)` — read as `(burst, ratePerMin)` that meant only **20 req/min** refill (1 token / 3 s), which throttled ordinary reloads: the bucket drained, then trickled back one token every few seconds → "one request works, then 429 again." Guarded by `TestRateLimit_BurstIsFirstArg`.
 
 Client IP is resolved through `TRUSTED_PROXY` / `TrustedProxyCIDRs`. Exceeded → 429 with `RATE_LIMITED` + `Retry-After`.
 
@@ -269,6 +270,9 @@ Target design (the `ws` package exists; the route isn't live yet):
 | `CORS_ORIGINS`         | No       | Comma-separated allowed CORS origins (e.g. `http://localhost:5173`)         |
 | `APP_BASE_URL`         | No       | Frontend URL for reset-password links (e.g. `http://localhost:5173`)        |
 | `TRUSTED_PROXY`        | No       | Trusted proxy CIDR(s) for client-IP resolution behind a proxy              |
+| `RATE_LIMIT_IP_BURST` / `_PER_MIN`   | No | Global per-IP token bucket (default burst 60 / 300 per min)         |
+| `RATE_LIMIT_USER_BURST` / `_PER_MIN` | No | Per-authenticated-user bucket (default burst 200 / 1000 per min)    |
+| `RATE_LIMIT_AUTH_BURST` / `_PER_MIN` | No | Per-IP bucket on auth writes login/register/verify (default 10 / 30)|
 | `SMTP_DSN`             | No       | SMTP DSN for password-reset email, e.g. `smtp://user:pass@smtp.mailtrap.io:587` |
 | `TEST_DATABASE_URL`    | No       | DB connection string for integration tests                                  |
 | `LS_WEBHOOK_SECRET`    | No       | HMAC-SHA256 secret for Lemon Squeezy webhook                                |
