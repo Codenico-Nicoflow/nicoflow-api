@@ -270,3 +270,33 @@ func TestIntegration_Search_NoJWT_Returns401(t *testing.T) {
 		t.Fatalf("want UNAUTHORIZED, got %+v", env.Error)
 	}
 }
+
+// A partial term must prefix-match the full word: "testin" finds "testing".
+func TestIntegration_Search_PrefixMatch(t *testing.T) {
+	srv, pool := newSearchServer(t)
+	userA, tokenA := mustCreateUser(t, pool)
+
+	seedAreaProjectTask(t, pool, userA, "Testing area", "Testing project", "Testing task", "")
+
+	resp := doGet(t, srv.URL+"/v1/search?q=testin", tokenA)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	var env searchEnvelope
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Error != nil {
+		t.Fatalf("unexpected error: %+v", env.Error)
+	}
+	if len(env.Data.Tasks) != 1 || env.Data.Tasks[0].Title != "Testing task" {
+		t.Errorf("prefix 'testin' should match task 'Testing task', got %+v", env.Data.Tasks)
+	}
+	if len(env.Data.Projects) != 1 || env.Data.Projects[0].Name != "Testing project" {
+		t.Errorf("prefix 'testin' should match 'Testing project', got %+v", env.Data.Projects)
+	}
+	if len(env.Data.Areas) != 1 || env.Data.Areas[0].Name != "Testing area" {
+		t.Errorf("prefix 'testin' should match 'Testing area', got %+v", env.Data.Areas)
+	}
+}
