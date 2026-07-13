@@ -16,6 +16,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/billing"
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
+	"github.com/nicoflow/nicoflow-api/internal/domain/search"
 	"github.com/nicoflow/nicoflow-api/internal/domain/task"
 	mw "github.com/nicoflow/nicoflow-api/internal/middleware"
 	"github.com/nicoflow/nicoflow-api/pkg/respond"
@@ -30,6 +31,7 @@ type Handlers struct {
 	Bucket  *bucket.Handler
 	AI      *ai.Handler
 	Billing *billing.Handler
+	Search  *search.Handler
 }
 
 // New builds and returns the fully-wired Chi router.
@@ -162,7 +164,7 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 
 		// Time Spread + Search
 		r.Get("/time-spread", h.Task.TimeSpread)
-		r.Get("/search", h.Task.Search)
+		r.Get("/search", h.Search.Search)
 
 		// AI sessions + messages
 		r.Get("/ai/sessions", h.AI.ListSessions)

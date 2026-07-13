@@ -20,6 +20,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/billing"
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
+	"github.com/nicoflow/nicoflow-api/internal/domain/search"
 	"github.com/nicoflow/nicoflow-api/internal/domain/task"
 	"github.com/nicoflow/nicoflow-api/internal/handler"
 
@@ -96,6 +97,9 @@ func main() {
 	// Bucket (inbox) — process turns an item into a task via the task service.
 	bucketSvc := bucket.NewService(bucket.NewRepository(pool), taskSvc)
 
+	// Search — full-text across tasks, projects and areas.
+	searchSvc := search.NewService(search.NewRepository(pool))
+
 	handlers := handler.Handlers{
 		Auth:    auth.NewHandler(authSvc, cookieCfg),
 		Area:    area.NewHandler(areaSvc),
@@ -104,6 +108,7 @@ func main() {
 		Bucket:  bucket.NewHandler(bucketSvc),
 		AI:      ai.NewHandler(nil),
 		Billing: billing.NewHandler(nil),
+		Search:  search.NewHandler(searchSvc),
 	}
 
 	srv := &http.Server{
