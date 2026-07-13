@@ -72,13 +72,21 @@ jobs:
           TEST_DATABASE_URL: postgres://nicoflow:nicoflow@localhost:5432/nicoflow_test?sslmode=disable
         run: go test ./... -tags=integration -race -count=1 -coverprofile=coverage.out -covermode=atomic
 
-      - name: Coverage gate (auth service ≥ 50%, utils ≥ 75%)
+      - name: Coverage gate (E-018 in-scope domains + utils)
+        # E-018 covers auth/area/project/task/bucket. ai + billing are Phase 4/5
+        # (out of scope) and deliberately excluded until their own test epics.
+        # Floors sit just under current coverage to catch regressions, not force churn.
         run: |
           go tool cover -func=coverage.out | tee /tmp/cover.txt
-          SVC=$(grep 'internal/domain/auth' /tmp/cover.txt | awk '{sum+=$3; n++} END {if(n>0) printf "%.1f", sum/n}' | tr -d '%')
-          UTIL=$(grep 'pkg/hashutil\|pkg/jwtutil' /tmp/cover.txt | awk '{sum+=$3; n++} END {if(n>0) printf "%.1f", sum/n}' | tr -d '%')
-          echo "Auth service avg: ${SVC:-0}%, Tested utils avg: ${UTIL:-0}%"
-          awk "BEGIN {if (${SVC:-0}+0 < 50) {print \"FAIL: auth service coverage ${SVC}% < 50%\"; exit 1}}"
+          avg() { grep "internal/domain/$1/" /tmp/cover.txt | awk '{gsub(/%/,"",$3); s+=$3; n++} END {if(n>0) printf "%.1f", s/n; else print "0"}'; }
+          gate() { local got; got=$(avg "$1"); echo "$1: ${got}% (min $2%)"; awk "BEGIN {if (${got}+0 < $2) {print \"FAIL: $1 coverage ${got}% < $2%\"; exit 1}}"; }
+          UTIL=$(grep 'pkg/hashutil\|pkg/jwtutil' /tmp/cover.txt | awk '{gsub(/%/,"",$3); s+=$3; n++} END {if(n>0) printf "%.1f", s/n}')
+          gate auth 55
+          gate area 80
+          gate project 75
+          gate task 75
+          gate bucket 75
+          echo "utils: ${UTIL:-0}% (min 75%)"
           awk "BEGIN {if (${UTIL:-0}+0 < 75) {print \"FAIL: utils coverage ${UTIL}% < 75%\"; exit 1}}"
 
       - name: Upload coverage
