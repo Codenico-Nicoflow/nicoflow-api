@@ -1589,7 +1589,7 @@
       ]
     },
     {
-      "name": "Bucket (Inbox) \u2014 \u26a0 STUB 501",
+      "name": "Bucket (Inbox)",
       "item": [
         {
           "name": "List Bucket",
@@ -1735,7 +1735,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"action\": \"task\",\n  \"projectId\": \"{{projectId}}\"\n}",
+              "raw": "{\n  \"processingResult\": \"task\",\n  \"projectId\": \"{{projectId}}\",\n  \"taskDetails\": {\n    \"title\": \"Processed from inbox\",\n    \"notes\": \"\",\n    \"priority\": \"medium\"\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1768,10 +1768,10 @@
           }
         }
       ],
-      "description": "\u26a0 All routes return 501 not implemented \u2014 handlers are stubs. Bodies below are best-guess placeholders."
+      "description": "Inbox capture + processing. Live \u2014 verified against handlers (NIC-1453..). Process body: `processingResult` \u2208 {task, note, trash}; `projectId` + `taskDetails` required only when processing to a task."
     },
     {
-      "name": "Search \u2014 \u26a0 STUB 501",
+      "name": "Search",
       "item": [
         {
           "name": "Search",
@@ -1784,7 +1784,7 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/v1/search?q=my task",
+              "raw": "{{baseUrl}}/v1/search?q=testing&types=task,project,area&limit=10",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -1795,11 +1795,22 @@
               "query": [
                 {
                   "key": "q",
-                  "value": "my task"
+                  "value": "testing",
+                  "description": "Search term, 2\u2013100 chars. Prefix-matched (e.g. 'testin' matches 'Testing')."
+                },
+                {
+                  "key": "types",
+                  "value": "task,project,area",
+                  "description": "Comma-separated groups to search. Omit for all three."
+                },
+                {
+                  "key": "limit",
+                  "value": "10",
+                  "description": "Per-group cap. Default 10, max 50."
                 }
               ]
             },
-            "description": "\u26a0 STUB \u2014 returns 501 not implemented."
+            "description": "Full-text prefix search across tasks, projects, areas (row-isolated). Live \u2014 NIC-1497 (#73)."
           }
         }
       ]
