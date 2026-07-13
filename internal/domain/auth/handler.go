@@ -385,19 +385,8 @@ func (h *Handler) BiometricVerify(w http.ResponseWriter, _ *http.Request) {
 	respond.Error(w, http.StatusNotImplemented, apperror.ErrInternalServerError, "biometric authentication is not yet available")
 }
 
-// Notification stubs — implemented in a future story.
-func (h *Handler) ListNotifications(w http.ResponseWriter, r *http.Request)    { notImplemented(w, r) }
-func (h *Handler) MarkNotificationRead(w http.ResponseWriter, r *http.Request) { notImplemented(w, r) }
-func (h *Handler) MarkAllNotificationsRead(w http.ResponseWriter, r *http.Request) {
-	notImplemented(w, r)
-}
-func (h *Handler) DeleteNotification(w http.ResponseWriter, r *http.Request) { notImplemented(w, r) }
-func (h *Handler) GetNotificationPreferences(w http.ResponseWriter, r *http.Request) {
-	notImplemented(w, r)
-}
-func (h *Handler) UpdateNotificationPreferences(w http.ResponseWriter, r *http.Request) {
-	notImplemented(w, r)
-}
+// Notification list/mark-read/delete moved to the notification domain (NIC-1515).
+// Preferences (GET/PUT /notifications/preferences) land with NIC-1522.
 
 // refreshCookieName returns the cookie name: "__Secure-refresh_token" in secure environments
 // (staging/production) to block subdomain overwrite attacks, "refresh_token" in development.
@@ -444,10 +433,6 @@ func (h *Handler) clearRefreshCookie(w http.ResponseWriter) {
 		Secure:   h.secureCookie,
 		SameSite: h.refreshCookieSameSite(),
 	})
-}
-
-func notImplemented(w http.ResponseWriter, _ *http.Request) {
-	respond.Error(w, http.StatusNotImplemented, apperror.ErrInternalServerError, "not implemented")
 }
 
 // writeAppError converts an AppError to the correct HTTP response.

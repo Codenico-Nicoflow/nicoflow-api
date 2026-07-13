@@ -31,6 +31,7 @@ const (
 	ErrUserNotFound          = "USER_NOT_FOUND"
 	ErrSessionNotFound       = "SESSION_NOT_FOUND"
 	ErrMessageNotFound       = "MESSAGE_NOT_FOUND"
+	ErrNotificationNotFound  = "NOTIFICATION_NOT_FOUND"
 	ErrConflict              = "CONFLICT"
 	ErrEmailAlreadyExists    = "EMAIL_ALREADY_EXISTS"
 	ErrUsernameAlreadyExists = "USERNAME_ALREADY_EXISTS"
