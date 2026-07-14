@@ -38,3 +38,9 @@ type CountEnvelope struct {
 	Data  CountResponse `json:"data"`
 	Error interface{}   `json:"error"`
 }
+
+// PreferencesEnvelope wraps the notification-preferences response.
+type PreferencesEnvelope struct {
+	Data  PreferencesView `json:"data"`
+	Error interface{}     `json:"error"`
+}

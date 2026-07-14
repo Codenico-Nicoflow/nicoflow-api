@@ -31,7 +31,7 @@ type NotificationView struct {
 	Type      string          `json:"type"`
 	Title     string          `json:"title"`
 	Body      string          `json:"body"`
-	Metadata  json.RawMessage `json:"metadata"`
+	Metadata  json.RawMessage `json:"metadata" swaggertype:"object"`
 	IsRead    bool            `json:"isRead"`
 	ReadAt    *string         `json:"readAt"`
 	CreatedAt string          `json:"createdAt"`

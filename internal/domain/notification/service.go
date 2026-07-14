@@ -24,6 +24,11 @@ type Service interface {
 	// through. It inserts idempotently (by dedupe_key) and, when a row is actually
 	// created and a broadcaster is wired, emits the full-payload event.
 	Create(ctx context.Context, n Notification) (NotificationView, bool, error)
+
+	// GetPreferences returns the user's notification preferences (defaults when absent).
+	GetPreferences(ctx context.Context, userID string) (PreferencesView, error)
+	// UpdatePreferences validates and lazily upserts the user's preferences.
+	UpdatePreferences(ctx context.Context, userID string, u UpdatePreferences) (PreferencesView, error)
 }
 
 type service struct {
