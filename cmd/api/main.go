@@ -24,6 +24,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/search"
 	"github.com/nicoflow/nicoflow-api/internal/domain/task"
 	"github.com/nicoflow/nicoflow-api/internal/handler"
+	"github.com/nicoflow/nicoflow-api/internal/jobs"
 
 	// Generated Swagger docs (make swagger). Imported for the side-effect of
 	// registering the spec; the /v1/swagger UI route reads it.
@@ -104,6 +105,9 @@ func main() {
 	// Notification domain. Broadcaster is nil until the WebSocket hub exists (E-022).
 	notificationSvc := notification.NewService(notification.NewRepository(pool), nil)
 
+	// Due-date sweep — hourly job invoked by the Render Cron Job via /internal/jobs.
+	dueDateNotifier := jobs.NewDueDateNotifier(jobs.NewRepository(pool), notificationSvc)
+
 	handlers := handler.Handlers{
 		Auth:         auth.NewHandler(authSvc, cookieCfg),
 		Area:         area.NewHandler(areaSvc),
@@ -114,6 +118,7 @@ func main() {
 		Billing:      billing.NewHandler(nil),
 		Search:       search.NewHandler(searchSvc),
 		Notification: notification.NewHandler(notificationSvc),
+		Jobs:         jobs.NewHandler(dueDateNotifier),
 	}
 
 	srv := &http.Server{

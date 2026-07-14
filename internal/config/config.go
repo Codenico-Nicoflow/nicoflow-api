@@ -21,8 +21,11 @@ type Config struct {
 	// sent on cross-site requests — required when the frontend and API are on different
 	// registrable domains (e.g. *.vercel.app calling *.onrender.com). SameSite=None demands
 	// Secure, so this is only honoured in secure environments. Default false (same-site, Strict).
-	CookieCrossSite   bool
-	LSWebhookSecret   string
+	CookieCrossSite bool
+	LSWebhookSecret string
+	// CronSecret guards the internal job endpoints (POST /internal/jobs/*). Callers
+	// must send it as X-Internal-Token. Unset ⇒ the endpoints return 503 (disabled).
+	CronSecret        string
 	AWSAccessKeyID    string
 	AWSSecretKey      string
 	S3Bucket          string
@@ -75,6 +78,7 @@ func Load() Config {
 		RequireEmailVerification: parseBool(os.Getenv("REQUIRE_EMAIL_VERIFICATION"), false),
 		CookieCrossSite:          parseBool(os.Getenv("COOKIE_CROSS_SITE"), false),
 		LSWebhookSecret:          os.Getenv("LS_WEBHOOK_SECRET"),
+		CronSecret:               os.Getenv("CRON_SECRET"),
 		AWSAccessKeyID:           os.Getenv("AWS_ACCESS_KEY_ID"),
 		AWSSecretKey:             os.Getenv("AWS_SECRET_ACCESS_KEY"),
 		S3Bucket:                 os.Getenv("S3_BUCKET_NAME"),

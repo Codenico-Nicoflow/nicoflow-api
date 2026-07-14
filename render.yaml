@@ -78,3 +78,32 @@ services:
       # Mailtrap (or other) SMTP DSN so verification/reset emails are sent:
       - key: SMTP_DSN
         sync: false
+      # Shared secret guarding POST /internal/jobs/* — must match the cron job's
+      # value below (set the same secret on both in the dashboard). Unset ⇒ the
+      # internal endpoints return 503.
+      - key: CRON_SECRET
+        sync: false
+
+  # ── Due-date reminder sweep (E-020) ─────────────────────────────────────────
+  # Hourly cron that POSTs the internal endpoint; the sweep itself decides which
+  # users are at their local 08:00. -f makes a non-2xx response fail the run (so
+  # Render surfaces it). API_HOST is wired from the web service; CRON_SECRET must
+  # match the web service's value (set the same secret on both in the dashboard).
+  - type: cron
+    name: nicoflow-due-notify-staging
+    runtime: image
+    image:
+      url: docker.io/curlimages/curl:8.11.1
+    region: frankfurt
+    schedule: "0 * * * *"
+    startCommand: >
+      curl -fsS -X POST "https://$API_HOST/internal/jobs/due-notify"
+      -H "X-Internal-Token: $CRON_SECRET"
+    envVars:
+      - key: API_HOST
+        fromService:
+          name: nicoflow-api-staging
+          type: web
+          property: host
+      - key: CRON_SECRET
+        sync: false
