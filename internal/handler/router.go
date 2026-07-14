@@ -19,6 +19,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
 	"github.com/nicoflow/nicoflow-api/internal/domain/search"
 	"github.com/nicoflow/nicoflow-api/internal/domain/task"
+	"github.com/nicoflow/nicoflow-api/internal/jobs"
 	mw "github.com/nicoflow/nicoflow-api/internal/middleware"
 	"github.com/nicoflow/nicoflow-api/pkg/respond"
 )
@@ -34,6 +35,7 @@ type Handlers struct {
 	Billing      *billing.Handler
 	Search       *search.Handler
 	Notification *notification.Handler
+	Jobs         *jobs.Handler
 }
 
 // New builds and returns the fully-wired Chi router.
@@ -71,6 +73,10 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 
 	// Billing webhook — HMAC verified inside handler, no JWT
 	r.Post("/v1/billing/webhook", h.Billing.Webhook)
+
+	// Internal jobs — machine-to-machine, guarded solely by the shared CRON_SECRET
+	// (X-Internal-Token), outside the JWT /v1 group. Hit by the Render Cron Job.
+	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/due-notify", h.Jobs.DueNotify)
 
 	// Auth — stricter per-endpoint IP rate limits
 	r.Route("/v1/auth", func(r chi.Router) {
