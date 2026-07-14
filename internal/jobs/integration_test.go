@@ -73,7 +73,7 @@ func countNotifications(t *testing.T, pool *pgxpool.Pool, userID string) int {
 func newServer(t *testing.T, pool *pgxpool.Pool) *httptest.Server {
 	t.Helper()
 	notifSvc := notification.NewService(notification.NewRepository(pool), nil)
-	notifier := jobs.NewDueDateNotifier(jobs.NewRepository(pool), notifSvc)
+	notifier := jobs.NewDueDateNotifier(jobs.NewRepository(pool), notifSvc, "")
 	h := jobs.NewHandler(notifier)
 
 	r := chi.NewRouter()
@@ -125,7 +125,7 @@ func TestEndpoint_Auth(t *testing.T) {
 func TestEndpoint_DisabledWhenSecretUnset(t *testing.T) {
 	pool := testutil.NewTestDB(t)
 	notifSvc := notification.NewService(notification.NewRepository(pool), nil)
-	notifier := jobs.NewDueDateNotifier(jobs.NewRepository(pool), notifSvc)
+	notifier := jobs.NewDueDateNotifier(jobs.NewRepository(pool), notifSvc, "")
 	r := chi.NewRouter()
 	r.With(mw.InternalToken("")).Post("/internal/jobs/due-notify", jobs.NewHandler(notifier).DueNotify)
 	srv := httptest.NewServer(r)
@@ -150,7 +150,7 @@ func TestSweep_GeneratesAndIsIdempotent(t *testing.T) {
 	uid := seedUserWithDueTask(t, pool, "UTC", target)
 
 	notifSvc := notification.NewService(notification.NewRepository(pool), nil)
-	notifier := jobs.NewDueDateNotifier(jobs.NewRepository(pool), notifSvc)
+	notifier := jobs.NewDueDateNotifier(jobs.NewRepository(pool), notifSvc, "")
 	jobs.SetClock(notifier, func() time.Time { return pinned })
 
 	// Run 1 → one notification created.
@@ -204,7 +204,7 @@ func TestSweep_SkipsTerminalTasks(t *testing.T) {
 	}
 
 	notifSvc := notification.NewService(notification.NewRepository(pool), nil)
-	notifier := jobs.NewDueDateNotifier(jobs.NewRepository(pool), notifSvc)
+	notifier := jobs.NewDueDateNotifier(jobs.NewRepository(pool), notifSvc, "")
 	jobs.SetClock(notifier, func() time.Time { return pinned })
 
 	n, err := notifier.Run(context.Background())

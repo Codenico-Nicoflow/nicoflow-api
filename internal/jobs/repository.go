@@ -17,12 +17,15 @@ func NewRepository(db *pgxpool.Pool) Repository {
 	return &pgRepository{db: db}
 }
 
-// ListRemindableUsers returns every active (non-deleted) user with their timezone
-// and effective before_due_minutes. Users with no preferences row fall back to the
-// default lead time (1440) via LEFT JOIN + COALESCE.
+// ListRemindableUsers returns every active (non-deleted) user with their timezone,
+// effective before_due_minutes, plan, email, and email_digest preference. Users
+// with no preferences row fall back to the defaults (lead 1440, digest on) via
+// LEFT JOIN + COALESCE.
 func (r *pgRepository) ListRemindableUsers(ctx context.Context) ([]RemindableUser, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT u.id, u.timezone, COALESCE(p.before_due_minutes, 1440)
+		SELECT u.id, u.email, u.plan, u.timezone,
+		       COALESCE(p.before_due_minutes, 1440),
+		       COALESCE(p.email_digest, TRUE)
 		FROM users u
 		LEFT JOIN notification_preferences p ON p.user_id = u.id
 		WHERE u.deleted_at IS NULL`)
@@ -34,7 +37,7 @@ func (r *pgRepository) ListRemindableUsers(ctx context.Context) ([]RemindableUse
 	var out []RemindableUser
 	for rows.Next() {
 		var u RemindableUser
-		if err := rows.Scan(&u.UserID, &u.Timezone, &u.BeforeDueMinutes); err != nil {
+		if err := rows.Scan(&u.UserID, &u.Email, &u.Plan, &u.Timezone, &u.BeforeDueMinutes, &u.EmailDigest); err != nil {
 			return nil, fmt.Errorf("jobs.ListRemindableUsers scan: %w", err)
 		}
 		out = append(out, u)

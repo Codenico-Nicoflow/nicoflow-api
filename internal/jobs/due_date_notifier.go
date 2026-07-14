@@ -11,6 +11,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
+	"github.com/nicoflow/nicoflow-api/pkg/emailutil"
 )
 
 // reminderLocalHour is the local hour (24h) at which a user's due-soon reminders
@@ -22,11 +23,15 @@ const reminderLocalHour = 8
 const scheduledForLayout = "2006-01-02"
 
 // RemindableUser is a user eligible for the sweep: their timezone and reminder
-// lead time (from notification_preferences, defaulted when no row exists).
+// lead time (from notification_preferences, defaulted when no row exists), plus
+// the fields the Pro email digest gates on (plan + email + digest preference).
 type RemindableUser struct {
 	UserID           string
+	Email            string
+	Plan             string
 	Timezone         string
 	BeforeDueMinutes int
+	EmailDigest      bool
 }
 
 // DueTask is the minimal task shape the sweep needs to build a notification.
@@ -52,17 +57,33 @@ type creator interface {
 	Create(ctx context.Context, n notification.Notification) (notification.NotificationView, bool, error)
 }
 
+// digestSender delivers the Pro due-task digest email. Satisfied by emailutil in
+// production; faked in tests. An empty DSN is handled inside the sender as a no-op.
+type digestSender func(to string, tasks []emailutil.DigestTask, smtpDSN string) error
+
+// planPro is the plan value that unlocks the email digest.
+const planPro = "pro"
+
 // DueDateNotifier generates task_due_soon notifications, timezone-correct and
-// idempotent, for the hourly sweep.
+// idempotent, for the hourly sweep, and sends the Pro email digest.
 type DueDateNotifier struct {
-	repo    Repository
-	creator creator
-	now     func() time.Time // injectable clock for tests
+	repo       Repository
+	creator    creator
+	sendDigest digestSender
+	smtpDSN    string
+	now        func() time.Time // injectable clock for tests
 }
 
-// NewDueDateNotifier builds the sweep job. Pass notification.Service as the creator.
-func NewDueDateNotifier(repo Repository, c creator) *DueDateNotifier {
-	return &DueDateNotifier{repo: repo, creator: c, now: time.Now}
+// NewDueDateNotifier builds the sweep job. Pass notification.Service as the
+// creator and the configured SMTP DSN (empty ⇒ digest send is a no-op).
+func NewDueDateNotifier(repo Repository, c creator, smtpDSN string) *DueDateNotifier {
+	return &DueDateNotifier{
+		repo:       repo,
+		creator:    c,
+		sendDigest: emailutil.SendDueDigest,
+		smtpDSN:    smtpDSN,
+		now:        time.Now,
+	}
 }
 
 // Run executes one sweep and returns how many notifications were newly created
@@ -106,8 +127,29 @@ func (n *DueDateNotifier) Run(ctx context.Context) (int, error) {
 				generated++
 			}
 		}
+
+		// Pro email digest: one batched summary of this user's due-soon tasks, gated
+		// on plan + the email_digest preference. Isolated — a send failure logs and
+		// continues, never aborting the sweep.
+		n.maybeSendDigest(u, tasks)
 	}
 	return generated, nil
+}
+
+// maybeSendDigest emails a Pro user with email_digest on a batched summary of
+// their due-soon tasks. Free users and Pro users who opted out are skipped; an
+// empty task list or unset SMTP DSN is a no-op handled by the sender.
+func (n *DueDateNotifier) maybeSendDigest(u RemindableUser, tasks []DueTask) {
+	if u.Plan != planPro || !u.EmailDigest || len(tasks) == 0 {
+		return
+	}
+	digestTasks := make([]emailutil.DigestTask, len(tasks))
+	for i, t := range tasks {
+		digestTasks[i] = emailutil.DigestTask{Title: t.Title}
+	}
+	if err := n.sendDigest(u.Email, digestTasks, n.smtpDSN); err != nil {
+		log.Error().Err(err).Str("user_id", u.UserID).Msg("due-date sweep: digest send failed")
+	}
 }
 
 // reminderTargetDate reports whether the user should be reminded in this hour and,

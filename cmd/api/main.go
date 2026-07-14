@@ -106,7 +106,7 @@ func main() {
 	notificationSvc := notification.NewService(notification.NewRepository(pool), nil)
 
 	// Due-date sweep — hourly job invoked by the Render Cron Job via /internal/jobs.
-	dueDateNotifier := jobs.NewDueDateNotifier(jobs.NewRepository(pool), notificationSvc)
+	dueDateNotifier := jobs.NewDueDateNotifier(jobs.NewRepository(pool), notificationSvc, cfg.SMTPDsn)
 
 	handlers := handler.Handlers{
 		Auth:         auth.NewHandler(authSvc, cookieCfg),
