@@ -15,6 +15,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/auth"
 	"github.com/nicoflow/nicoflow-api/internal/domain/billing"
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
+	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
 	"github.com/nicoflow/nicoflow-api/internal/domain/search"
 	"github.com/nicoflow/nicoflow-api/internal/domain/task"
@@ -24,14 +25,15 @@ import (
 
 // Handlers groups all domain handler pointers.
 type Handlers struct {
-	Auth    *auth.Handler
-	Area    *area.Handler
-	Project *project.Handler
-	Task    *task.Handler
-	Bucket  *bucket.Handler
-	AI      *ai.Handler
-	Billing *billing.Handler
-	Search  *search.Handler
+	Auth         *auth.Handler
+	Area         *area.Handler
+	Project      *project.Handler
+	Task         *task.Handler
+	Bucket       *bucket.Handler
+	AI           *ai.Handler
+	Billing      *billing.Handler
+	Search       *search.Handler
+	Notification *notification.Handler
 }
 
 // New builds and returns the fully-wired Chi router.
@@ -182,13 +184,13 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		r.Get("/billing/checkout-url", h.Billing.CheckoutURL)
 		r.Get("/billing/portal-url", h.Billing.PortalURL)
 
-		// Notifications
-		r.Get("/notifications", h.Auth.ListNotifications)
-		r.Patch("/notifications/read-all", h.Auth.MarkAllNotificationsRead)
-		r.Patch("/notifications/{id}", h.Auth.MarkNotificationRead)
-		r.Delete("/notifications/{id}", h.Auth.DeleteNotification)
-		r.Get("/notifications/preferences", h.Auth.GetNotificationPreferences)
-		r.Put("/notifications/preferences", h.Auth.UpdateNotificationPreferences)
+		// Notifications — static routes before parameterised.
+		// Preferences (GET/PUT /notifications/preferences) land in NIC-1522.
+		r.Get("/notifications", h.Notification.List)
+		r.Get("/notifications/unread-count", h.Notification.UnreadCount)
+		r.Patch("/notifications/read-all", h.Notification.MarkAllRead)
+		r.Patch("/notifications/{id}/read", h.Notification.MarkRead)
+		r.Delete("/notifications/{id}", h.Notification.Delete)
 	})
 
 	return r

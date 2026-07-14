@@ -19,6 +19,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/auth"
 	"github.com/nicoflow/nicoflow-api/internal/domain/billing"
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
+	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
 	"github.com/nicoflow/nicoflow-api/internal/domain/search"
 	"github.com/nicoflow/nicoflow-api/internal/domain/task"
@@ -100,15 +101,19 @@ func main() {
 	// Search — full-text across tasks, projects and areas.
 	searchSvc := search.NewService(search.NewRepository(pool))
 
+	// Notification domain. Broadcaster is nil until the WebSocket hub exists (E-022).
+	notificationSvc := notification.NewService(notification.NewRepository(pool), nil)
+
 	handlers := handler.Handlers{
-		Auth:    auth.NewHandler(authSvc, cookieCfg),
-		Area:    area.NewHandler(areaSvc),
-		Project: project.NewHandler(projectSvc),
-		Task:    task.NewHandler(taskSvc, subtaskSvc),
-		Bucket:  bucket.NewHandler(bucketSvc),
-		AI:      ai.NewHandler(nil),
-		Billing: billing.NewHandler(nil),
-		Search:  search.NewHandler(searchSvc),
+		Auth:         auth.NewHandler(authSvc, cookieCfg),
+		Area:         area.NewHandler(areaSvc),
+		Project:      project.NewHandler(projectSvc),
+		Task:         task.NewHandler(taskSvc, subtaskSvc),
+		Bucket:       bucket.NewHandler(bucketSvc),
+		AI:           ai.NewHandler(nil),
+		Billing:      billing.NewHandler(nil),
+		Search:       search.NewHandler(searchSvc),
+		Notification: notification.NewHandler(notificationSvc),
 	}
 
 	srv := &http.Server{
