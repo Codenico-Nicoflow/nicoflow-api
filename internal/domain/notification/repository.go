@@ -27,6 +27,13 @@ type Repository interface {
 	// zero row and false when it was a duplicate. Used by producers (cron) for
 	// idempotent generation.
 	InsertIfAbsent(ctx context.Context, n Notification) (Notification, bool, error)
+
+	// GetPreferences returns the user's notification preferences, or the defaults
+	// when no row exists (absent row = defaults, never an error).
+	GetPreferences(ctx context.Context, userID string) (Preferences, error)
+	// UpsertPreferences lazily creates or partially updates the user's preferences
+	// row and returns the result.
+	UpsertPreferences(ctx context.Context, userID string, u UpdatePreferences) (Preferences, error)
 }
 
 type pgRepository struct {
