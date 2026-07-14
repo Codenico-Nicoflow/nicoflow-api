@@ -84,7 +84,7 @@ func TestRun_FiresForLocal0800User(t *testing.T) {
 		tasksByID: map[string][]DueTask{"u1": {{ID: "t1", Title: "Ship it"}}},
 	}
 	creator := &fakeCreator{inserted: true}
-	n := NewDueDateNotifier(repo, creator)
+	n := NewDueDateNotifier(repo, creator, "")
 	n.now = func() time.Time { return time.Date(2026, 7, 14, 8, 0, 0, 0, time.UTC) }
 
 	generated, err := n.Run(context.Background())
@@ -110,7 +110,7 @@ func TestRun_SkipsUserNotAt0800(t *testing.T) {
 		tasksByID: map[string][]DueTask{"u1": {{ID: "t1", Title: "Ship it"}}},
 	}
 	creator := &fakeCreator{inserted: true}
-	n := NewDueDateNotifier(repo, creator)
+	n := NewDueDateNotifier(repo, creator, "")
 	n.now = func() time.Time { return time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC) } // 12:00 UTC
 
 	generated, err := n.Run(context.Background())
@@ -129,7 +129,7 @@ func TestRun_DuplicateNotCounted(t *testing.T) {
 	}
 	// Create reports inserted=false → dedupe held, so it must not be counted.
 	creator := &fakeCreator{inserted: false}
-	n := NewDueDateNotifier(repo, creator)
+	n := NewDueDateNotifier(repo, creator, "")
 	n.now = func() time.Time { return time.Date(2026, 7, 14, 8, 0, 0, 0, time.UTC) }
 
 	generated, err := n.Run(context.Background())
