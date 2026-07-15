@@ -16,12 +16,13 @@ import (
 // ── mocks ─────────────────────────────────────────────────────────────────────
 
 type mockRepo struct {
-	create        func(ctx context.Context, b bucket.Bucket) (bucket.Bucket, error)
-	listByUser    func(ctx context.Context, userID string) ([]bucket.Bucket, error)
-	getByID       func(ctx context.Context, userID, id string) (bucket.Bucket, error)
-	updateContent func(ctx context.Context, userID, id, content string) (bucket.Bucket, error)
-	delete        func(ctx context.Context, userID, id string) error
-	markProcessed func(ctx context.Context, userID, id, result string, taskID, projectID *string) (bucket.Bucket, error)
+	create           func(ctx context.Context, b bucket.Bucket) (bucket.Bucket, error)
+	listByUser       func(ctx context.Context, userID string) ([]bucket.Bucket, error)
+	getByID          func(ctx context.Context, userID, id string) (bucket.Bucket, error)
+	updateContent    func(ctx context.Context, userID, id, content string) (bucket.Bucket, error)
+	delete           func(ctx context.Context, userID, id string) error
+	countUnprocessed func(ctx context.Context, userID string) (int, error)
+	markProcessed    func(ctx context.Context, userID, id, result string, taskID, projectID *string) (bucket.Bucket, error)
 }
 
 func (m *mockRepo) Create(ctx context.Context, b bucket.Bucket) (bucket.Bucket, error) {
@@ -38,6 +39,12 @@ func (m *mockRepo) UpdateContent(ctx context.Context, userID, id, content string
 }
 func (m *mockRepo) Delete(ctx context.Context, userID, id string) error {
 	return m.delete(ctx, userID, id)
+}
+func (m *mockRepo) CountUnprocessed(ctx context.Context, userID string) (int, error) {
+	if m.countUnprocessed == nil {
+		return 0, nil
+	}
+	return m.countUnprocessed(ctx, userID)
 }
 func (m *mockRepo) MarkProcessed(ctx context.Context, userID, id, result string, taskID, projectID *string) (bucket.Bucket, error) {
 	return m.markProcessed(ctx, userID, id, result, taskID, projectID)
@@ -91,7 +98,7 @@ func TestService_Create(t *testing.T) {
 					return b, nil
 				},
 			}
-			svc := bucket.NewService(repo, &mockTaskCreator{})
+			svc := bucket.NewService(repo, &mockTaskCreator{}, nil)
 			view, err := svc.Create(context.Background(), "u1", tt.content)
 
 			if tt.wantCode != "" {
@@ -144,7 +151,7 @@ func TestService_Update(t *testing.T) {
 					return b, nil
 				},
 			}
-			svc := bucket.NewService(repo, &mockTaskCreator{})
+			svc := bucket.NewService(repo, &mockTaskCreator{}, nil)
 			_, err := svc.Update(context.Background(), "u1", "b1", tt.content)
 
 			if tt.wantCode == "" {
@@ -176,7 +183,7 @@ func TestService_Process_Trash(t *testing.T) {
 			return b, nil
 		},
 	}
-	svc := bucket.NewService(repo, &mockTaskCreator{})
+	svc := bucket.NewService(repo, &mockTaskCreator{}, nil)
 	_, err := svc.Process(context.Background(), "u1", "b1", "free", bucket.ProcessBucketRequest{ProcessingResult: bucket.ResultTrash})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -187,7 +194,7 @@ func TestService_Process_Trash(t *testing.T) {
 }
 
 func TestService_Process_Note_NotImplemented(t *testing.T) {
-	svc := bucket.NewService(&mockRepo{}, &mockTaskCreator{})
+	svc := bucket.NewService(&mockRepo{}, &mockTaskCreator{}, nil)
 	_, err := svc.Process(context.Background(), "u1", "b1", "free", bucket.ProcessBucketRequest{ProcessingResult: bucket.ResultNote})
 	ae := appErr(err)
 	if ae == nil || ae.Status != http.StatusNotImplemented {
@@ -196,7 +203,7 @@ func TestService_Process_Note_NotImplemented(t *testing.T) {
 }
 
 func TestService_Process_InvalidResult(t *testing.T) {
-	svc := bucket.NewService(&mockRepo{}, &mockTaskCreator{})
+	svc := bucket.NewService(&mockRepo{}, &mockTaskCreator{}, nil)
 	_, err := svc.Process(context.Background(), "u1", "b1", "free", bucket.ProcessBucketRequest{ProcessingResult: "bogus"})
 	ae := appErr(err)
 	if ae == nil || ae.Code != apperror.ErrInvalidInput || ae.Status != http.StatusUnprocessableEntity {
@@ -216,7 +223,7 @@ func TestService_Process_Task_RequiresProjectAndDetails(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			svc := bucket.NewService(&mockRepo{}, &mockTaskCreator{})
+			svc := bucket.NewService(&mockRepo{}, &mockTaskCreator{}, nil)
 			_, err := svc.Process(context.Background(), "u1", "b1", "free", tt.req)
 			ae := appErr(err)
 			if ae == nil || ae.Code != apperror.ErrInvalidInput || ae.Status != http.StatusUnprocessableEntity {
@@ -240,7 +247,7 @@ func TestService_Process_Task_AlreadyProcessed(t *testing.T) {
 		taskCalled = true
 		return task.TaskView{}, nil
 	}}
-	svc := bucket.NewService(repo, tc)
+	svc := bucket.NewService(repo, tc, nil)
 	_, err := svc.Process(context.Background(), "u1", "b1", "free", bucket.ProcessBucketRequest{
 		ProcessingResult: bucket.ResultTask, ProjectID: ptr("p1"), TaskDetails: &bucket.ProcessTaskDetails{Title: "t"},
 	})
@@ -268,7 +275,7 @@ func TestService_Process_Task_PlanLimitAbortsBeforeMark(t *testing.T) {
 	tc := &mockTaskCreator{create: func(context.Context, string, string, string, task.CreateTaskRequest) (task.TaskView, error) {
 		return task.TaskView{}, planErr
 	}}
-	svc := bucket.NewService(repo, tc)
+	svc := bucket.NewService(repo, tc, nil)
 	_, err := svc.Process(context.Background(), "u1", "b1", "free", bucket.ProcessBucketRequest{
 		ProcessingResult: bucket.ResultTask, ProjectID: ptr("p1"), TaskDetails: &bucket.ProcessTaskDetails{Title: "t"},
 	})
@@ -298,7 +305,7 @@ func TestService_Process_Task_HappyPath_MapsDetailsAndMarks(t *testing.T) {
 		gotReq = req
 		return task.TaskView{ID: "task-123", ProjectID: projectID}, nil
 	}}
-	svc := bucket.NewService(repo, tc)
+	svc := bucket.NewService(repo, tc, nil)
 	view, err := svc.Process(context.Background(), "u1", "b1", "free", bucket.ProcessBucketRequest{
 		ProcessingResult: bucket.ResultTask,
 		ProjectID:        ptr("p1"),

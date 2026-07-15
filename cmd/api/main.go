@@ -91,19 +91,22 @@ func main() {
 	projectRepo := project.NewRepository(pool)
 	projectSvc := project.NewService(projectRepo)
 
-	// Task domain (incl. subtasks).
-	taskRepo := task.NewRepository(pool)
-	taskSvc := task.NewService(taskRepo)
-	subtaskSvc := task.NewSubtaskService(task.NewSubtaskRepository(pool))
-
-	// Bucket (inbox) — process turns an item into a task via the task service.
-	bucketSvc := bucket.NewService(bucket.NewRepository(pool), taskSvc)
-
 	// Search — full-text across tasks, projects and areas.
 	searchSvc := search.NewService(search.NewRepository(pool))
 
 	// Notification domain. Broadcaster is nil until the WebSocket hub exists (E-022).
+	// Built before task/bucket so it can be injected as their real-time notifier.
 	notificationSvc := notification.NewService(notification.NewRepository(pool), nil)
+
+	// Task domain (incl. subtasks). notificationSvc drives task_completed +
+	// project_completed real-time notifications (best-effort).
+	taskRepo := task.NewRepository(pool)
+	taskSvc := task.NewService(taskRepo, notificationSvc)
+	subtaskSvc := task.NewSubtaskService(task.NewSubtaskRepository(pool))
+
+	// Bucket (inbox) — process turns an item into a task via the task service;
+	// notificationSvc drives the Pro inbox_zero notification (best-effort).
+	bucketSvc := bucket.NewService(bucket.NewRepository(pool), taskSvc, notificationSvc)
 
 	// Due-date sweep — hourly job invoked by the Render Cron Job via /internal/jobs.
 	dueDateNotifier := jobs.NewDueDateNotifier(jobs.NewRepository(pool), notificationSvc, cfg.SMTPDsn)

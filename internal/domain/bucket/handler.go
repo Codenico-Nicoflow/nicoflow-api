@@ -131,9 +131,10 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 // @Router       /bucket/{id} [delete]
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())
+	plan := mw.PlanFromCtx(r.Context())
 	id := chi.URLParam(r, "id")
 
-	if err := h.svc.Delete(r.Context(), userID, id); err != nil {
+	if err := h.svc.Delete(r.Context(), userID, id, plan); err != nil {
 		writeAppError(w, r, err)
 		return
 	}

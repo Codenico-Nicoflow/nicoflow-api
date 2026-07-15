@@ -21,6 +21,9 @@ type Repository interface {
 	// A processed item returns 409 CONFLICT; a missing/foreign item returns 404.
 	UpdateContent(ctx context.Context, userID, id, content string) (Bucket, error)
 	Delete(ctx context.Context, userID, id string) error
+	// CountUnprocessed returns how many of the user's inbox items are still
+	// unprocessed (processed_at IS NULL) — zero is the inbox_zero signal.
+	CountUnprocessed(ctx context.Context, userID string) (int, error)
 	// MarkProcessed stamps result/task/project on an UNPROCESSED item only.
 	// Already-processed returns 409 CONFLICT (the concurrency backstop).
 	MarkProcessed(ctx context.Context, userID, id, result string, taskID, projectID *string) (Bucket, error)
@@ -77,6 +80,18 @@ func (r *pgRepo) ListByUser(ctx context.Context, userID string) ([]Bucket, error
 		items = append(items, b)
 	}
 	return items, rows.Err()
+}
+
+func (r *pgRepo) CountUnprocessed(ctx context.Context, userID string) (int, error) {
+	var count int
+	err := r.db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM bucket WHERE user_id = @userID AND processed_at IS NULL`,
+		pgx.NamedArgs{"userID": userID},
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("bucket.CountUnprocessed: %w", err)
+	}
+	return count, nil
 }
 
 func (r *pgRepo) GetByID(ctx context.Context, userID, id string) (Bucket, error) {

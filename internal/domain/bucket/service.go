@@ -15,6 +15,9 @@ import (
 // maxContentLen is the hard limit on bucket item content (matches VARCHAR(500)).
 const maxContentLen = 500
 
+// planPro is the plan value that unlocks the Pro-only inbox_zero notification.
+const planPro = "pro"
+
 // TaskCreator is the slice of the task service the bucket domain depends on to
 // turn a processed item into a task. Defined here (the consumer) so the bucket
 // package never imports the concrete task service. The real *task.service
@@ -29,18 +32,22 @@ type Service interface {
 	List(ctx context.Context, userID string) (BucketListResponse, error)
 	Get(ctx context.Context, userID, id string) (BucketView, error)
 	Update(ctx context.Context, userID, id, content string) (BucketView, error)
-	Delete(ctx context.Context, userID, id string) error
+	// Delete takes plan so it can fire the Pro inbox_zero notification when
+	// deleting an item clears the last unprocessed one.
+	Delete(ctx context.Context, userID, id, plan string) error
 	Process(ctx context.Context, userID, id, plan string, req ProcessBucketRequest) (BucketView, error)
 }
 
 type service struct {
 	repo    Repository
 	taskSvc TaskCreator
+	notif   notifier // best-effort notification emitter; nil disables emission
 }
 
-// NewService creates a new bucket service.
-func NewService(repo Repository, taskSvc TaskCreator) Service {
-	return &service{repo: repo, taskSvc: taskSvc}
+// NewService creates a new bucket service. notif may be nil (notifications are
+// best-effort); pass notification.Service to enable inbox_zero emission.
+func NewService(repo Repository, taskSvc TaskCreator, notif notifier) Service {
+	return &service{repo: repo, taskSvc: taskSvc, notif: notif}
 }
 
 func (s *service) Create(ctx context.Context, userID, content string) (BucketView, error) {
@@ -91,8 +98,13 @@ func (s *service) Update(ctx context.Context, userID, id, content string) (Bucke
 	return BucketToView(updated), nil
 }
 
-func (s *service) Delete(ctx context.Context, userID, id string) error {
-	return s.repo.Delete(ctx, userID, id)
+func (s *service) Delete(ctx context.Context, userID, id, plan string) error {
+	if err := s.repo.Delete(ctx, userID, id); err != nil {
+		return err
+	}
+	// Deleting an unprocessed item can clear the inbox — emit inbox_zero if so.
+	s.maybeEmitInboxZero(ctx, userID, plan)
+	return nil
 }
 
 // Process turns an unprocessed inbox item into a task, trashes it, or (future)
@@ -111,6 +123,7 @@ func (s *service) Process(ctx context.Context, userID, id, plan string, req Proc
 		if err != nil {
 			return BucketView{}, err
 		}
+		s.maybeEmitInboxZero(ctx, userID, plan)
 		return BucketToView(marked), nil
 	case ResultNote:
 		return BucketView{}, apperror.New(http.StatusNotImplemented, apperror.ErrServiceUnavailable, "note processing is not implemented")
@@ -150,6 +163,7 @@ func (s *service) processToTask(ctx context.Context, userID, id, plan string, re
 	if err != nil {
 		return BucketView{}, err
 	}
+	s.maybeEmitInboxZero(ctx, userID, plan)
 	return BucketToView(marked), nil
 }
 
