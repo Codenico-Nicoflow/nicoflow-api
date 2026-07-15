@@ -20,22 +20,37 @@ import (
 	"github.com/nicoflow/nicoflow-api/pkg/jwtutil"
 )
 
+// authTestEmailDomain scopes every cleanup: all auth integration users use
+// @example.com emails. Deleting by this domain (never a blanket DELETE FROM
+// users) keeps the suite from wiping rows other packages seed in the shared
+// test DB while running in parallel — see NIC-1608.
+const authTestEmailDomain = "@example.com"
+
+// cleanAuthTestData removes only auth's own users and their child rows,
+// children first to respect FK constraints. Scoped by email domain so it never
+// touches another package's data.
+func cleanAuthTestData(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	const userScope = ` WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%` + authTestEmailDomain + `')`
+	queries := []string{
+		`DELETE FROM email_verification_tokens` + userScope,
+		`DELETE FROM password_reset_tokens` + userScope,
+		`DELETE FROM refresh_tokens` + userScope,
+		`DELETE FROM users WHERE email LIKE '%` + authTestEmailDomain + `'`,
+	}
+	for _, q := range queries {
+		if _, err := pool.Exec(context.Background(), q); err != nil {
+			t.Fatalf("cleanAuthTestData: %v", err)
+		}
+	}
+}
+
 // integrationSvc returns a real Service backed by the test DB and a cleanup func.
 func integrationSvc(t *testing.T) (auth.Service, *pgxpool.Pool) {
 	t.Helper()
 	pool := testutil.NewTestDB(t)
-	testutil.CleanTables(t, pool,
-		"password_reset_tokens",
-		"refresh_tokens",
-		"users",
-	)
-	t.Cleanup(func() {
-		testutil.CleanTables(t, pool,
-			"password_reset_tokens",
-			"refresh_tokens",
-			"users",
-		)
-	})
+	cleanAuthTestData(t, pool)
+	t.Cleanup(func() { cleanAuthTestData(t, pool) })
 	cfg := config.Config{
 		JWTSecret:          "integration-test-secret-32-bytes!!",
 		JWTExpiry:          15 * time.Minute,
@@ -157,10 +172,8 @@ func TestIntegration_Register(t *testing.T) {
 
 func TestIntegration_Login_EmailNotVerified(t *testing.T) {
 	pool := testutil.NewTestDB(t)
-	testutil.CleanTables(t, pool, "email_verification_tokens", "refresh_tokens", "users")
-	t.Cleanup(func() {
-		testutil.CleanTables(t, pool, "email_verification_tokens", "refresh_tokens", "users")
-	})
+	cleanAuthTestData(t, pool)
+	t.Cleanup(func() { cleanAuthTestData(t, pool) })
 	cfg := config.Config{
 		JWTSecret:                "integration-test-secret-32-bytes!!",
 		JWTExpiry:                15 * time.Minute,
