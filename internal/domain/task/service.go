@@ -52,13 +52,15 @@ type Service interface {
 }
 
 type service struct {
-	repo Repository
-	now  func() time.Time // injectable clock — Focus/Time-Spread read time only through this
+	repo  Repository
+	now   func() time.Time // injectable clock — Focus/Time-Spread read time only through this
+	notif notifier         // best-effort notification emitter; nil disables emission
 }
 
-// NewService creates a new task service with a real clock.
-func NewService(repo Repository) Service {
-	return &service{repo: repo, now: time.Now}
+// NewService creates a new task service with a real clock. notif may be nil
+// (notifications are best-effort); pass notification.Service to enable emission.
+func NewService(repo Repository, notif notifier) Service {
+	return &service{repo: repo, now: time.Now, notif: notif}
 }
 
 // NewServiceWithClock is like NewService but with an injected clock, for
@@ -175,9 +177,17 @@ func (s *service) Update(ctx context.Context, userID, id, plan string, req Updat
 		}
 	}
 
-	updated, err := s.repo.Update(ctx, userID, id, req, completedAtTransition(current.Status, req.Status))
+	transition := completedAtTransition(current.Status, req.Status)
+	updated, err := s.repo.Update(ctx, userID, id, req, transition)
 	if err != nil {
 		return TaskView{}, err
+	}
+
+	// Real-time producers fire only on the transition INTO done, after the write
+	// commits. Best-effort — see notify.go.
+	if transition == completedAtSetNow {
+		s.emitTaskCompleted(ctx, updated)
+		s.emitProjectCompletedIfLast(ctx, updated)
 	}
 	return TaskToView(updated), nil
 }
