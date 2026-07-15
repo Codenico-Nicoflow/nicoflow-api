@@ -25,6 +25,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/task"
 	"github.com/nicoflow/nicoflow-api/internal/handler"
 	"github.com/nicoflow/nicoflow-api/internal/jobs"
+	"github.com/nicoflow/nicoflow-api/internal/ws"
 
 	// Generated Swagger docs (make swagger). Imported for the side-effect of
 	// registering the spec; the /v1/swagger UI route reads it.
@@ -102,7 +103,12 @@ func main() {
 	// Search — full-text across tasks, projects and areas.
 	searchSvc := search.NewService(search.NewRepository(pool))
 
-	// Notification domain. Broadcaster is nil until the WebSocket hub exists (E-022).
+	// WebSocket hub — in-process, single instance (no Redis in v1). The notification
+	// Broadcaster is wired to it in a follow-up (NIC-1588); for now the hub serves
+	// live connections and the broadcaster stays nil.
+	wsHub := ws.NewHub()
+
+	// Notification domain. Broadcaster is nil until the hub is injected (NIC-1588).
 	notificationSvc := notification.NewService(notification.NewRepository(pool), nil)
 
 	// Due-date sweep — hourly job invoked by the Render Cron Job via /internal/jobs.
@@ -119,6 +125,7 @@ func main() {
 		Search:       search.NewHandler(searchSvc),
 		Notification: notification.NewHandler(notificationSvc),
 		Jobs:         jobs.NewHandler(dueDateNotifier),
+		WS:           ws.NewHandler(wsHub, cfg.JWTSecret, cfg.CORSOrigins),
 	}
 
 	srv := &http.Server{
@@ -142,5 +149,6 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Error().Err(err).Msg("graceful shutdown timed out")
 	}
+	wsHub.CloseAll()
 	log.Info().Msg("server shut down cleanly")
 }
