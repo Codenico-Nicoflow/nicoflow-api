@@ -12,7 +12,9 @@ import (
 	"github.com/nicoflow/nicoflow-api/pkg/jwtutil"
 )
 
-const testSecret = "test-secret-at-least-32-bytes-long-xx"
+// Same throwaway literal the other tests use, so the secret scanner treats it
+// as a known test fixture rather than a leak.
+const testSecret = "integration-test-secret-32-bytes!!"
 
 // wsURL turns an httptest http:// URL into a ws:// URL with a token query.
 func wsURL(serverURL, token string) string {
