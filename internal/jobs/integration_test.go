@@ -73,12 +73,15 @@ func countNotifications(t *testing.T, pool *pgxpool.Pool, userID string) int {
 func newServer(t *testing.T, pool *pgxpool.Pool) *httptest.Server {
 	t.Helper()
 	notifSvc := notification.NewService(notification.NewRepository(pool), nil)
-	notifier := jobs.NewDueDateNotifier(jobs.NewRepository(pool), notifSvc, "")
-	h := jobs.NewHandler(notifier)
+	jobsRepo := jobs.NewRepository(pool)
+	notifier := jobs.NewDueDateNotifier(jobsRepo, notifSvc, "")
+	dayStart := jobs.NewDayStartNotifier(jobsRepo, notifSvc)
+	h := jobs.NewHandler(notifier, dayStart)
 
 	r := chi.NewRouter()
 	r.Use(mw.RequestID)
 	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/due-notify", h.DueNotify)
+	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/day-start", h.DayStart)
 
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
@@ -125,9 +128,11 @@ func TestEndpoint_Auth(t *testing.T) {
 func TestEndpoint_DisabledWhenSecretUnset(t *testing.T) {
 	pool := testutil.NewTestDB(t)
 	notifSvc := notification.NewService(notification.NewRepository(pool), nil)
-	notifier := jobs.NewDueDateNotifier(jobs.NewRepository(pool), notifSvc, "")
+	jobsRepo := jobs.NewRepository(pool)
+	notifier := jobs.NewDueDateNotifier(jobsRepo, notifSvc, "")
+	dayStart := jobs.NewDayStartNotifier(jobsRepo, notifSvc)
 	r := chi.NewRouter()
-	r.With(mw.InternalToken("")).Post("/internal/jobs/due-notify", jobs.NewHandler(notifier).DueNotify)
+	r.With(mw.InternalToken("")).Post("/internal/jobs/due-notify", jobs.NewHandler(notifier, dayStart).DueNotify)
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
 
