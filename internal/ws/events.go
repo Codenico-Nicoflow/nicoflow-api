@@ -6,16 +6,21 @@ import "time"
 type EventType string
 
 const (
-	EventTaskCreated    EventType = "task.created"
-	EventTaskUpdated    EventType = "task.updated"
-	EventTaskDeleted    EventType = "task.deleted"
-	EventProjectCreated EventType = "project.created"
-	EventProjectUpdated EventType = "project.updated"
-	EventProjectDeleted EventType = "project.deleted"
-	EventAreaCreated    EventType = "area.created"
-	EventAreaUpdated    EventType = "area.updated"
-	EventAreaDeleted    EventType = "area.deleted"
-	EventNotification   EventType = "notification"
+	EventTaskCreated       EventType = "task.created"
+	EventTaskUpdated       EventType = "task.updated"
+	EventTaskDeleted       EventType = "task.deleted"
+	EventTaskStatusChanged EventType = "task.status_changed"
+	EventProjectCreated    EventType = "project.created"
+	EventProjectUpdated    EventType = "project.updated"
+	EventProjectDeleted    EventType = "project.deleted"
+	EventAreaCreated       EventType = "area.created"
+	EventAreaUpdated       EventType = "area.updated"
+	EventAreaDeleted       EventType = "area.deleted"
+	EventBucketProcessed   EventType = "bucket.processed"
+	// EventNotificationCreated carries a full NotificationView. Renamed from the
+	// scaffold's "notification" to match the frontend event map (E-023) and the
+	// shape notification.Service already emits.
+	EventNotificationCreated EventType = "notification.created"
 )
 
 // Event is the envelope for every server-pushed WebSocket message.

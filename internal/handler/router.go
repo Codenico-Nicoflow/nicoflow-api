@@ -8,7 +8,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 
-	"github.com/nicoflow/nicoflow-api/internal/apperror"
 	"github.com/nicoflow/nicoflow-api/internal/config"
 	"github.com/nicoflow/nicoflow-api/internal/domain/ai"
 	"github.com/nicoflow/nicoflow-api/internal/domain/area"
@@ -21,7 +20,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/task"
 	"github.com/nicoflow/nicoflow-api/internal/jobs"
 	mw "github.com/nicoflow/nicoflow-api/internal/middleware"
-	"github.com/nicoflow/nicoflow-api/pkg/respond"
+	"github.com/nicoflow/nicoflow-api/internal/ws"
 )
 
 // Handlers groups all domain handler pointers.
@@ -36,6 +35,7 @@ type Handlers struct {
 	Search       *search.Handler
 	Notification *notification.Handler
 	Jobs         *jobs.Handler
+	WS           *ws.Handler
 }
 
 // New builds and returns the fully-wired Chi router.
@@ -68,8 +68,10 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		r.With(mw.SwaggerCSP).Get("/v1/swagger/*", httpSwagger.Handler(httpSwagger.URL("/v1/swagger/doc.json")))
 	}
 
-	// WS — JWT validated inside the handler once implemented (E-022)
-	r.Get("/v1/ws", stub)
+	// WS — JWT validated inside the handler from the ?token= query param (E-022).
+	// Public route: browsers can't set Authorization on the WS handshake, so the
+	// auth middleware would reject it — the handler does its own JWT check.
+	r.Get("/v1/ws", h.WS.Upgrade)
 
 	// Billing webhook — HMAC verified inside handler, no JWT
 	r.Post("/v1/billing/webhook", h.Billing.Webhook)
@@ -201,11 +203,6 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 	})
 
 	return r
-}
-
-// stub is a placeholder for routes not yet assigned to a domain handler.
-func stub(w http.ResponseWriter, _ *http.Request) {
-	respond.Error(w, http.StatusNotImplemented, apperror.ErrInternalServerError, "not implemented")
 }
 
 // splitCSV splits a comma-separated string into a trimmed, non-empty slice.
