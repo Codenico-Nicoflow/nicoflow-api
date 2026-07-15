@@ -16,3 +16,8 @@ func SetClock(n *DueDateNotifier, clock func() time.Time) {
 func SetDigestSender(n *DueDateNotifier, s func(to string, tasks []emailutil.DigestTask, smtpDSN string) error) {
 	n.sendDigest = s
 }
+
+// SetDayStartClock overrides the day-start notifier's clock. Test-only seam.
+func SetDayStartClock(n *DayStartNotifier, clock func() time.Time) {
+	n.now = clock
+}

@@ -45,6 +45,27 @@ func (r *pgRepository) ListRemindableUsers(ctx context.Context) ([]RemindableUse
 	return out, rows.Err()
 }
 
+// HasActiveWork reports whether the user has anything to plan: at least one
+// non-terminal task, or at least one unprocessed inbox item. Used as the
+// day-plan nudge precondition (only nudge users who actually have open work).
+func (r *pgRepository) HasActiveWork(ctx context.Context, userID string) (bool, error) {
+	var has bool
+	err := r.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM tasks
+			WHERE user_id = @userID AND status NOT IN ('done', 'cancelled')
+			UNION ALL
+			SELECT 1 FROM bucket
+			WHERE user_id = @userID AND processed_at IS NULL
+		)`,
+		pgx.NamedArgs{"userID": userID},
+	).Scan(&has)
+	if err != nil {
+		return false, fmt.Errorf("jobs.HasActiveWork: %w", err)
+	}
+	return has, nil
+}
+
 // ListTasksScheduledOn returns a user's non-terminal tasks scheduled for the given
 // ISO date. Terminal statuses (done, cancelled) are excluded — no reminder for work
 // already closed out.

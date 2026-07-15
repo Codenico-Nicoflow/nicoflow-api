@@ -49,6 +49,10 @@ type Repository interface {
 	// ListTasksScheduledOn returns a user's non-terminal tasks whose scheduled_for
 	// equals the given ISO date.
 	ListTasksScheduledOn(ctx context.Context, userID, isoDate string) ([]DueTask, error)
+	// HasActiveWork reports whether a user has any open task (non-terminal) or any
+	// unprocessed inbox item — the "has something to plan" precondition for the
+	// day-plan nudge.
+	HasActiveWork(ctx context.Context, userID string) (bool, error)
 }
 
 // creator is the notification funnel (notification.Service). Narrowed to just the

@@ -107,3 +107,26 @@ services:
           property: host
       - key: CRON_SECRET
         sync: false
+
+  # ── Start-of-day sweep (E-025 / NIC-1570) ───────────────────────────────────
+  # Hourly cron; the sweep fires only for users at their local 08:00 and dedupes
+  # per user/day, so hourly invocation is safe. Emits the FREE scheduled-today
+  # summary and the Pro plan-your-day nudge. Same guard + host wiring as above.
+  - type: cron
+    name: nicoflow-day-start-staging
+    runtime: image
+    image:
+      url: docker.io/curlimages/curl:8.11.1
+    region: frankfurt
+    schedule: "0 * * * *"
+    startCommand: >
+      curl -fsS -X POST "https://$API_HOST/internal/jobs/day-start"
+      -H "X-Internal-Token: $CRON_SECRET"
+    envVars:
+      - key: API_HOST
+        fromService:
+          name: nicoflow-api-staging
+          type: web
+          property: host
+      - key: CRON_SECRET
+        sync: false

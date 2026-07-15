@@ -56,16 +56,28 @@ func TestDedupeKey(t *testing.T) {
 // ── fakes ────────────────────────────────────────────────────────────────────
 
 type fakeRepo struct {
-	users     []RemindableUser
-	tasksByID map[string][]DueTask // keyed by userID
-	usersErr  error
+	users       []RemindableUser
+	tasksByID   map[string][]DueTask // keyed by userID (scheduled-on lookups)
+	tasksErr    map[string]error     // per-user scheduled-on error, for isolation tests
+	hasWorkByID map[string]bool      // keyed by userID (HasActiveWork result)
+	hasWorkErr  map[string]error     // per-user HasActiveWork error
+	usersErr    error
 }
 
 func (f *fakeRepo) ListRemindableUsers(_ context.Context) ([]RemindableUser, error) {
 	return f.users, f.usersErr
 }
 func (f *fakeRepo) ListTasksScheduledOn(_ context.Context, userID, _ string) ([]DueTask, error) {
+	if err := f.tasksErr[userID]; err != nil {
+		return nil, err
+	}
 	return f.tasksByID[userID], nil
+}
+func (f *fakeRepo) HasActiveWork(_ context.Context, userID string) (bool, error) {
+	if err := f.hasWorkErr[userID]; err != nil {
+		return false, err
+	}
+	return f.hasWorkByID[userID], nil
 }
 
 type fakeCreator struct {
