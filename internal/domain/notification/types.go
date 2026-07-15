@@ -5,10 +5,21 @@ import (
 	"time"
 )
 
-// Type values for a notification.
+// Type values for a notification. Free types deliver to every plan; Pro types are
+// suppressed for free users (see policy.go). Producers land in later E-025 stories.
 const (
-	TypeTaskDueSoon        = "task_due_soon"
-	TypeSystemAnnouncement = "system_announcement"
+	TypeTaskDueSoon        = "task_due_soon"        // FREE — existing (cron)
+	TypeSystemAnnouncement = "system_announcement"  // no producer yet
+	TypeTaskOverdue        = "task_overdue"         // FREE — overdue sweep
+	TypeTaskScheduledToday = "task_scheduled_today" // FREE — start-of-day sweep
+	TypeNothingScheduled   = "day_plan_nudge"       // PRO  — start-of-day sweep
+	TypeInboxUnprocessed   = "inbox_unprocessed"    // PRO  — inbox sweep
+	TypeInboxStale         = "inbox_stale"          // PRO  — inbox sweep
+	TypeTaskCompleted      = "task_completed"       // FREE — real-time
+	TypeProjectCompleted   = "project_completed"    // FREE — real-time
+	TypeDailySummary       = "daily_summary"        // PRO  — end-of-day sweep
+	TypeInboxZero          = "inbox_zero"           // PRO  — real-time
+	TypeStreakMilestone    = "streak_milestone"     // PRO  — end-of-day sweep
 )
 
 // Notification is the internal domain model.
