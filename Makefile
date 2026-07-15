@@ -1,5 +1,6 @@
 .PHONY: dev build test lint swagger docker-up docker-down docker-migrate-up \
-        migrate-up migrate-down migrate-down-all migrate-version migrate-create migrate-force
+        migrate-up migrate-down migrate-down-all migrate-version migrate-create migrate-force \
+        seed-notifications clear-notifications
 
 DOCKER_DATABASE_URL ?= postgres://nicoflow:BaNa9406%24@localhost:5432/nicoflow?sslmode=disable
 
@@ -30,6 +31,18 @@ lint:
 # Regenerate the OpenAPI/Swagger docs from handler annotations into docs/.
 swagger:
 	$(HOME)/go/bin/swag init -g cmd/api/main.go -o docs --parseInternal
+
+## Local test data
+
+# Seed a spread of notifications (4 unread + 1 read) for the oldest user, or a
+# specific one: `make seed-notifications EMAIL=you@example.com`. Lets you eyeball
+# the bell + panel without the 08:00-local cron. See scripts/seed_notifications.sh.
+seed-notifications:
+	./scripts/seed_notifications.sh $(EMAIL)
+
+# Wipe every notification (all users) from the docker Postgres — reset the bell.
+clear-notifications:
+	docker compose exec -T postgres psql -U nicoflow -d nicoflow -c "DELETE FROM notifications;"
 
 ## Docker Compose
 
