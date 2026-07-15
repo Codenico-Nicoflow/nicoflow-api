@@ -22,6 +22,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/billing"
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
+	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 	"github.com/nicoflow/nicoflow-api/internal/domain/task"
 	"github.com/nicoflow/nicoflow-api/internal/handler"
 	"github.com/nicoflow/nicoflow-api/internal/testutil"
@@ -44,6 +45,7 @@ type bucketEnv struct {
 func cleanBucketTestData(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	queries := []string{
+		`DELETE FROM notifications WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%` + testEmailDomain + `')`,
 		`DELETE FROM bucket   WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%` + testEmailDomain + `')`,
 		`DELETE FROM tasks    WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%` + testEmailDomain + `')`,
 		`DELETE FROM projects WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%` + testEmailDomain + `')`,
@@ -90,13 +92,16 @@ func newBucketServer(t *testing.T, plan string) bucketEnv {
 	email := "user-" + sanitizeEmail(t.Name()) + "-" + plan + testEmailDomain
 	userID, token := insertUser(t, pool, email, plan)
 
-	taskSvc := task.NewService(task.NewRepository(pool))
+	// Real notification service so bucket's inbox_zero path (and CountUnprocessed)
+	// runs end-to-end; broadcaster nil (poll-only in this epic).
+	notifSvc := notification.NewService(notification.NewRepository(pool), nil)
+	taskSvc := task.NewService(task.NewRepository(pool), notifSvc)
 	h := handler.Handlers{
 		Auth:    auth.NewHandler(auth.NewService(auth.NewRepository(pool), cfg), auth.HandlerConfig{}),
 		Area:    area.NewHandler(area.NewService(area.NewRepository(pool))),
 		Project: project.NewHandler(project.NewService(project.NewRepository(pool))),
 		Task:    task.NewHandler(taskSvc, task.NewSubtaskService(task.NewSubtaskRepository(pool))),
-		Bucket:  bucket.NewHandler(bucket.NewService(bucket.NewRepository(pool), taskSvc)),
+		Bucket:  bucket.NewHandler(bucket.NewService(bucket.NewRepository(pool), taskSvc, notifSvc)),
 		AI:      ai.NewHandler(ai.NewService(ai.NewRepository(pool))),
 		Billing: billing.NewHandler(billing.NewService(billing.NewRepository(pool))),
 	}
@@ -350,4 +355,35 @@ func TestBucket_ProcessToTask_PlanCap_403_LeavesUnprocessed(t *testing.T) {
 	edit := do(t, env.srv, http.MethodPatch, "/v1/bucket/"+id, map[string]any{"content": "still editable"}, env.token)
 	assertStatus(t, edit, http.StatusOK)
 	edit.Body.Close()
+}
+
+func countNotifications(t *testing.T, env bucketEnv, typ string) int {
+	t.Helper()
+	var n int
+	if err := env.pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND type = $2`,
+		env.userID, typ).Scan(&n); err != nil {
+		t.Fatalf("count notifications: %v", err)
+	}
+	return n
+}
+
+// A Pro user clearing their last inbox item triggers an inbox_zero notification
+// (exercises CountUnprocessed end-to-end); a free user in the same flow gets none.
+func TestBucket_InboxZero_ProOnly(t *testing.T) {
+	pro := newBucketServer(t, "pro")
+	id := createBucket(t, pro, "last thing")
+	do(t, pro.srv, http.MethodPost, "/v1/bucket/"+id+"/process",
+		map[string]any{"processingResult": "trash"}, pro.token).Body.Close()
+	if got := countNotifications(t, pro, notification.TypeInboxZero); got != 1 {
+		t.Fatalf("pro inbox_zero count = %d, want 1", got)
+	}
+
+	free := newBucketServer(t, "free")
+	fid := createBucket(t, free, "last thing")
+	do(t, free.srv, http.MethodPost, "/v1/bucket/"+fid+"/process",
+		map[string]any{"processingResult": "trash"}, free.token).Body.Close()
+	if got := countNotifications(t, free, notification.TypeInboxZero); got != 0 {
+		t.Fatalf("free inbox_zero count = %d, want 0 (Pro-only)", got)
+	}
 }
