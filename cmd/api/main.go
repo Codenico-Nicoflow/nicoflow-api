@@ -114,8 +114,10 @@ func main() {
 	// notificationSvc drives the Pro inbox_zero notification (best-effort).
 	bucketSvc := bucket.NewService(bucket.NewRepository(pool), taskSvc, notificationSvc)
 
-	// Due-date sweep — hourly job invoked by the Render Cron Job via /internal/jobs.
-	dueDateNotifier := jobs.NewDueDateNotifier(jobs.NewRepository(pool), notificationSvc, cfg.SMTPDsn)
+	// Sweep jobs — hourly, invoked by Render Cron Jobs via /internal/jobs/*.
+	jobsRepo := jobs.NewRepository(pool)
+	dueDateNotifier := jobs.NewDueDateNotifier(jobsRepo, notificationSvc, cfg.SMTPDsn)
+	overdueNotifier := jobs.NewOverdueNotifier(jobsRepo, notificationSvc)
 
 	handlers := handler.Handlers{
 		Auth:         auth.NewHandler(authSvc, cookieCfg),
@@ -127,7 +129,7 @@ func main() {
 		Billing:      billing.NewHandler(nil),
 		Search:       search.NewHandler(searchSvc),
 		Notification: notification.NewHandler(notificationSvc),
-		Jobs:         jobs.NewHandler(dueDateNotifier),
+		Jobs:         jobs.NewHandler(dueDateNotifier, overdueNotifier),
 		WS:           ws.NewHandler(wsHub, cfg.JWTSecret, cfg.CORSOrigins),
 	}
 
