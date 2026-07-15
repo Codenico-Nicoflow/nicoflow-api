@@ -99,3 +99,40 @@ func TestInboxZero_NotifyErrorDoesNotFailMutation(t *testing.T) {
 		t.Fatalf("notify error leaked into mutation: %v", err)
 	}
 }
+
+// A CountUnprocessed failure is swallowed: no notification, mutation succeeds.
+func TestInboxZero_CountErrorSwallowed(t *testing.T) {
+	fn := &fakeNotifier{}
+	repo := &mockRepo{
+		markProcessed: func(_ context.Context, _, id, result string, _, _ *string) (bucket.Bucket, error) {
+			b := unprocessed(id)
+			b.ProcessingResult = &result
+			return b, nil
+		},
+		countUnprocessed: func(context.Context, string) (int, error) { return 0, errors.New("db down") },
+	}
+	svc := bucket.NewService(repo, &mockTaskCreator{}, fn)
+	if _, err := svc.Process(context.Background(), "u1", "b1", "pro",
+		bucket.ProcessBucketRequest{ProcessingResult: bucket.ResultTrash}); err != nil {
+		t.Fatalf("count error leaked into mutation: %v", err)
+	}
+	if len(fn.calls) != 0 {
+		t.Fatalf("no notification expected when count fails, got %d", len(fn.calls))
+	}
+}
+
+// A Delete repo error is returned and skips the inbox_zero emission.
+func TestInboxZero_DeleteErrorReturned(t *testing.T) {
+	fn := &fakeNotifier{}
+	repo := &mockRepo{
+		delete:           func(context.Context, string, string) error { return errors.New("not found") },
+		countUnprocessed: func(context.Context, string) (int, error) { return 0, nil },
+	}
+	svc := bucket.NewService(repo, &mockTaskCreator{}, fn)
+	if err := svc.Delete(context.Background(), "u1", "b1", "pro"); err == nil {
+		t.Fatal("expected delete error to propagate")
+	}
+	if len(fn.calls) != 0 {
+		t.Fatalf("no emission when delete fails, got %d", len(fn.calls))
+	}
+}
