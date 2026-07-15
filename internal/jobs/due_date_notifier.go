@@ -49,6 +49,9 @@ type Repository interface {
 	// ListTasksScheduledOn returns a user's non-terminal tasks whose scheduled_for
 	// equals the given ISO date.
 	ListTasksScheduledOn(ctx context.Context, userID, isoDate string) ([]DueTask, error)
+	// ListOverdueTasks returns a user's non-terminal tasks whose scheduled_for is
+	// strictly before the given local ISO date (i.e. already past due).
+	ListOverdueTasks(ctx context.Context, userID, localDate string) ([]DueTask, error)
 }
 
 // creator is the notification funnel (notification.Service). Narrowed to just the
