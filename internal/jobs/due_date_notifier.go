@@ -157,10 +157,11 @@ func (n *DueDateNotifier) Run(ctx context.Context) (int, error) {
 }
 
 // maybeSendDigest emails a Pro user with email_digest on a batched summary of
-// their due-soon tasks. Free users and Pro users who opted out are skipped; an
-// empty task list or unset SMTP DSN is a no-op handled by the sender.
+// their due-soon tasks. The email-channel gate is the single source of truth
+// (notification.ShouldSendEmail) — no local plan/pref logic. Free users and Pro
+// users who opted out are skipped; an empty task list or unset SMTP DSN is a no-op.
 func (n *DueDateNotifier) maybeSendDigest(u RemindableUser, tasks []DueTask) {
-	if u.Plan != planPro || !u.EmailDigest || len(tasks) == 0 {
+	if !notification.ShouldSendEmail(u.Plan, u.EmailDigest) || len(tasks) == 0 {
 		return
 	}
 	digestTasks := make([]emailutil.DigestTask, len(tasks))

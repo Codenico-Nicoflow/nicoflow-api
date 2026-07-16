@@ -28,6 +28,9 @@ type Repository interface {
 	// idempotent generation.
 	InsertIfAbsent(ctx context.Context, n Notification) (Notification, bool, error)
 
+	// GetRecipient returns the plan + email needed to gate a user's out-of-app
+	// notification channels. Row-scoped by user; excludes soft-deleted users.
+	GetRecipient(ctx context.Context, userID string) (Recipient, error)
 	// GetPreferences returns the user's notification preferences, or the defaults
 	// when no row exists (absent row = defaults, never an error).
 	GetPreferences(ctx context.Context, userID string) (Preferences, error)
