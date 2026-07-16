@@ -19,6 +19,7 @@ func cleanNotificationTestData(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	queries := []string{
 		`DELETE FROM notifications WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%@notif.integration.test')`,
+		`DELETE FROM push_subscriptions WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%@notif.integration.test')`,
 		`DELETE FROM users WHERE email LIKE '%@notif.integration.test'`,
 	}
 	for _, q := range queries {

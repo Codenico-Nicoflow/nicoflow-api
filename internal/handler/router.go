@@ -200,6 +200,8 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		r.Get("/notifications", h.Notification.List)
 		r.Get("/notifications/preferences", h.Notification.GetPreferences)
 		r.Put("/notifications/preferences", h.Notification.UpdatePreferences)
+		r.Post("/notifications/push/subscribe", h.Notification.Subscribe)
+		r.Delete("/notifications/push/subscribe", h.Notification.Unsubscribe)
 		r.Get("/notifications/unread-count", h.Notification.UnreadCount)
 		r.Patch("/notifications/read-all", h.Notification.MarkAllRead)
 		r.Patch("/notifications/{id}/read", h.Notification.MarkRead)
