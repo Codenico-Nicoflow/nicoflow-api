@@ -19,14 +19,19 @@ func NewRepository(db *pgxpool.Pool) Repository {
 }
 
 // ListRemindableUsers returns every active (non-deleted) user with their timezone,
-// effective before_due_minutes, plan, email, and email_digest preference. Users
-// with no preferences row fall back to the defaults (lead 1440, digest on) via
+// effective before_due_minutes, plan, email, email_digest, and the four per-family
+// sweep toggles (overdue / daily_summary / inbox / streaks). Users with no
+// preferences row fall back to the defaults (lead 1440, all toggles on) via
 // LEFT JOIN + COALESCE.
 func (r *pgRepository) ListRemindableUsers(ctx context.Context) ([]RemindableUser, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT u.id, u.email, u.plan, u.timezone,
 		       COALESCE(p.before_due_minutes, 1440),
-		       COALESCE(p.email_digest, TRUE)
+		       COALESCE(p.email_digest, TRUE),
+		       COALESCE(p.overdue_enabled, TRUE),
+		       COALESCE(p.daily_summary_enabled, TRUE),
+		       COALESCE(p.inbox_nudges_enabled, TRUE),
+		       COALESCE(p.streaks_enabled, TRUE)
 		FROM users u
 		LEFT JOIN notification_preferences p ON p.user_id = u.id
 		WHERE u.deleted_at IS NULL`)
@@ -38,7 +43,8 @@ func (r *pgRepository) ListRemindableUsers(ctx context.Context) ([]RemindableUse
 	var out []RemindableUser
 	for rows.Next() {
 		var u RemindableUser
-		if err := rows.Scan(&u.UserID, &u.Email, &u.Plan, &u.Timezone, &u.BeforeDueMinutes, &u.EmailDigest); err != nil {
+		if err := rows.Scan(&u.UserID, &u.Email, &u.Plan, &u.Timezone, &u.BeforeDueMinutes, &u.EmailDigest,
+			&u.OverdueEnabled, &u.DailySummaryEnabled, &u.InboxNudgesEnabled, &u.StreaksEnabled); err != nil {
 			return nil, fmt.Errorf("jobs.ListRemindableUsers scan: %w", err)
 		}
 		out = append(out, u)

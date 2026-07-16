@@ -105,6 +105,23 @@ func TestOverdueRun_SkipsUsersNotAtReminderHour(t *testing.T) {
 	}
 }
 
+// AC2 (NIC-1591): a user who disabled the overdue family gets no notification,
+// even with an overdue task at their reminder hour.
+func TestOverdueRun_RespectsFamilyToggle(t *testing.T) {
+	repo := &fakeRepo{
+		familiesOff: true, // overdue_enabled = false for u1
+		users:       []RemindableUser{{UserID: "u1", Timezone: "UTC"}},
+		overdueByID: map[string][]DueTask{"u1": {{ID: "t1", Title: "Late"}}},
+	}
+	creator := &fakeCreator{inserted: true}
+	n := NewOverdueNotifier(repo, creator)
+	n.now = func() time.Time { return time.Date(2026, 7, 14, 8, 0, 0, 0, time.UTC) }
+
+	if generated, _ := n.Run(context.Background()); generated != 0 || len(creator.calls) != 0 {
+		t.Fatalf("want 0/0 when overdue disabled, got %d/%d", generated, len(creator.calls))
+	}
+}
+
 // Per-user isolation: one user's repo error must not abort the batch.
 func TestOverdueRun_PerUserIsolation(t *testing.T) {
 	repo := &fakeRepo{
