@@ -176,3 +176,26 @@ services:
           property: host
       - key: CRON_SECRET
         sync: false
+
+  # ── End-of-day summary + streak sweep (E-025 / NIC-1572) ─────────────────────
+  # Hourly cron; fires only for Pro users at their local 20:00. Emits the daily
+  # completion summary and a streak-milestone celebration, both deduped, so hourly
+  # invocation is safe. Same guard + host wiring.
+  - type: cron
+    name: nicoflow-summary-staging
+    runtime: image
+    image:
+      url: docker.io/curlimages/curl:8.11.1
+    region: frankfurt
+    schedule: "0 * * * *"
+    startCommand: >
+      curl -fsS -X POST "https://$API_HOST/internal/jobs/summary"
+      -H "X-Internal-Token: $CRON_SECRET"
+    envVars:
+      - key: API_HOST
+        fromService:
+          name: nicoflow-api-staging
+          type: web
+          property: host
+      - key: CRON_SECRET
+        sync: false

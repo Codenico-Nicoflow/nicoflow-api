@@ -120,6 +120,7 @@ func main() {
 	overdueNotifier := jobs.NewOverdueNotifier(jobsRepo, notificationSvc)
 	dayStartNotifier := jobs.NewDayStartNotifier(jobsRepo, notificationSvc)
 	inboxNotifier := jobs.NewInboxNotifier(jobsRepo, notificationSvc)
+	summaryNotifier := jobs.NewSummaryNotifier(jobsRepo, notificationSvc)
 
 	handlers := handler.Handlers{
 		Auth:         auth.NewHandler(authSvc, cookieCfg),
@@ -131,7 +132,7 @@ func main() {
 		Billing:      billing.NewHandler(nil),
 		Search:       search.NewHandler(searchSvc),
 		Notification: notification.NewHandler(notificationSvc),
-		Jobs:         jobs.NewHandler(dueDateNotifier, overdueNotifier, dayStartNotifier, inboxNotifier),
+		Jobs:         jobs.NewHandler(dueDateNotifier, overdueNotifier, dayStartNotifier, inboxNotifier, summaryNotifier),
 		WS:           ws.NewHandler(wsHub, cfg.JWTSecret, cfg.CORSOrigins),
 	}
 

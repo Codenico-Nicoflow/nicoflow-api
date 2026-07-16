@@ -62,6 +62,13 @@ type Repository interface {
 	// HasStaleInbox reports whether the user has any unprocessed inbox item captured
 	// strictly before cutoff — a capture that has gone stale.
 	HasStaleInbox(ctx context.Context, userID string, cutoff time.Time) (bool, error)
+	// CountCompletedOn returns how many of the user's tasks were completed on the
+	// given local ISO date (completed_at bucketed into the user's timezone).
+	CountCompletedOn(ctx context.Context, userID, tz, localDate string) (int, error)
+	// RecentCompletionDates returns the distinct local ISO dates (user's timezone,
+	// descending) on which the user completed at least one task, on or before
+	// localDate, limited to a recent window — enough to compute the current streak.
+	RecentCompletionDates(ctx context.Context, userID, tz, localDate string, limit int) ([]string, error)
 }
 
 // creator is the notification funnel (notification.Service). Narrowed to just the

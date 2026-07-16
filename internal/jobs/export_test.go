@@ -31,3 +31,8 @@ func SetDayStartClock(n *DayStartNotifier, clock func() time.Time) {
 func SetInboxClock(n *InboxNotifier, clock func() time.Time) {
 	n.now = clock
 }
+
+// SetSummaryClock overrides the summary notifier's clock. Test-only seam.
+func SetSummaryClock(n *SummaryNotifier, clock func() time.Time) {
+	n.now = clock
+}
