@@ -83,6 +83,13 @@ services:
       # internal endpoints return 503.
       - key: CRON_SECRET
         sync: false
+      # Web Push VAPID keys (E-025). Base64url; all three unset ⇒ push no-op.
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_SUBJECT
+        sync: false
 
   # ── Due-date reminder sweep (E-020) ─────────────────────────────────────────
   # Hourly cron that POSTs the internal endpoint; the sweep itself decides which

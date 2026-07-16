@@ -37,6 +37,15 @@ type Repository interface {
 	// UpsertPreferences lazily creates or partially updates the user's preferences
 	// row and returns the result.
 	UpsertPreferences(ctx context.Context, userID string, u UpdatePreferences) (Preferences, error)
+
+	// UpsertPushSubscription stores a web-push subscription, upserting on
+	// (user_id, endpoint) so a repeat subscribe refreshes rather than duplicates.
+	UpsertPushSubscription(ctx context.Context, userID string, sub PushSubscription) error
+	// DeletePushSubscription removes a user's subscription by endpoint. Idempotent —
+	// deleting an absent endpoint is not an error.
+	DeletePushSubscription(ctx context.Context, userID, endpoint string) error
+	// ListPushSubscriptions returns all of a user's stored subscriptions.
+	ListPushSubscriptions(ctx context.Context, userID string) ([]PushSubscription, error)
 }
 
 type pgRepository struct {

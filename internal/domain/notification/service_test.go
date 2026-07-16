@@ -55,6 +55,13 @@ func (m *mockRepo) GetPreferences(ctx context.Context, userID string) (notificat
 func (m *mockRepo) UpsertPreferences(ctx context.Context, userID string, u notification.UpdatePreferences) (notification.Preferences, error) {
 	return m.upsertPrefs(ctx, userID, u)
 }
+func (m *mockRepo) UpsertPushSubscription(_ context.Context, _ string, _ notification.PushSubscription) error {
+	return nil
+}
+func (m *mockRepo) DeletePushSubscription(_ context.Context, _, _ string) error { return nil }
+func (m *mockRepo) ListPushSubscriptions(_ context.Context, _ string) ([]notification.PushSubscription, error) {
+	return nil, nil
+}
 
 // spyBroadcaster records the events it receives so tests can assert the WS seam.
 type spyBroadcaster struct{ events []notification.Event }

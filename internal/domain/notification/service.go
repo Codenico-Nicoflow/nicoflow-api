@@ -35,6 +35,12 @@ type Service interface {
 	// wire-up. Nil senders leave the corresponding channel a no-op.
 	WithEmailSender(e EmailSender) Service
 	WithPushSender(p PushSender) Service
+
+	// Subscribe stores a web-push subscription for the user. Pro-gated: a free-plan
+	// caller gets a PLAN_LIMIT_EXCEEDED error and nothing is stored.
+	Subscribe(ctx context.Context, userID, plan string, req SubscribeRequest) error
+	// Unsubscribe removes the user's subscription for the given endpoint (idempotent).
+	Unsubscribe(ctx context.Context, userID, endpoint string) error
 }
 
 type service struct {
