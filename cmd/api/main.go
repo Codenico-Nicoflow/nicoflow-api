@@ -26,6 +26,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/handler"
 	"github.com/nicoflow/nicoflow-api/internal/jobs"
 	"github.com/nicoflow/nicoflow-api/internal/ws"
+	"github.com/nicoflow/nicoflow-api/pkg/pushutil"
 
 	// Generated Swagger docs (make swagger). Imported for the side-effect of
 	// registering the spec; the /v1/swagger UI route reads it.
@@ -102,7 +103,15 @@ func main() {
 
 	// Notification domain. Broadcaster is nil until the hub is injected (NIC-1588).
 	// Built before task/bucket so it can be injected as their real-time notifier.
-	notificationSvc := notification.NewService(notification.NewRepository(pool), nil)
+	// Web push (NIC-1580): the sender is a no-op when VAPID is unconfigured, so this
+	// is safe with empty keys locally.
+	notificationRepo := notification.NewRepository(pool)
+	pushSender, err := pushutil.New(cfg.VAPIDPublicKey, cfg.VAPIDPrivateKey, cfg.VAPIDSubject)
+	if err != nil {
+		log.Fatal().Err(err).Msg("invalid VAPID configuration")
+	}
+	notificationSvc := notification.NewService(notificationRepo, nil).
+		WithPushSender(notification.NewPushSender(notificationRepo, pushSender))
 
 	// Task domain (incl. subtasks). notificationSvc drives task_completed +
 	// project_completed real-time notifications (best-effort).
@@ -120,6 +129,7 @@ func main() {
 	overdueNotifier := jobs.NewOverdueNotifier(jobsRepo, notificationSvc)
 	dayStartNotifier := jobs.NewDayStartNotifier(jobsRepo, notificationSvc)
 	inboxNotifier := jobs.NewInboxNotifier(jobsRepo, notificationSvc)
+	summaryNotifier := jobs.NewSummaryNotifier(jobsRepo, notificationSvc)
 
 	handlers := handler.Handlers{
 		Auth:         auth.NewHandler(authSvc, cookieCfg),
@@ -131,7 +141,7 @@ func main() {
 		Billing:      billing.NewHandler(nil),
 		Search:       search.NewHandler(searchSvc),
 		Notification: notification.NewHandler(notificationSvc),
-		Jobs:         jobs.NewHandler(dueDateNotifier, overdueNotifier, dayStartNotifier, inboxNotifier),
+		Jobs:         jobs.NewHandler(dueDateNotifier, overdueNotifier, dayStartNotifier, inboxNotifier, summaryNotifier),
 		WS:           ws.NewHandler(wsHub, cfg.JWTSecret, cfg.CORSOrigins),
 	}
 

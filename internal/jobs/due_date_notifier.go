@@ -62,6 +62,13 @@ type Repository interface {
 	// HasStaleInbox reports whether the user has any unprocessed inbox item captured
 	// strictly before cutoff — a capture that has gone stale.
 	HasStaleInbox(ctx context.Context, userID string, cutoff time.Time) (bool, error)
+	// CountCompletedOn returns how many of the user's tasks were completed on the
+	// given local ISO date (completed_at bucketed into the user's timezone).
+	CountCompletedOn(ctx context.Context, userID, tz, localDate string) (int, error)
+	// RecentCompletionDates returns the distinct local ISO dates (user's timezone,
+	// descending) on which the user completed at least one task, on or before
+	// localDate, limited to a recent window — enough to compute the current streak.
+	RecentCompletionDates(ctx context.Context, userID, tz, localDate string, limit int) ([]string, error)
 }
 
 // creator is the notification funnel (notification.Service). Narrowed to just the
@@ -150,10 +157,11 @@ func (n *DueDateNotifier) Run(ctx context.Context) (int, error) {
 }
 
 // maybeSendDigest emails a Pro user with email_digest on a batched summary of
-// their due-soon tasks. Free users and Pro users who opted out are skipped; an
-// empty task list or unset SMTP DSN is a no-op handled by the sender.
+// their due-soon tasks. The email-channel gate is the single source of truth
+// (notification.ShouldSendEmail) — no local plan/pref logic. Free users and Pro
+// users who opted out are skipped; an empty task list or unset SMTP DSN is a no-op.
 func (n *DueDateNotifier) maybeSendDigest(u RemindableUser, tasks []DueTask) {
-	if u.Plan != planPro || !u.EmailDigest || len(tasks) == 0 {
+	if !notification.ShouldSendEmail(u.Plan, u.EmailDigest) || len(tasks) == 0 {
 		return
 	}
 	digestTasks := make([]emailutil.DigestTask, len(tasks))

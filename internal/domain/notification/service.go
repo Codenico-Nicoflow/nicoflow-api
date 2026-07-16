@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/rs/zerolog/log"
 )
 
 // Broadcaster pushes a notification event to a user's live connections. It is a
@@ -29,17 +30,45 @@ type Service interface {
 	GetPreferences(ctx context.Context, userID string) (PreferencesView, error)
 	// UpdatePreferences validates and lazily upserts the user's preferences.
 	UpdatePreferences(ctx context.Context, userID string, u UpdatePreferences) (PreferencesView, error)
+
+	// WithEmailSender / WithPushSender attach the out-of-app channel senders at
+	// wire-up. Nil senders leave the corresponding channel a no-op.
+	WithEmailSender(e EmailSender) Service
+	WithPushSender(p PushSender) Service
+
+	// Subscribe stores a web-push subscription for the user. Pro-gated: a free-plan
+	// caller gets a PLAN_LIMIT_EXCEEDED error and nothing is stored.
+	Subscribe(ctx context.Context, userID, plan string, req SubscribeRequest) error
+	// Unsubscribe removes the user's subscription for the given endpoint (idempotent).
+	Unsubscribe(ctx context.Context, userID, endpoint string) error
 }
 
 type service struct {
 	repo        Repository
 	broadcaster Broadcaster // nil in MVP (poll-only); injected in E-022.
+	emailSender EmailSender // nil = email is a no-op (per-notification path).
+	pushSender  PushSender  // nil = web push is a no-op; wired by NIC-1580.
 }
 
 // NewService creates a notification Service. Pass a nil broadcaster until the
-// WebSocket hub exists (E-022).
+// WebSocket hub exists (E-022). Out-of-app channel senders default to nil (no-op)
+// and are attached with WithEmailSender / WithPushSender.
 func NewService(repo Repository, broadcaster Broadcaster) Service {
 	return &service{repo: repo, broadcaster: broadcaster}
+}
+
+// WithEmailSender attaches the per-notification email sender. Returns the same
+// Service for chaining at wire-up. A nil sender leaves email a no-op.
+func (s *service) WithEmailSender(e EmailSender) Service {
+	s.emailSender = e
+	return s
+}
+
+// WithPushSender attaches the web-push sender (NIC-1580). A nil sender leaves web
+// push a no-op (safe when VAPID is unconfigured).
+func (s *service) WithPushSender(p PushSender) Service {
+	s.pushSender = p
+	return s
 }
 
 func (s *service) List(ctx context.Context, userID string, f ListNotificationsFilter) (ListNotificationsResponse, error) {
@@ -94,8 +123,19 @@ func (s *service) Create(ctx context.Context, n Notification) (NotificationView,
 		return NotificationView{}, false, nil
 	}
 	view := notificationToView(created)
+	// In-app + WS delivery is free for every plan — never gated.
 	if s.broadcaster != nil {
 		s.broadcaster.Broadcast(created.UserID, Event{Type: "notification.created", Payload: view})
+	}
+	// Out-of-app channels (email, web push) go through the single dispatch policy,
+	// gated on plan + prefs + subscription. Skip the recipient lookup entirely when
+	// no channel sender is wired (MVP / local dev with no email or VAPID).
+	if s.emailSender != nil || s.pushSender != nil {
+		if rec, err := s.repo.GetRecipient(ctx, created.UserID); err != nil {
+			log.Error().Err(err).Str("user_id", created.UserID).Msg("dispatch: load recipient failed")
+		} else {
+			s.dispatchChannels(ctx, rec, view)
+		}
 	}
 	return view, true, nil
 }

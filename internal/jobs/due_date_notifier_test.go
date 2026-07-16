@@ -67,6 +67,9 @@ type fakeRepo struct {
 	unprocErr   map[string]error     // per-user CountUnprocessedInbox error
 	staleByID   map[string]bool      // keyed by userID (HasStaleInbox result)
 	staleErr    map[string]error     // per-user HasStaleInbox error
+	completed   map[string]int       // keyed by userID (CountCompletedOn result)
+	completeErr map[string]error     // per-user CountCompletedOn error
+	streakDates map[string][]string  // keyed by userID (RecentCompletionDates result)
 	usersErr    error
 }
 
@@ -104,6 +107,15 @@ func (f *fakeRepo) HasStaleInbox(_ context.Context, userID string, _ time.Time) 
 		return false, err
 	}
 	return f.staleByID[userID], nil
+}
+func (f *fakeRepo) CountCompletedOn(_ context.Context, userID, _, _ string) (int, error) {
+	if err := f.completeErr[userID]; err != nil {
+		return 0, err
+	}
+	return f.completed[userID], nil
+}
+func (f *fakeRepo) RecentCompletionDates(_ context.Context, userID, _, _ string, _ int) ([]string, error) {
+	return f.streakDates[userID], nil
 }
 
 type fakeCreator struct {

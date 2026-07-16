@@ -17,15 +17,17 @@ type Handler struct {
 	overdueNotifier  *OverdueNotifier
 	dayStartNotifier *DayStartNotifier
 	inboxNotifier    *InboxNotifier
+	summaryNotifier  *SummaryNotifier
 }
 
 // NewHandler builds the jobs Handler.
-func NewHandler(dueNotifier *DueDateNotifier, overdueNotifier *OverdueNotifier, dayStartNotifier *DayStartNotifier, inboxNotifier *InboxNotifier) *Handler {
+func NewHandler(dueNotifier *DueDateNotifier, overdueNotifier *OverdueNotifier, dayStartNotifier *DayStartNotifier, inboxNotifier *InboxNotifier, summaryNotifier *SummaryNotifier) *Handler {
 	return &Handler{
 		dueNotifier:      dueNotifier,
 		overdueNotifier:  overdueNotifier,
 		dayStartNotifier: dayStartNotifier,
 		inboxNotifier:    inboxNotifier,
+		summaryNotifier:  summaryNotifier,
 	}
 }
 
@@ -78,6 +80,19 @@ func (h *Handler) Inbox(w http.ResponseWriter, r *http.Request) {
 	generated, err := h.inboxNotifier.Run(r.Context())
 	if err != nil {
 		log.Error().Err(err).Str("request_id", mw.GetRequestID(r.Context())).Msg("inbox sweep failed")
+		respond.Error(w, http.StatusInternalServerError, apperror.ErrInternalServerError, "sweep failed")
+		return
+	}
+	respond.JSON(w, http.StatusOK, sweepResponse{Generated: generated})
+}
+
+// Summary runs one end-of-day sweep (daily completion summary + streak milestone,
+// both Pro). Invoked hourly by the Render Cron Job; safe to re-run within a local
+// day (idempotent via dedupe_key).
+func (h *Handler) Summary(w http.ResponseWriter, r *http.Request) {
+	generated, err := h.summaryNotifier.Run(r.Context())
+	if err != nil {
+		log.Error().Err(err).Str("request_id", mw.GetRequestID(r.Context())).Msg("summary sweep failed")
 		respond.Error(w, http.StatusInternalServerError, apperror.ErrInternalServerError, "sweep failed")
 		return
 	}
