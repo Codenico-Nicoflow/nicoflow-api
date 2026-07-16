@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -92,6 +93,86 @@ func (r *pgRepository) ListOverdueTasks(ctx context.Context, userID, localDate s
 			return nil, fmt.Errorf("jobs.ListOverdueTasks scan: %w", err)
 		}
 		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// CountUnprocessedInbox returns how many unprocessed items sit in a user's inbox
+// (bucket rows with processed_at IS NULL).
+func (r *pgRepository) CountUnprocessedInbox(ctx context.Context, userID string) (int, error) {
+	var n int
+	err := r.db.QueryRow(ctx, `
+		SELECT COUNT(*) FROM bucket
+		WHERE user_id = @userID AND processed_at IS NULL`,
+		pgx.NamedArgs{"userID": userID},
+	).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("jobs.CountUnprocessedInbox: %w", err)
+	}
+	return n, nil
+}
+
+// HasStaleInbox reports whether the user has any unprocessed inbox item captured
+// strictly before cutoff — a capture that has gone stale.
+func (r *pgRepository) HasStaleInbox(ctx context.Context, userID string, cutoff time.Time) (bool, error) {
+	var has bool
+	err := r.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM bucket
+			WHERE user_id = @userID AND processed_at IS NULL AND created_at < @cutoff
+		)`,
+		pgx.NamedArgs{"userID": userID, "cutoff": cutoff},
+	).Scan(&has)
+	if err != nil {
+		return false, fmt.Errorf("jobs.HasStaleInbox: %w", err)
+	}
+	return has, nil
+}
+
+// CountCompletedOn returns how many of the user's tasks were completed on the given
+// local ISO date. completed_at (TIMESTAMPTZ) is bucketed into the user's timezone
+// before comparing to the date, so "today" respects the user's local day boundary.
+func (r *pgRepository) CountCompletedOn(ctx context.Context, userID, tz, localDate string) (int, error) {
+	var n int
+	err := r.db.QueryRow(ctx, `
+		SELECT COUNT(*) FROM tasks
+		WHERE user_id = @userID
+		  AND completed_at IS NOT NULL
+		  AND (completed_at AT TIME ZONE @tz)::date = @localDate::date`,
+		pgx.NamedArgs{"userID": userID, "tz": tz, "localDate": localDate},
+	).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("jobs.CountCompletedOn: %w", err)
+	}
+	return n, nil
+}
+
+// RecentCompletionDates returns the distinct local ISO dates (user's timezone,
+// descending) on which the user completed at least one task, on or before localDate,
+// capped at limit — enough history to compute the current daily-completion streak.
+func (r *pgRepository) RecentCompletionDates(ctx context.Context, userID, tz, localDate string, limit int) ([]string, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT DISTINCT (completed_at AT TIME ZONE @tz)::date AS d
+		FROM tasks
+		WHERE user_id = @userID
+		  AND completed_at IS NOT NULL
+		  AND (completed_at AT TIME ZONE @tz)::date <= @localDate::date
+		ORDER BY d DESC
+		LIMIT @limit`,
+		pgx.NamedArgs{"userID": userID, "tz": tz, "localDate": localDate, "limit": limit},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("jobs.RecentCompletionDates: %w", err)
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var d time.Time
+		if err := rows.Scan(&d); err != nil {
+			return nil, fmt.Errorf("jobs.RecentCompletionDates scan: %w", err)
+		}
+		out = append(out, d.Format(scheduledForLayout))
 	}
 	return out, rows.Err()
 }

@@ -39,6 +39,11 @@ type Config struct {
 	MinIOEndpoint  string
 	MinIOAccessKey string
 	MinIOSecretKey string
+	// VAPID keys for Web Push (E-025 / NIC-1580). Base64url-encoded per RFC 8292.
+	// All three unset ⇒ web push is a no-op (safe local/dev, mirrors SMTP_DSN).
+	VAPIDPublicKey  string
+	VAPIDPrivateKey string
+	VAPIDSubject    string
 }
 
 func Load() Config {
@@ -91,6 +96,9 @@ func Load() Config {
 		MinIOEndpoint:            os.Getenv("MINIO_ENDPOINT"),
 		MinIOAccessKey:           os.Getenv("MINIO_ACCESS_KEY"),
 		MinIOSecretKey:           os.Getenv("MINIO_SECRET_KEY"),
+		VAPIDPublicKey:           os.Getenv("VAPID_PUBLIC_KEY"),
+		VAPIDPrivateKey:          os.Getenv("VAPID_PRIVATE_KEY"),
+		VAPIDSubject:             os.Getenv("VAPID_SUBJECT"),
 	}
 }
 
