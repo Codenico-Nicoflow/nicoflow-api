@@ -44,6 +44,40 @@ func TestRepo_GetPreferences_DefaultsWhenAbsent(t *testing.T) {
 		p.BeforeDueMinutes != 1440 || p.AfterDueMinutes != 0 {
 		t.Fatalf("defaults = %+v, want emailDigest=true push=false sms=false before=1440 after=0", p)
 	}
+	// Per-family toggles (NIC-1591) default on.
+	if !p.OverdueEnabled || !p.DailySummaryEnabled || !p.InboxNudgesEnabled || !p.StreaksEnabled {
+		t.Fatalf("family defaults = %+v, want all four enabled", p)
+	}
+}
+
+// NIC-1591: per-family toggles persist and untouched families keep their value.
+func TestRepo_UpsertPreferences_FamilyToggles(t *testing.T) {
+	r, pool := newPrefsRepo(t)
+	userID := seedUser(t, pool)
+
+	off := false
+	p, err := r.UpsertPreferences(context.Background(), userID, notification.UpdatePreferences{
+		OverdueEnabled: &off,
+		StreaksEnabled: &off,
+	})
+	if err != nil {
+		t.Fatalf("UpsertPreferences: %v", err)
+	}
+	if p.OverdueEnabled || p.StreaksEnabled {
+		t.Fatalf("toggled = %+v, want overdue=false streaks=false", p)
+	}
+	// Untouched families stay on.
+	if !p.DailySummaryEnabled || !p.InboxNudgesEnabled {
+		t.Fatalf("untouched = %+v, want dailySummary=true inbox=true", p)
+	}
+
+	got, err := r.GetPreferences(context.Background(), userID)
+	if err != nil {
+		t.Fatalf("GetPreferences after upsert: %v", err)
+	}
+	if got.OverdueEnabled || got.StreaksEnabled || !got.DailySummaryEnabled || !got.InboxNudgesEnabled {
+		t.Fatalf("stored = %+v, want overdue=false streaks=false dailySummary=true inbox=true", got)
+	}
 }
 
 func TestRepo_UpsertPreferences_CreatesWithDefaultsForAbsentFields(t *testing.T) {

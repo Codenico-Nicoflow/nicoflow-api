@@ -14,12 +14,16 @@ func (r *pgRepository) GetPreferences(ctx context.Context, userID string) (Prefe
 	var p Preferences
 	err := r.db.QueryRow(ctx, `
 		SELECT user_id, email_digest, push_enabled, sms_enabled,
-		       before_due_minutes, after_due_minutes, updated_at
+		       before_due_minutes, after_due_minutes,
+		       overdue_enabled, daily_summary_enabled, inbox_nudges_enabled, streaks_enabled,
+		       updated_at
 		FROM notification_preferences
 		WHERE user_id = @userID`,
 		pgx.NamedArgs{"userID": userID},
 	).Scan(&p.UserID, &p.EmailDigest, &p.PushEnabled, &p.SMSEnabled,
-		&p.BeforeDueMinutes, &p.AfterDueMinutes, &p.UpdatedAt)
+		&p.BeforeDueMinutes, &p.AfterDueMinutes,
+		&p.OverdueEnabled, &p.DailySummaryEnabled, &p.InboxNudgesEnabled, &p.StreaksEnabled,
+		&p.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return defaultPreferences(userID), nil
@@ -52,7 +56,9 @@ func (r *pgRepository) UpsertPreferences(ctx context.Context, userID string, u U
 	err := r.db.QueryRow(ctx, `
 		INSERT INTO notification_preferences (
 			user_id, email_digest, push_enabled, sms_enabled,
-			before_due_minutes, after_due_minutes, updated_at
+			before_due_minutes, after_due_minutes,
+			overdue_enabled, daily_summary_enabled, inbox_nudges_enabled, streaks_enabled,
+			updated_at
 		) VALUES (
 			@userID,
 			COALESCE(@emailDigest::boolean, @defEmailDigest),
@@ -60,32 +66,52 @@ func (r *pgRepository) UpsertPreferences(ctx context.Context, userID string, u U
 			COALESCE(@smsEnabled::boolean, @defSMSEnabled),
 			COALESCE(@beforeDueMinutes::integer, @defBeforeDueMinutes),
 			COALESCE(@afterDueMinutes::integer, @defAfterDueMinutes),
+			COALESCE(@overdueEnabled::boolean, @defOverdueEnabled),
+			COALESCE(@dailySummaryEnabled::boolean, @defDailySummaryEnabled),
+			COALESCE(@inboxNudgesEnabled::boolean, @defInboxNudgesEnabled),
+			COALESCE(@streaksEnabled::boolean, @defStreaksEnabled),
 			NOW()
 		)
 		ON CONFLICT (user_id) DO UPDATE SET
-			email_digest       = COALESCE(@emailDigest::boolean, notification_preferences.email_digest),
-			push_enabled       = COALESCE(@pushEnabled::boolean, notification_preferences.push_enabled),
-			sms_enabled        = COALESCE(@smsEnabled::boolean, notification_preferences.sms_enabled),
-			before_due_minutes = COALESCE(@beforeDueMinutes::integer, notification_preferences.before_due_minutes),
-			after_due_minutes  = COALESCE(@afterDueMinutes::integer, notification_preferences.after_due_minutes),
-			updated_at         = NOW()
+			email_digest          = COALESCE(@emailDigest::boolean, notification_preferences.email_digest),
+			push_enabled          = COALESCE(@pushEnabled::boolean, notification_preferences.push_enabled),
+			sms_enabled           = COALESCE(@smsEnabled::boolean, notification_preferences.sms_enabled),
+			before_due_minutes    = COALESCE(@beforeDueMinutes::integer, notification_preferences.before_due_minutes),
+			after_due_minutes     = COALESCE(@afterDueMinutes::integer, notification_preferences.after_due_minutes),
+			overdue_enabled       = COALESCE(@overdueEnabled::boolean, notification_preferences.overdue_enabled),
+			daily_summary_enabled = COALESCE(@dailySummaryEnabled::boolean, notification_preferences.daily_summary_enabled),
+			inbox_nudges_enabled  = COALESCE(@inboxNudgesEnabled::boolean, notification_preferences.inbox_nudges_enabled),
+			streaks_enabled       = COALESCE(@streaksEnabled::boolean, notification_preferences.streaks_enabled),
+			updated_at            = NOW()
 		RETURNING user_id, email_digest, push_enabled, sms_enabled,
-		          before_due_minutes, after_due_minutes, updated_at`,
+		          before_due_minutes, after_due_minutes,
+		          overdue_enabled, daily_summary_enabled, inbox_nudges_enabled, streaks_enabled,
+		          updated_at`,
 		pgx.NamedArgs{
-			"userID":              userID,
-			"emailDigest":         u.EmailDigest,
-			"pushEnabled":         u.PushEnabled,
-			"smsEnabled":          u.SMSEnabled,
-			"beforeDueMinutes":    u.BeforeDueMinutes,
-			"afterDueMinutes":     u.AfterDueMinutes,
-			"defEmailDigest":      DefaultEmailDigest,
-			"defPushEnabled":      DefaultPushEnabled,
-			"defSMSEnabled":       DefaultSMSEnabled,
-			"defBeforeDueMinutes": DefaultBeforeDueMinutes,
-			"defAfterDueMinutes":  DefaultAfterDueMinutes,
+			"userID":                 userID,
+			"emailDigest":            u.EmailDigest,
+			"pushEnabled":            u.PushEnabled,
+			"smsEnabled":             u.SMSEnabled,
+			"beforeDueMinutes":       u.BeforeDueMinutes,
+			"afterDueMinutes":        u.AfterDueMinutes,
+			"overdueEnabled":         u.OverdueEnabled,
+			"dailySummaryEnabled":    u.DailySummaryEnabled,
+			"inboxNudgesEnabled":     u.InboxNudgesEnabled,
+			"streaksEnabled":         u.StreaksEnabled,
+			"defEmailDigest":         DefaultEmailDigest,
+			"defPushEnabled":         DefaultPushEnabled,
+			"defSMSEnabled":          DefaultSMSEnabled,
+			"defBeforeDueMinutes":    DefaultBeforeDueMinutes,
+			"defAfterDueMinutes":     DefaultAfterDueMinutes,
+			"defOverdueEnabled":      DefaultOverdueEnabled,
+			"defDailySummaryEnabled": DefaultDailySummaryEnabled,
+			"defInboxNudgesEnabled":  DefaultInboxNudgesEnabled,
+			"defStreaksEnabled":      DefaultStreaksEnabled,
 		},
 	).Scan(&p.UserID, &p.EmailDigest, &p.PushEnabled, &p.SMSEnabled,
-		&p.BeforeDueMinutes, &p.AfterDueMinutes, &p.UpdatedAt)
+		&p.BeforeDueMinutes, &p.AfterDueMinutes,
+		&p.OverdueEnabled, &p.DailySummaryEnabled, &p.InboxNudgesEnabled, &p.StreaksEnabled,
+		&p.UpdatedAt)
 	if err != nil {
 		return Preferences{}, fmt.Errorf("notification.UpsertPreferences: %w", err)
 	}
