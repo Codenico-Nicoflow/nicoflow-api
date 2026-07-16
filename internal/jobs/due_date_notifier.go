@@ -49,6 +49,9 @@ type Repository interface {
 	// ListTasksScheduledOn returns a user's non-terminal tasks whose scheduled_for
 	// equals the given ISO date.
 	ListTasksScheduledOn(ctx context.Context, userID, isoDate string) ([]DueTask, error)
+	// ListOverdueTasks returns a user's non-terminal tasks whose scheduled_for is
+	// strictly before the given local ISO date (i.e. already past due).
+	ListOverdueTasks(ctx context.Context, userID, localDate string) ([]DueTask, error)
 	// HasActiveWork reports whether a user has any open task (non-terminal) or any
 	// unprocessed inbox item — the "has something to plan" precondition for the
 	// day-plan nudge.

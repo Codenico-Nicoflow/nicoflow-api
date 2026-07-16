@@ -17,6 +17,11 @@ func SetDigestSender(n *DueDateNotifier, s func(to string, tasks []emailutil.Dig
 	n.sendDigest = s
 }
 
+// SetOverdueClock overrides the overdue notifier's clock. Test-only seam.
+func SetOverdueClock(n *OverdueNotifier, clock func() time.Time) {
+	n.now = clock
+}
+
 // SetDayStartClock overrides the day-start notifier's clock. Test-only seam.
 func SetDayStartClock(n *DayStartNotifier, clock func() time.Time) {
 	n.now = clock

@@ -117,6 +117,7 @@ func main() {
 	// Sweep jobs — hourly, invoked by Render Cron Jobs via /internal/jobs/*.
 	jobsRepo := jobs.NewRepository(pool)
 	dueDateNotifier := jobs.NewDueDateNotifier(jobsRepo, notificationSvc, cfg.SMTPDsn)
+	overdueNotifier := jobs.NewOverdueNotifier(jobsRepo, notificationSvc)
 	dayStartNotifier := jobs.NewDayStartNotifier(jobsRepo, notificationSvc)
 
 	handlers := handler.Handlers{
@@ -129,7 +130,7 @@ func main() {
 		Billing:      billing.NewHandler(nil),
 		Search:       search.NewHandler(searchSvc),
 		Notification: notification.NewHandler(notificationSvc),
-		Jobs:         jobs.NewHandler(dueDateNotifier, dayStartNotifier),
+		Jobs:         jobs.NewHandler(dueDateNotifier, overdueNotifier, dayStartNotifier),
 		WS:           ws.NewHandler(wsHub, cfg.JWTSecret, cfg.CORSOrigins),
 	}
 

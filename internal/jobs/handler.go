@@ -14,12 +14,13 @@ import (
 // contract and are guarded by the InternalToken middleware, not JWT.
 type Handler struct {
 	dueNotifier      *DueDateNotifier
+	overdueNotifier  *OverdueNotifier
 	dayStartNotifier *DayStartNotifier
 }
 
 // NewHandler builds the jobs Handler.
-func NewHandler(dueNotifier *DueDateNotifier, dayStartNotifier *DayStartNotifier) *Handler {
-	return &Handler{dueNotifier: dueNotifier, dayStartNotifier: dayStartNotifier}
+func NewHandler(dueNotifier *DueDateNotifier, overdueNotifier *OverdueNotifier, dayStartNotifier *DayStartNotifier) *Handler {
+	return &Handler{dueNotifier: dueNotifier, overdueNotifier: overdueNotifier, dayStartNotifier: dayStartNotifier}
 }
 
 // sweepResponse is the body of a successful sweep run.
@@ -33,6 +34,18 @@ func (h *Handler) DueNotify(w http.ResponseWriter, r *http.Request) {
 	generated, err := h.dueNotifier.Run(r.Context())
 	if err != nil {
 		log.Error().Err(err).Str("request_id", mw.GetRequestID(r.Context())).Msg("due-date sweep failed")
+		respond.Error(w, http.StatusInternalServerError, apperror.ErrInternalServerError, "sweep failed")
+		return
+	}
+	respond.JSON(w, http.StatusOK, sweepResponse{Generated: generated})
+}
+
+// OverdueNotify runs one overdue sweep. Invoked hourly by the Render Cron Job;
+// safe to call repeatedly within a local day (idempotent via dedupe_key).
+func (h *Handler) OverdueNotify(w http.ResponseWriter, r *http.Request) {
+	generated, err := h.overdueNotifier.Run(r.Context())
+	if err != nil {
+		log.Error().Err(err).Str("request_id", mw.GetRequestID(r.Context())).Msg("overdue sweep failed")
 		respond.Error(w, http.StatusInternalServerError, apperror.ErrInternalServerError, "sweep failed")
 		return
 	}

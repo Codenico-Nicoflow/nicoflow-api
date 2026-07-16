@@ -66,6 +66,36 @@ func (r *pgRepository) HasActiveWork(ctx context.Context, userID string) (bool, 
 	return has, nil
 }
 
+// ListOverdueTasks returns a user's non-terminal tasks whose scheduled_for is
+// strictly before localDate — scheduled in the past and still open. Terminal
+// statuses (done, cancelled) and unscheduled tasks (NULL scheduled_for) are
+// excluded.
+func (r *pgRepository) ListOverdueTasks(ctx context.Context, userID, localDate string) ([]DueTask, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, title
+		FROM tasks
+		WHERE user_id = @userID
+		  AND scheduled_for IS NOT NULL
+		  AND scheduled_for < @localDate
+		  AND status NOT IN ('done', 'cancelled')`,
+		pgx.NamedArgs{"userID": userID, "localDate": localDate},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("jobs.ListOverdueTasks: %w", err)
+	}
+	defer rows.Close()
+
+	var out []DueTask
+	for rows.Next() {
+		var t DueTask
+		if err := rows.Scan(&t.ID, &t.Title); err != nil {
+			return nil, fmt.Errorf("jobs.ListOverdueTasks scan: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // ListTasksScheduledOn returns a user's non-terminal tasks scheduled for the given
 // ISO date. Terminal statuses (done, cancelled) are excluded — no reminder for work
 // already closed out.

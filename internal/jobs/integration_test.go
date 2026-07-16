@@ -73,14 +73,17 @@ func countNotifications(t *testing.T, pool *pgxpool.Pool, userID string) int {
 func newServer(t *testing.T, pool *pgxpool.Pool) *httptest.Server {
 	t.Helper()
 	notifSvc := notification.NewService(notification.NewRepository(pool), nil)
-	jobsRepo := jobs.NewRepository(pool)
-	notifier := jobs.NewDueDateNotifier(jobsRepo, notifSvc, "")
-	dayStart := jobs.NewDayStartNotifier(jobsRepo, notifSvc)
-	h := jobs.NewHandler(notifier, dayStart)
+	repo := jobs.NewRepository(pool)
+	h := jobs.NewHandler(
+		jobs.NewDueDateNotifier(repo, notifSvc, ""),
+		jobs.NewOverdueNotifier(repo, notifSvc),
+		jobs.NewDayStartNotifier(repo, notifSvc),
+	)
 
 	r := chi.NewRouter()
 	r.Use(mw.RequestID)
 	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/due-notify", h.DueNotify)
+	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/overdue", h.OverdueNotify)
 	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/day-start", h.DayStart)
 
 	srv := httptest.NewServer(r)
@@ -128,11 +131,14 @@ func TestEndpoint_Auth(t *testing.T) {
 func TestEndpoint_DisabledWhenSecretUnset(t *testing.T) {
 	pool := testutil.NewTestDB(t)
 	notifSvc := notification.NewService(notification.NewRepository(pool), nil)
-	jobsRepo := jobs.NewRepository(pool)
-	notifier := jobs.NewDueDateNotifier(jobsRepo, notifSvc, "")
-	dayStart := jobs.NewDayStartNotifier(jobsRepo, notifSvc)
+	repo := jobs.NewRepository(pool)
+	h := jobs.NewHandler(
+		jobs.NewDueDateNotifier(repo, notifSvc, ""),
+		jobs.NewOverdueNotifier(repo, notifSvc),
+		jobs.NewDayStartNotifier(repo, notifSvc),
+	)
 	r := chi.NewRouter()
-	r.With(mw.InternalToken("")).Post("/internal/jobs/due-notify", jobs.NewHandler(notifier, dayStart).DueNotify)
+	r.With(mw.InternalToken("")).Post("/internal/jobs/due-notify", h.DueNotify)
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
 
@@ -218,5 +224,38 @@ func TestSweep_SkipsTerminalTasks(t *testing.T) {
 	}
 	if n != 0 || countNotifications(t, pool, uid) != 0 {
 		t.Fatalf("terminal task generated a reminder; generated=%d", n)
+	}
+}
+
+// TestOverdueSweep_GeneratesAndIsIdempotent drives the overdue sweep against a
+// real DB with the clock pinned to local 08:00. A UTC user with a task scheduled
+// in the past gets exactly one task_overdue, and a re-run the same day adds none.
+func TestOverdueSweep_GeneratesAndIsIdempotent(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	clean(t, pool)
+	t.Cleanup(func() { clean(t, pool) })
+
+	pinned := time.Date(2026, 7, 14, 8, 0, 0, 0, time.UTC) // local 08:00 for UTC users
+	past := pinned.AddDate(0, 0, -3).Format("2006-01-02")  // scheduled 3 days ago → overdue
+	uid := seedUserWithDueTask(t, pool, "UTC", past)
+
+	notifSvc := notification.NewService(notification.NewRepository(pool), nil)
+	notifier := jobs.NewOverdueNotifier(jobs.NewRepository(pool), notifSvc)
+	jobs.SetOverdueClock(notifier, func() time.Time { return pinned })
+
+	n, err := notifier.Run(context.Background())
+	if err != nil {
+		t.Fatalf("run 1: %v", err)
+	}
+	if n != 1 || countNotifications(t, pool, uid) != 1 {
+		t.Fatalf("run 1: generated=%d, want 1", n)
+	}
+
+	n, err = notifier.Run(context.Background())
+	if err != nil {
+		t.Fatalf("run 2: %v", err)
+	}
+	if n != 0 || countNotifications(t, pool, uid) != 1 {
+		t.Fatalf("run 2: generated=%d / count=%d, want 0 new (idempotent)", n, countNotifications(t, pool, uid))
 	}
 }
