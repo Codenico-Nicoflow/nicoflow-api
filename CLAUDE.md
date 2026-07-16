@@ -55,7 +55,7 @@ internal/
 │   ├── bucket/     ← handler, service, repository, types
 │   ├── ai/         ← handler, service, repository, types (also serves nlp/parse)
 │   └── billing/    ← handler, service, repository, types
-├── ws/             ← hub.go, client.go, events.go (route /v1/ws is still a stub in router.go)
+├── ws/             ← hub.go, client.go, events.go, handler.go, broadcaster.go (LIVE /v1/ws hub — NIC-1587/1588)
 ├── storage/        ← s3.go (presigned URLs)
 └── testutil/       ← db.go (shared test DB helpers)
 pkg/
@@ -65,7 +65,7 @@ pkg/
 └── respond/        ← JSON response envelope (respond.JSON / respond.Error)
 ```
 
-> **Implementation reality:** every domain has handler/service/repository/types wired and routed in `internal/handler/router.go` — none are bare stubs. Test coverage is uneven (auth richest; ai/bucket/billing/task have no `*_test.go` yet). The **WebSocket route is the main stub** (`/v1/ws` returns a placeholder; the `ws` package exists but isn't wired into a live hub yet — that's E-022). Always confirm a given handler's depth against the code before assuming it's done.
+> **Implementation reality:** every domain has handler/service/repository/types wired and routed in `internal/handler/router.go` — none are bare stubs. Test coverage is uneven (auth richest; ai/bucket/billing/task have no `*_test.go` yet). The **WebSocket route is now LIVE** (`/v1/ws` is a real gorilla hub with instant `notification.created` delivery — E-022 / NIC-1587/1588); `ai` and `billing` handlers are still thin. Always confirm a given handler's depth against the code before assuming it's done.
 
 ---
 
@@ -89,24 +89,28 @@ Dependency direction: Handler → Service interface → Repository interface. In
 - Never modify a deployed migration — always add a new numbered `.up.sql` / `.down.sql` pair.
 - `display_order` / `sort_order` use `INT DEFAULT 0`. Sparse ordering is intentional.
 
-### Migrations (001–027 applied)
+### Migrations (001–034 applied)
 
 ```
-001 create_users                     015 create_password_reset_tokens
-002 create_refresh_tokens            016 create_biometric_credentials
-003 create_areas                     017 users_login_lockout
-004 create_projects                  018 users_email_partial_unique
-005 create_tasks                     019 enrich_areas_projects
-006 create_subtasks                  020 email_verification
-007 create_user_plans                021 users_username_partial_unique
-008 create_webhook_events            022 drop_folder_icon_check
-009 create_ai_sessions               023 users_add_language
-010 create_ai_messages               024 projects_area_cascade
-011 create_ai_usage_monthly          025 tasks_energy_aware
-012 users_soft_delete                026 tasks_drop_due_date
-013 folder_icons_project             027 projects_area_required
-014 alter_users_add_profile_fields
+001 create_users                     018 users_email_partial_unique
+002 create_refresh_tokens            019 enrich_areas_projects
+003 create_areas                     020 email_verification
+004 create_projects                  021 users_username_partial_unique
+005 create_tasks                     022 drop_folder_icon_check
+006 create_subtasks                  023 users_add_language
+007 create_user_plans                024 projects_area_cascade
+008 create_webhook_events            025 tasks_energy_aware
+009 create_ai_sessions               026 tasks_drop_due_date
+010 create_ai_messages               027 projects_area_required
+011 create_ai_usage_monthly          028 create_bucket
+012 users_soft_delete                029 search_vectors
+013 folder_icons_project             030 search_vectors_simple
+014 alter_users_add_profile_fields   031 create_notifications
+015 create_password_reset_tokens     032 notification_preferences
+016 create_biometric_credentials     033 create_push_subscriptions
+017 users_login_lockout              034 notification_prefs_families
 ```
+(031–034 are the notification stack: notifications table → preferences → Web Push subscriptions → per-family toggles.)
 
 > **027 `projects_area_required`** makes `projects.area_id NOT NULL` — a project must always belong to an area (matches the `Area › Project › Task` hierarchy and 024's cascade). Area-less projects are deleted by the migration. Create/Update source `area_id` from a **user-scoped `SELECT`** so a project can only live in an area the caller owns; a foreign/missing area → `AREA_NOT_FOUND`.
 
@@ -205,14 +209,23 @@ Check via `COUNT(*)` before insert. Plan is read from `ctx` Claims — no DB cal
 
 ---
 
-## WebSocket (E-022 — route is currently a stub)
+## WebSocket (E-022 — LIVE, NIC-1587/1588)
 
-Target design (the `ws` package exists; the route isn't live yet):
-- Hub in-process (no Redis in v1). Single Render instance.
-- Auth: JWT from `?token=` query param. Invalid JWT → close `1008 Policy Violation`.
-- Heartbeat: server pings every 30s; pong timeout 10s; write timeout 10s; read timeout 60s.
-- Events are full-payload (no diffs), broadcast only to the owning user's connections.
-- Services emit via `hub.BroadcastToUser(userID, event)` after every successful mutation.
+`GET /v1/ws?token=<jwt>` is a live gorilla hub (route wired in `router.go`, no stub). **FREE on every plan** — the JWT identifies the user, it does not gate.
+- Hub in-process (`internal/ws`, no Redis in v1). Single Render instance. `Hub.BroadcastToUser(userID, ws.Event)` marshals once + fans out to all of a user's connections; a full send buffer drops the slow client (never blocks the hub). `CloseAll` on graceful shutdown.
+- Auth: JWT from `?token=` query param (via `pkg/jwtutil`). Invalid/expired → upgrade then close `1008 Policy Violation`. `CheckOrigin` bound to `CORS_ORIGINS`.
+- Heartbeat: server pings every 30s; read deadline 60s (missed pong closes); write deadline 10s; inbound frames capped 512B (receive-only — discarded). Multi-connection per user.
+- Envelope `ws.Event{ Event, Payload, Timestamp }` — full payloads, no diffs. Event names in `events.go`: `task.created|updated|deleted|status_changed`, `project.*`, `area.*`, `bucket.processed`, `notification.created`.
+- **Notification delivery:** `internal/ws/broadcaster.go` (`NotificationBroadcaster`) adapts the hub to `notification.Broadcaster` and is injected into `notification.NewService` in `main.go`. Every `Create` broadcasts `notification.created` (fire-and-forget — a broadcast never fails/blocks the insert). Adapter lives in `ws` (imports `notification`), never the reverse.
+
+## Web Push (E-025 — Pro, NIC-1580)
+
+- `push_subscriptions` table (migration 033, `UNIQUE(user_id, endpoint)`, FK cascade). `POST /v1/notifications/push/subscribe` (Pro-only → `PLAN_LIMIT_EXCEEDED` on free; `422` on missing keys; upsert → `201`) + `DELETE …/subscribe` (idempotent, no plan gate → `204`).
+- VAPID via `pkg/pushutil` (`VAPID_PUBLIC_KEY/PRIVATE_KEY/SUBJECT`); any unset ⇒ no-op sender (safe local dev, mirrors `SMTP_DSN`). `NewPushSender` fans a created notification to all of a user's subscriptions, pruning 404/410 (expired) endpoints.
+
+## Notification preferences (E-020/E-025)
+
+`notification_preferences` (migration 032 + 034): `email_digest`, `push_enabled`, `sms_enabled`, `before_due_minutes`, `after_due_minutes`, and the four per-family toggles `overdue_enabled` / `daily_summary_enabled` / `inbox_nudges_enabled` / `streaks_enabled` (all `DEFAULT TRUE`). Lazy upsert; an absent row = all defaults. Each proactive sweep reads its toggle (COALESCE to default) alongside plan before emitting.
 
 ---
 
