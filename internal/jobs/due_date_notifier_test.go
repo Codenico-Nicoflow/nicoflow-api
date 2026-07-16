@@ -71,10 +71,26 @@ type fakeRepo struct {
 	completeErr map[string]error     // per-user CountCompletedOn error
 	streakDates map[string][]string  // keyed by userID (RecentCompletionDates result)
 	usersErr    error
+	// familiesOff, when true, leaves the per-family toggles at their zero value
+	// (all off) so opt-out cases can exercise the gates. Default (false) mirrors
+	// the DB, which COALESCEs an absent preferences row to all-families-on.
+	familiesOff bool
 }
 
 func (f *fakeRepo) ListRemindableUsers(_ context.Context) ([]RemindableUser, error) {
-	return f.users, f.usersErr
+	if f.usersErr != nil || f.familiesOff {
+		return f.users, f.usersErr
+	}
+	// Mirror the DB default: every returned row has all families enabled unless a
+	// test explicitly overrode a toggle on the fixture.
+	out := make([]RemindableUser, len(f.users))
+	for i, u := range f.users {
+		if !u.OverdueEnabled && !u.DailySummaryEnabled && !u.InboxNudgesEnabled && !u.StreaksEnabled {
+			u.OverdueEnabled, u.DailySummaryEnabled, u.InboxNudgesEnabled, u.StreaksEnabled = true, true, true, true
+		}
+		out[i] = u
+	}
+	return out, nil
 }
 func (f *fakeRepo) ListTasksScheduledOn(_ context.Context, userID, _ string) ([]DueTask, error) {
 	if err := f.tasksErr[userID]; err != nil {

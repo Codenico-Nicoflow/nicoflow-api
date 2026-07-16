@@ -76,6 +76,23 @@ func TestInboxRun_UnprocessedNudge(t *testing.T) {
 	}
 }
 
+// AC2 (NIC-1591): a Pro user who disabled inbox nudges gets none, even over threshold.
+func TestInboxRun_RespectsFamilyToggle(t *testing.T) {
+	repo := &fakeRepo{
+		familiesOff: true, // inbox_nudges_enabled = false for u1
+		users:       []RemindableUser{{UserID: "u1", Timezone: "UTC", Plan: planPro}},
+		unprocessed: map[string]int{"u1": inboxUnprocessedThreshold},
+		staleByID:   map[string]bool{"u1": true},
+	}
+	creator := &fakeCreator{inserted: true}
+	n := NewInboxNotifier(repo, creator)
+	n.now = at0800UTCInbox
+
+	if generated, _ := n.Run(context.Background()); generated != 0 || len(creator.calls) != 0 {
+		t.Fatalf("want 0/0 when inbox nudges disabled, got %d/%d", generated, len(creator.calls))
+	}
+}
+
 // AC1: below threshold → no unprocessed nudge.
 func TestInboxRun_BelowThresholdNoNudge(t *testing.T) {
 	repo := &fakeRepo{

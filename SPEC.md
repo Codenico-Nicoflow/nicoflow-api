@@ -1240,60 +1240,103 @@ Full-text search across tasks, projects, and areas.
 
 ### 3.11 Notifications
 
+In-app notifications are created through a single idempotent funnel (dedupe by
+`dedupeKey`) and delivered three ways: **in-app** (this list + the unread badge),
+**WebSocket** (`notification.created`, §3.14 — FREE, instant), and — for Pro —
+**email** (the due-digest) and **Web Push** (browser OS notification when the tab
+is closed). WS delivery is free for every plan; the email + Web Push channels are
+Pro-only.
+
+#### Notification types
+
+Every notification carries a `type`. FREE types reach all plans; Pro types are
+only ever produced for Pro users.
+
+| `type`                 | Plan | Producer                    |
+| ---------------------- | ---- | --------------------------- |
+| `task_due_soon`        | FREE | due-date cron sweep         |
+| `task_overdue`         | FREE | overdue cron sweep          |
+| `task_scheduled_today` | FREE | start-of-day sweep          |
+| `task_completed`       | FREE | real-time (task mutation)   |
+| `project_completed`    | FREE | real-time (task mutation)   |
+| `system_announcement`  | FREE | (no producer yet)           |
+| `day_plan_nudge`       | PRO  | start-of-day sweep          |
+| `inbox_unprocessed`    | PRO  | inbox nudge sweep           |
+| `inbox_stale`          | PRO  | inbox nudge sweep           |
+| `inbox_zero`           | PRO  | real-time (bucket cleared)  |
+| `daily_summary`        | PRO  | end-of-day sweep            |
+| `streak_milestone`     | PRO  | end-of-day sweep            |
+
+The client must render an unknown `type` gracefully (icon/label fallback) — the
+set grows over time.
+
 #### GET /v1/notifications
 
-List all notifications for the authenticated user.
+List the authenticated user's notifications, newest first. Cursor-paginated.
+
+- **Auth required:** Yes
+- **Query:** `isRead` (bool, optional filter) · `limit` (default/cap per server) · `cursor` (opaque, from a prior `nextCursor`)
+
+**Response — 200 OK**
+
+```json
+{
+  "items": [
+    {
+      "id": "01J...",
+      "type": "task_due_soon",
+      "title": "Task due soon",
+      "body": "\"Ship the release\" is due in 24h.",
+      "metadata": { "taskId": "01K...", "count": 3 },
+      "isRead": false,
+      "readAt": null,
+      "createdAt": "2026-07-16T08:00:00Z"
+    }
+  ],
+  "nextCursor": ""
+}
+```
+
+`metadata` is a free-form object whose keys depend on `type` (e.g. `count` on the
+inbox/summary families, `taskId` on task-scoped types). `nextCursor` is empty when
+there are no more pages.
+
+---
+
+#### GET /v1/notifications/unread-count
+
+Unread-notification count for the badge.
 
 - **Auth required:** Yes
 
-**Response — 200 OK** — `INotification[]`
-
-```json
-[
-  {
-    "id": "01J...",
-    "userId": "01K...",
-    "type": "push",
-    "trigger": "before_due",
-    "status": "pending",
-    "message": "Task due soon",
-    "read": false,
-    "createdAt": "..."
-  }
-]
-```
+**Response — 200 OK** — `{ "count": 3 }`
 
 ---
 
 #### PATCH /v1/notifications/:id
 
-Mark a notification as read or unread.
+Mark a single notification read (idempotent). Row-scoped to the caller.
 
 - **Auth required:** Yes
+- **Request body:** `{ "isRead": true }`
 
-**Request body**
-
-```json
-{ "read": true }
-```
-
-**Response — 200 OK** — Updated `INotification`
+**Response — 200 OK** — the updated notification view (same shape as a list item)
 
 ---
 
 #### PATCH /v1/notifications/read-all
 
-Mark all notifications as read.
+Mark all of the user's notifications read.
 
 - **Auth required:** Yes
 
-**Response — 204 No Content**
+**Response — 200 OK** — `{ "count": <marked> }`
 
 ---
 
 #### DELETE /v1/notifications/:id
 
-Delete a notification.
+Delete a notification. Row-scoped to the caller.
 
 - **Auth required:** Yes
 
@@ -1303,7 +1346,7 @@ Delete a notification.
 
 #### GET /v1/notifications/preferences
 
-Get the user's notification preferences.
+Get the user's notification preferences (defaults when no row exists).
 
 - **Auth required:** Yes
 
@@ -1311,25 +1354,72 @@ Get the user's notification preferences.
 
 ```json
 {
-  "email": true,
-  "push": true,
-  "sms": false,
-  "beforeDueMinutes": 30,
-  "afterDueMinutes": 60
+  "emailDigest": true,
+  "pushEnabled": false,
+  "smsEnabled": false,
+  "beforeDueMinutes": 1440,
+  "afterDueMinutes": 0,
+  "overdueEnabled": true,
+  "dailySummaryEnabled": true,
+  "inboxNudgesEnabled": true,
+  "streaksEnabled": true
 }
 ```
+
+- `emailDigest` gates the Pro due-digest email. `pushEnabled` is the browser Web
+  Push toggle (Pro-only — see §3.12-push below). `beforeDueMinutes` / `afterDueMinutes`
+  are the due-reminder lead times (capped at 10080 = 7 days).
+- The four `*Enabled` toggles silence individual proactive families independently:
+  `overdueEnabled` → overdue sweep · `dailySummaryEnabled` → end-of-day summary ·
+  `inboxNudgesEnabled` → inbox nudges · `streaksEnabled` → streak milestone. All
+  default `true`; an absent preferences row means "all on".
 
 ---
 
 #### PUT /v1/notifications/preferences
 
-Replace the user's notification preferences.
+Partial or full update of the user's preferences (lazy upsert). Any omitted field
+keeps its stored value; on first write, omitted fields take their default.
 
 - **Auth required:** Yes
+- **Request body** — any subset of `INotificationPreferences`
 
-**Request body** — Full `INotificationPreferences` object (same shape as GET response)
+**Response — 200 OK** — the full resulting `INotificationPreferences`
 
-**Response — 200 OK** — Updated `INotificationPreferences`
+---
+
+#### POST /v1/notifications/push/subscribe
+
+Store a browser Web Push subscription (upsert by endpoint). **Pro-only.**
+
+- **Auth required:** Yes
+- **Request body**
+
+```json
+{
+  "endpoint": "https://fcm.googleapis.com/fcm/send/...",
+  "p256dhKey": "<base64url>",
+  "authKey": "<base64url>",
+  "userAgent": "Mozilla/5.0 ..."
+}
+```
+
+**Responses**
+- **201 Created** — subscription stored (a repeat subscribe on the same endpoint refreshes it, no duplicate row).
+- **403 `PLAN_LIMIT_EXCEEDED`** — free plan; nothing stored.
+- **422 `INVALID_INPUT`** — missing `endpoint` / `p256dhKey` / `authKey`.
+
+---
+
+#### DELETE /v1/notifications/push/subscribe
+
+Remove the user's subscription for an endpoint. Idempotent; **no plan gate** (a
+downgraded user must still be able to unsubscribe).
+
+- **Auth required:** Yes
+- **Request body:** `{ "endpoint": "https://..." }`
+
+**Response — 204 No Content**
 
 ---
 
@@ -1482,9 +1572,12 @@ Lemon Squeezy webhook receiver. Not called by the client — called by Lemon Squ
 
 #### GET /v1/ws
 
-Upgrade to a WebSocket connection for real-time push events.
+Upgrade to a WebSocket connection for real-time push events. **FREE on every plan**
+— the connection is not Pro-gated; the JWT identifies the user, it does not gate.
 
-- **Auth required:** Yes (JWT passed as query param — invalid → close `1008`)
+- **Auth required:** Yes — JWT is passed as the `?token=` query param (browsers
+  can't set `Authorization` on the WS handshake). A missing/invalid/expired token
+  completes the upgrade then closes with **`1008` Policy Violation**.
 
 **Connection URL**
 
@@ -1492,30 +1585,42 @@ Upgrade to a WebSocket connection for real-time push events.
 wss://api.nicoflow.app/v1/ws?token=<jwt>
 ```
 
-**Server-pushed event shape**
+**Heartbeat & limits** — the server pings every **30s**; a missed pong within the
+**60s** read deadline closes the connection; per-write deadline is **10s**;
+inbound frames are capped at **512 bytes** (clients are receive-only — inbound
+frames are discarded). A user may hold multiple connections (tabs/devices); every
+event fans out to all of them.
+
+**Server-pushed event shape** (envelope for every message)
 
 ```json
 {
   "event": "task.updated",
-  "payload": { ...ITask },
-  "timestamp": "2026-05-01T12:00:00Z"
+  "payload": { "...": "full resource — no diffs" },
+  "timestamp": "2026-07-16T12:00:00Z"
 }
 ```
 
 **Event types**
 
-| Event             | Payload         |
-| ----------------- | --------------- |
-| `task.created`    | `ITask`         |
-| `task.updated`    | `ITask`         |
-| `task.deleted`    | `{ id }`        |
-| `project.created` | `IProject`      |
-| `project.updated` | `IProject`      |
-| `project.deleted` | `{ id }`        |
-| `area.created`    | `IArea`         |
-| `area.updated`    | `IArea`         |
-| `area.deleted`    | `{ id }`        |
-| `notification`    | `INotification` |
+| Event                  | Payload           |
+| ---------------------- | ----------------- |
+| `task.created`         | `ITask`           |
+| `task.updated`         | `ITask`           |
+| `task.deleted`         | `{ id }`          |
+| `task.status_changed`  | `ITask`           |
+| `project.created`      | `IProject`        |
+| `project.updated`      | `IProject`        |
+| `project.deleted`      | `{ id }`          |
+| `area.created`         | `IArea`           |
+| `area.updated`         | `IArea`           |
+| `area.deleted`         | `{ id }`          |
+| `bucket.processed`     | `{ id }`          |
+| `notification.created` | `INotification` (full `NotificationView`, §3.11) |
+
+The frontend maps `notification.created` to a tag-invalidation of the
+notification list + unread count (prefer invalidation over cache-patching); the
+badge rise then drives the bell animation and (Pro) the browser notification.
 
 ---
 

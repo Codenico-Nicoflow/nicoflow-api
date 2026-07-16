@@ -117,6 +117,47 @@ func TestSummaryRun_NoCompletionsSilent(t *testing.T) {
 	}
 }
 
+// AC2 (NIC-1591): daily_summary disabled but streaks on → only the streak fires.
+// Setting one toggle explicitly leaves the other at its zero value (off) in the fake.
+func TestSummaryRun_DailySummaryDisabledStreakOn(t *testing.T) {
+	repo := &fakeRepo{
+		users:       []RemindableUser{{UserID: "u1", Timezone: "UTC", Plan: planPro, StreaksEnabled: true}},
+		completed:   map[string]int{"u1": 3},
+		streakDates: map[string][]string{"u1": consecutiveDates("2026-07-14", streakMilestones[0])},
+	}
+	creator := &fakeCreator{inserted: true}
+	n := NewSummaryNotifier(repo, creator)
+	n.now = at2000UTC
+
+	generated, _ := n.Run(context.Background())
+	if generated != 1 || len(creator.calls) != 1 {
+		t.Fatalf("generated=%d calls=%d, want 1/1 (streak only)", generated, len(creator.calls))
+	}
+	if creator.calls[0].Type != notification.TypeStreakMilestone {
+		t.Fatalf("type = %q, want streak_milestone (daily_summary was disabled)", creator.calls[0].Type)
+	}
+}
+
+// AC2 (NIC-1591): streaks disabled but daily on → only the summary fires.
+func TestSummaryRun_StreakDisabledSummaryOn(t *testing.T) {
+	repo := &fakeRepo{
+		users:       []RemindableUser{{UserID: "u1", Timezone: "UTC", Plan: planPro, DailySummaryEnabled: true}},
+		completed:   map[string]int{"u1": 3},
+		streakDates: map[string][]string{"u1": consecutiveDates("2026-07-14", streakMilestones[0])},
+	}
+	creator := &fakeCreator{inserted: true}
+	n := NewSummaryNotifier(repo, creator)
+	n.now = at2000UTC
+
+	generated, _ := n.Run(context.Background())
+	if generated != 1 || len(creator.calls) != 1 {
+		t.Fatalf("generated=%d calls=%d, want 1/1 (summary only)", generated, len(creator.calls))
+	}
+	if creator.calls[0].Type != notification.TypeDailySummary {
+		t.Fatalf("type = %q, want daily_summary (streaks was disabled)", creator.calls[0].Type)
+	}
+}
+
 // Free user is skipped (both types Pro).
 func TestSummaryRun_FreeUserSkipped(t *testing.T) {
 	repo := &fakeRepo{

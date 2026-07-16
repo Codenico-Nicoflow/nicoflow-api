@@ -60,6 +60,9 @@ func (n *InboxNotifier) Run(ctx context.Context) (int, error) {
 		if !notification.IsProType(notification.TypeInboxUnprocessed) || u.Plan != planPro {
 			continue // both inbox nudges are Pro-only
 		}
+		if !u.InboxNudgesEnabled {
+			continue // user opted out of inbox nudges
+		}
 
 		if n.emitUnprocessed(ctx, u, local) {
 			generated++

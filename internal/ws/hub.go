@@ -79,6 +79,14 @@ func (h *Hub) BroadcastToUser(userID string, ev Event) {
 	}
 }
 
+// ClientCount reports how many live connections a user currently holds. Used by
+// tests to wait out the register race before broadcasting.
+func (h *Hub) ClientCount(userID string) int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return len(h.clients[userID])
+}
+
 // CloseAll closes every connection — used on graceful shutdown.
 func (h *Hub) CloseAll() {
 	h.mu.Lock()

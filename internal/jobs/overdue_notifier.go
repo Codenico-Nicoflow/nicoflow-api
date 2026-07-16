@@ -39,6 +39,10 @@ func (n *OverdueNotifier) Run(ctx context.Context) (int, error) {
 	generated := 0
 
 	for _, u := range users {
+		if !u.OverdueEnabled {
+			continue // user opted out of overdue reminders
+		}
+
 		localToday, ok := overdueLocalToday(nowUTC, u.Timezone)
 		if !ok {
 			continue // not this user's reminder hour (or a bad timezone) → skip

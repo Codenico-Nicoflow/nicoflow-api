@@ -32,6 +32,12 @@ type RemindableUser struct {
 	Timezone         string
 	BeforeDueMinutes int
 	EmailDigest      bool
+	// Per-family toggles (NIC-1591). Each sweep honours its own; an absent
+	// preferences row COALESCEs all to TRUE (every family on by default).
+	OverdueEnabled      bool
+	DailySummaryEnabled bool
+	InboxNudgesEnabled  bool
+	StreaksEnabled      bool
 }
 
 // DueTask is the minimal task shape the sweep needs to build a notification.

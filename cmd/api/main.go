@@ -97,20 +97,21 @@ func main() {
 	searchSvc := search.NewService(search.NewRepository(pool))
 
 	// WebSocket hub — in-process, single instance (no Redis in v1). The notification
-	// Broadcaster is wired to it in a follow-up (NIC-1588); for now the hub serves
-	// live connections and the broadcaster stays nil.
+	// The hub serves live WS connections; the adapter below injects it as the
+	// notification service's Broadcaster so notifications deliver instantly (NIC-1588).
 	wsHub := ws.NewHub()
 
-	// Notification domain. Broadcaster is nil until the hub is injected (NIC-1588).
-	// Built before task/bucket so it can be injected as their real-time notifier.
-	// Web push (NIC-1580): the sender is a no-op when VAPID is unconfigured, so this
-	// is safe with empty keys locally.
+	// Notification domain. The ws adapter is the real-time Broadcaster: every
+	// created notification fans out over WS (fire-and-forget). Built before
+	// task/bucket so it can be injected as their real-time notifier. Web push
+	// (NIC-1580): the sender is a no-op when VAPID is unconfigured, so this is safe
+	// with empty keys locally.
 	notificationRepo := notification.NewRepository(pool)
 	pushSender, err := pushutil.New(cfg.VAPIDPublicKey, cfg.VAPIDPrivateKey, cfg.VAPIDSubject)
 	if err != nil {
 		log.Fatal().Err(err).Msg("invalid VAPID configuration")
 	}
-	notificationSvc := notification.NewService(notificationRepo, nil).
+	notificationSvc := notification.NewService(notificationRepo, ws.NewNotificationBroadcaster(wsHub)).
 		WithPushSender(notification.NewPushSender(notificationRepo, pushSender))
 
 	// Task domain (incl. subtasks). notificationSvc drives task_completed +

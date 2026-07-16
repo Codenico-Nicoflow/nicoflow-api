@@ -63,6 +63,9 @@ func (n *SummaryNotifier) Run(ctx context.Context) (int, error) {
 		if !notification.IsProType(notification.TypeDailySummary) || u.Plan != planPro {
 			continue // both outputs are Pro-only
 		}
+		if !u.DailySummaryEnabled && !u.StreaksEnabled {
+			continue // user opted out of both this sweep's families
+		}
 
 		completed, err := n.repo.CountCompletedOn(ctx, u.UserID, u.Timezone, localToday)
 		if err != nil {
@@ -70,10 +73,10 @@ func (n *SummaryNotifier) Run(ctx context.Context) (int, error) {
 			continue
 		}
 
-		if n.emitSummary(ctx, u, localToday, completed) {
+		if u.DailySummaryEnabled && n.emitSummary(ctx, u, localToday, completed) {
 			generated++
 		}
-		if n.emitStreak(ctx, u, localToday, completed) {
+		if u.StreaksEnabled && n.emitStreak(ctx, u, localToday, completed) {
 			generated++
 		}
 	}
