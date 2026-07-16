@@ -29,6 +29,21 @@ func (r *pgRepository) GetPreferences(ctx context.Context, userID string) (Prefe
 	return p, nil
 }
 
+// GetRecipient returns the plan + email used to gate a user's out-of-app channels.
+// Scoped to the user and excludes soft-deleted accounts.
+func (r *pgRepository) GetRecipient(ctx context.Context, userID string) (Recipient, error) {
+	var rec Recipient
+	err := r.db.QueryRow(ctx, `
+		SELECT id, email, plan FROM users
+		WHERE id = @userID AND deleted_at IS NULL`,
+		pgx.NamedArgs{"userID": userID},
+	).Scan(&rec.UserID, &rec.Email, &rec.Plan)
+	if err != nil {
+		return Recipient{}, fmt.Errorf("notification.GetRecipient: %w", err)
+	}
+	return rec, nil
+}
+
 // UpsertPreferences lazily creates or partially updates the user's row. On create,
 // nil fields land at their column defaults (COALESCE against the default constant);
 // on update, nil fields keep the existing stored value. Returns the resulting row.

@@ -80,6 +80,9 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 	// (X-Internal-Token), outside the JWT /v1 group. Hit by the Render Cron Job.
 	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/due-notify", h.Jobs.DueNotify)
 	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/overdue", h.Jobs.OverdueNotify)
+	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/day-start", h.Jobs.DayStart)
+	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/inbox", h.Jobs.Inbox)
+	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/summary", h.Jobs.Summary)
 
 	// Auth — stricter per-endpoint IP rate limits
 	r.Route("/v1/auth", func(r chi.Router) {
@@ -197,6 +200,8 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		r.Get("/notifications", h.Notification.List)
 		r.Get("/notifications/preferences", h.Notification.GetPreferences)
 		r.Put("/notifications/preferences", h.Notification.UpdatePreferences)
+		r.Post("/notifications/push/subscribe", h.Notification.Subscribe)
+		r.Delete("/notifications/push/subscribe", h.Notification.Unsubscribe)
 		r.Get("/notifications/unread-count", h.Notification.UnreadCount)
 		r.Patch("/notifications/read-all", h.Notification.MarkAllRead)
 		r.Patch("/notifications/{id}/read", h.Notification.MarkRead)

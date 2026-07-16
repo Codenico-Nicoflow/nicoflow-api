@@ -58,8 +58,18 @@ func TestDedupeKey(t *testing.T) {
 type fakeRepo struct {
 	users       []RemindableUser
 	tasksByID   map[string][]DueTask // keyed by userID (scheduled-on lookups)
+	tasksErr    map[string]error     // per-user scheduled-on error, for isolation tests
 	overdueByID map[string][]DueTask // keyed by userID (overdue lookups)
 	overdueErr  map[string]error     // per-user overdue error, for isolation tests
+	hasWorkByID map[string]bool      // keyed by userID (HasActiveWork result)
+	hasWorkErr  map[string]error     // per-user HasActiveWork error
+	unprocessed map[string]int       // keyed by userID (CountUnprocessedInbox result)
+	unprocErr   map[string]error     // per-user CountUnprocessedInbox error
+	staleByID   map[string]bool      // keyed by userID (HasStaleInbox result)
+	staleErr    map[string]error     // per-user HasStaleInbox error
+	completed   map[string]int       // keyed by userID (CountCompletedOn result)
+	completeErr map[string]error     // per-user CountCompletedOn error
+	streakDates map[string][]string  // keyed by userID (RecentCompletionDates result)
 	usersErr    error
 }
 
@@ -67,6 +77,9 @@ func (f *fakeRepo) ListRemindableUsers(_ context.Context) ([]RemindableUser, err
 	return f.users, f.usersErr
 }
 func (f *fakeRepo) ListTasksScheduledOn(_ context.Context, userID, _ string) ([]DueTask, error) {
+	if err := f.tasksErr[userID]; err != nil {
+		return nil, err
+	}
 	return f.tasksByID[userID], nil
 }
 func (f *fakeRepo) ListOverdueTasks(_ context.Context, userID, _ string) ([]DueTask, error) {
@@ -76,6 +89,33 @@ func (f *fakeRepo) ListOverdueTasks(_ context.Context, userID, _ string) ([]DueT
 		}
 	}
 	return f.overdueByID[userID], nil
+}
+func (f *fakeRepo) HasActiveWork(_ context.Context, userID string) (bool, error) {
+	if err := f.hasWorkErr[userID]; err != nil {
+		return false, err
+	}
+	return f.hasWorkByID[userID], nil
+}
+func (f *fakeRepo) CountUnprocessedInbox(_ context.Context, userID string) (int, error) {
+	if err := f.unprocErr[userID]; err != nil {
+		return 0, err
+	}
+	return f.unprocessed[userID], nil
+}
+func (f *fakeRepo) HasStaleInbox(_ context.Context, userID string, _ time.Time) (bool, error) {
+	if err := f.staleErr[userID]; err != nil {
+		return false, err
+	}
+	return f.staleByID[userID], nil
+}
+func (f *fakeRepo) CountCompletedOn(_ context.Context, userID, _, _ string) (int, error) {
+	if err := f.completeErr[userID]; err != nil {
+		return 0, err
+	}
+	return f.completed[userID], nil
+}
+func (f *fakeRepo) RecentCompletionDates(_ context.Context, userID, _, _ string, _ int) ([]string, error) {
+	return f.streakDates[userID], nil
 }
 
 type fakeCreator struct {

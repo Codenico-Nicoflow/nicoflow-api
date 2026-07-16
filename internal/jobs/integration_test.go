@@ -77,12 +77,18 @@ func newServer(t *testing.T, pool *pgxpool.Pool) *httptest.Server {
 	h := jobs.NewHandler(
 		jobs.NewDueDateNotifier(repo, notifSvc, ""),
 		jobs.NewOverdueNotifier(repo, notifSvc),
+		jobs.NewDayStartNotifier(repo, notifSvc),
+		jobs.NewInboxNotifier(repo, notifSvc),
+		jobs.NewSummaryNotifier(repo, notifSvc),
 	)
 
 	r := chi.NewRouter()
 	r.Use(mw.RequestID)
 	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/due-notify", h.DueNotify)
 	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/overdue", h.OverdueNotify)
+	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/day-start", h.DayStart)
+	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/inbox", h.Inbox)
+	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/summary", h.Summary)
 
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
@@ -130,7 +136,13 @@ func TestEndpoint_DisabledWhenSecretUnset(t *testing.T) {
 	pool := testutil.NewTestDB(t)
 	notifSvc := notification.NewService(notification.NewRepository(pool), nil)
 	repo := jobs.NewRepository(pool)
-	h := jobs.NewHandler(jobs.NewDueDateNotifier(repo, notifSvc, ""), jobs.NewOverdueNotifier(repo, notifSvc))
+	h := jobs.NewHandler(
+		jobs.NewDueDateNotifier(repo, notifSvc, ""),
+		jobs.NewOverdueNotifier(repo, notifSvc),
+		jobs.NewDayStartNotifier(repo, notifSvc),
+		jobs.NewInboxNotifier(repo, notifSvc),
+		jobs.NewSummaryNotifier(repo, notifSvc),
+	)
 	r := chi.NewRouter()
 	r.With(mw.InternalToken("")).Post("/internal/jobs/due-notify", h.DueNotify)
 	srv := httptest.NewServer(r)
