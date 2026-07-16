@@ -56,6 +56,12 @@ type Repository interface {
 	// unprocessed inbox item — the "has something to plan" precondition for the
 	// day-plan nudge.
 	HasActiveWork(ctx context.Context, userID string) (bool, error)
+	// CountUnprocessedInbox returns how many unprocessed items sit in a user's
+	// inbox (bucket rows with processed_at IS NULL).
+	CountUnprocessedInbox(ctx context.Context, userID string) (int, error)
+	// HasStaleInbox reports whether the user has any unprocessed inbox item captured
+	// strictly before cutoff — a capture that has gone stale.
+	HasStaleInbox(ctx context.Context, userID string, cutoff time.Time) (bool, error)
 }
 
 // creator is the notification funnel (notification.Service). Narrowed to just the

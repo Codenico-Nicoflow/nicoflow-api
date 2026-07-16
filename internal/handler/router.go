@@ -81,6 +81,7 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/due-notify", h.Jobs.DueNotify)
 	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/overdue", h.Jobs.OverdueNotify)
 	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/day-start", h.Jobs.DayStart)
+	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/inbox", h.Jobs.Inbox)
 
 	// Auth — stricter per-endpoint IP rate limits
 	r.Route("/v1/auth", func(r chi.Router) {

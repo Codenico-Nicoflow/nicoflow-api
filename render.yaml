@@ -153,3 +153,26 @@ services:
           property: host
       - key: CRON_SECRET
         sync: false
+
+  # ── Inbox nudge sweep (E-025 / NIC-1571) ────────────────────────────────────
+  # Hourly cron; fires only for Pro users at their local reminder hour. Emits the
+  # daily unprocessed-count nudge and the weekly stale-capture warning, both
+  # deduped per window, so hourly invocation is safe. Same guard + host wiring.
+  - type: cron
+    name: nicoflow-inbox-staging
+    runtime: image
+    image:
+      url: docker.io/curlimages/curl:8.11.1
+    region: frankfurt
+    schedule: "0 * * * *"
+    startCommand: >
+      curl -fsS -X POST "https://$API_HOST/internal/jobs/inbox"
+      -H "X-Internal-Token: $CRON_SECRET"
+    envVars:
+      - key: API_HOST
+        fromService:
+          name: nicoflow-api-staging
+          type: web
+          property: host
+      - key: CRON_SECRET
+        sync: false

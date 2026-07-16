@@ -63,6 +63,10 @@ type fakeRepo struct {
 	overdueErr  map[string]error     // per-user overdue error, for isolation tests
 	hasWorkByID map[string]bool      // keyed by userID (HasActiveWork result)
 	hasWorkErr  map[string]error     // per-user HasActiveWork error
+	unprocessed map[string]int       // keyed by userID (CountUnprocessedInbox result)
+	unprocErr   map[string]error     // per-user CountUnprocessedInbox error
+	staleByID   map[string]bool      // keyed by userID (HasStaleInbox result)
+	staleErr    map[string]error     // per-user HasStaleInbox error
 	usersErr    error
 }
 
@@ -88,6 +92,18 @@ func (f *fakeRepo) HasActiveWork(_ context.Context, userID string) (bool, error)
 		return false, err
 	}
 	return f.hasWorkByID[userID], nil
+}
+func (f *fakeRepo) CountUnprocessedInbox(_ context.Context, userID string) (int, error) {
+	if err := f.unprocErr[userID]; err != nil {
+		return 0, err
+	}
+	return f.unprocessed[userID], nil
+}
+func (f *fakeRepo) HasStaleInbox(_ context.Context, userID string, _ time.Time) (bool, error) {
+	if err := f.staleErr[userID]; err != nil {
+		return false, err
+	}
+	return f.staleByID[userID], nil
 }
 
 type fakeCreator struct {

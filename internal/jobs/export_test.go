@@ -26,3 +26,8 @@ func SetOverdueClock(n *OverdueNotifier, clock func() time.Time) {
 func SetDayStartClock(n *DayStartNotifier, clock func() time.Time) {
 	n.now = clock
 }
+
+// SetInboxClock overrides the inbox notifier's clock. Test-only seam.
+func SetInboxClock(n *InboxNotifier, clock func() time.Time) {
+	n.now = clock
+}

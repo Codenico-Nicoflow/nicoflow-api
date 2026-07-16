@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -94,6 +95,38 @@ func (r *pgRepository) ListOverdueTasks(ctx context.Context, userID, localDate s
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+// CountUnprocessedInbox returns how many unprocessed items sit in a user's inbox
+// (bucket rows with processed_at IS NULL).
+func (r *pgRepository) CountUnprocessedInbox(ctx context.Context, userID string) (int, error) {
+	var n int
+	err := r.db.QueryRow(ctx, `
+		SELECT COUNT(*) FROM bucket
+		WHERE user_id = @userID AND processed_at IS NULL`,
+		pgx.NamedArgs{"userID": userID},
+	).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("jobs.CountUnprocessedInbox: %w", err)
+	}
+	return n, nil
+}
+
+// HasStaleInbox reports whether the user has any unprocessed inbox item captured
+// strictly before cutoff — a capture that has gone stale.
+func (r *pgRepository) HasStaleInbox(ctx context.Context, userID string, cutoff time.Time) (bool, error) {
+	var has bool
+	err := r.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM bucket
+			WHERE user_id = @userID AND processed_at IS NULL AND created_at < @cutoff
+		)`,
+		pgx.NamedArgs{"userID": userID, "cutoff": cutoff},
+	).Scan(&has)
+	if err != nil {
+		return false, fmt.Errorf("jobs.HasStaleInbox: %w", err)
+	}
+	return has, nil
 }
 
 // ListTasksScheduledOn returns a user's non-terminal tasks scheduled for the given
