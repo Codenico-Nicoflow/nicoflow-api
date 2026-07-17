@@ -649,19 +649,26 @@ func TestResetPassword(t *testing.T) {
 	}
 }
 
+// secret123Hash is the bcrypt hash of "Secret123", computed once for the whole
+// package. bcrypt at cost 12 is deliberately slow, so hashing per-subtest would
+// add seconds to the already bcrypt-heavy auth suite (which runs under -race in
+// CI). Compute it a single time and reuse.
+var secret123Hash = func() string {
+	h, err := hashutil.Hash("Secret123")
+	if err != nil {
+		panic(err)
+	}
+	return h
+}()
+
 // userWithPasswordRepo returns a happyRepo whose GetUserByID yields a user whose
 // PasswordHash is bcrypt("Secret123") — so ChangePassword's current-password
 // check can succeed.
-func userWithPasswordRepo(t *testing.T) *mockRepo {
-	t.Helper()
+func userWithPasswordRepo() *mockRepo {
 	repo := happyRepo()
-	hash, err := hashutil.Hash("Secret123")
-	if err != nil {
-		t.Fatalf("hash: %v", err)
-	}
 	repo.getUserByIDFn = func(_ context.Context, _ string) (auth.User, error) {
 		u := fixedUser()
-		u.PasswordHash = hash
+		u.PasswordHash = secret123Hash
 		return u, nil
 	}
 	return repo
@@ -706,7 +713,7 @@ func TestChangePassword(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := userWithPasswordRepo(t)
+			repo := userWithPasswordRepo()
 			svc := auth.NewService(repo, testCfg())
 
 			resp, err := svc.ChangePassword(context.Background(), "usr_abc123", tt.req)
@@ -734,7 +741,7 @@ func TestChangePassword(t *testing.T) {
 // TestChangePassword_Success_RevokesAllTokens asserts the change revokes every
 // refresh token (kicking other devices) before issuing the caller's new pair.
 func TestChangePassword_Success_RevokesAllTokens(t *testing.T) {
-	repo := userWithPasswordRepo(t)
+	repo := userWithPasswordRepo()
 	var revokedFor string
 	repo.deleteAllRefreshTokensFn = func(_ context.Context, userID string) error {
 		revokedFor = userID

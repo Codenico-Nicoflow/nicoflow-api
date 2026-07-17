@@ -267,9 +267,9 @@ Change the password for the **currently logged-in** user (distinct from `reset-p
 
 ```json
 {
-  "currentPassword": "OldSecret1234",
-  "newPassword": "NewSecret1234",
-  "confirmPassword": "NewSecret1234"
+  "currentPassword": "<current-password>",
+  "newPassword": "<new-password>",
+  "confirmPassword": "<new-password>"
 }
 ```
 
