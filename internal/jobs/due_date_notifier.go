@@ -34,8 +34,8 @@ type RemindableUser struct {
 	DailySummaryEnabled bool
 	InboxNudgesEnabled  bool
 	StreaksEnabled      bool
-	MorningHour int
-	EveningHour int
+	MorningHour         int
+	EveningHour         int
 }
 
 // DueTask is the minimal task shape the sweep needs to build a notification.
