@@ -168,11 +168,26 @@ func (s *service) Login(ctx context.Context, req LoginRequest) (AuthResponse, er
 		return AuthResponse{}, apperror.New(http.StatusForbidden, apperror.ErrEmailNotVerified, "email not verified")
 	}
 
+	s.selfHealTimezone(ctx, user, req.Timezone)
+
 	tokenTTL := s.cfg.RefreshTokenExpiry
 	if !req.Remember {
 		tokenTTL = 24 * time.Hour
 	}
 	return s.issueAuthResponse(ctx, user, tokenTTL)
+}
+
+// selfHealTimezone updates the stored timezone from the client's real zone,
+// but only when it's a valid IANA name that actually differs. Best-effort and
+// never fatal: a bad or absent value leaves the stored zone untouched, and an
+// update error is logged, not returned — login must proceed.
+func (s *service) selfHealTimezone(ctx context.Context, user User, clientTZ string) {
+	if clientTZ == "" || clientTZ == user.Timezone || validateTimezone(clientTZ) != nil {
+		return
+	}
+	if _, err := s.repo.UpdateUser(ctx, user.ID, UpdateMeRequest{Timezone: &clientTZ}); err != nil {
+		log.Warn().Err(err).Str("user_id", user.ID).Msg("login: timezone self-heal failed")
+	}
 }
 
 func (s *service) Logout(ctx context.Context, _ string, rawRefreshToken string) error {
@@ -427,6 +442,11 @@ func (s *service) UpdateMe(ctx context.Context, userID string, req UpdateMeReque
 			return UserView{}, err
 		}
 	}
+	if req.Timezone != nil {
+		if err := validateTimezone(*req.Timezone); err != nil {
+			return UserView{}, err
+		}
+	}
 	user, err := s.repo.UpdateUser(ctx, userID, req)
 	if err != nil {
 		return UserView{}, err
@@ -508,6 +528,21 @@ var supportedLanguages = map[string]bool{"en": true, "he": true, "ru": true}
 func validateLanguage(language string) error {
 	if !supportedLanguages[language] {
 		return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "unsupported language; must be one of en, he, ru")
+	}
+	return nil
+}
+
+// validateTimezone rejects any value time.LoadLocation can't resolve to a real
+// IANA zone. We do NOT silently coerce to UTC — a bad zone stored as UTC is the
+// exact bug this validation exists to prevent (reminders fire at the wrong hour
+// forever, no error). Empty and "Local" are rejected too: both would resolve to
+// a non-IANA zone the sweeps can't reason about.
+func validateTimezone(tz string) error {
+	if tz == "" || tz == "Local" {
+		return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "timezone must be a valid IANA name (e.g. Europe/Berlin)")
+	}
+	if _, err := time.LoadLocation(tz); err != nil {
+		return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "timezone must be a valid IANA name (e.g. Europe/Berlin)")
 	}
 	return nil
 }

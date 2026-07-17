@@ -12,9 +12,6 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 )
 
-// summaryLocalHour is the local hour (24h) at which the end-of-day wrap fires.
-const summaryLocalHour = 20
-
 // streakMilestones are the consecutive-day streak lengths worth celebrating. A
 // streak_milestone fires when the current streak exactly equals one of these; the
 // per-milestone dedupe key makes it a once-ever event.
@@ -43,44 +40,59 @@ func NewSummaryNotifier(repo Repository, c creator) *SummaryNotifier {
 	return &SummaryNotifier{repo: repo, creator: c, now: time.Now}
 }
 
-// Run executes one sweep and returns how many notifications were newly created
-// (dedupe-suppressed duplicates not counted). Safe to re-run within the same local
-// day: idempotency is guaranteed by each output's dedupe_key.
-func (n *SummaryNotifier) Run(ctx context.Context) (int, error) {
+// Run executes one sweep and returns a breakdown of what happened. Safe to re-run
+// within the same local day: idempotency is guaranteed by each output's
+// dedupe_key. When dryRun is true it computes the breakdown but inserts nothing.
+func (n *SummaryNotifier) Run(ctx context.Context, dryRun bool) (*SweepBreakdown, error) {
+	const sweep = "summary"
 	users, err := n.repo.ListRemindableUsers(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("jobs.SummaryNotifier: list users: %w", err)
+		return nil, fmt.Errorf("jobs.SummaryNotifier: list users: %w", err)
 	}
 
 	nowUTC := n.now().UTC()
-	generated := 0
+	b := newBreakdown()
 
 	for _, u := range users {
-		localToday, ok := summaryLocalToday(nowUTC, u.Timezone)
+		b.Considered++
+
+		local, ok := localHour(nowUTC, u.Timezone)
 		if !ok {
-			continue // not this user's end-of-day hour (or a bad timezone) → skip
+			b.skip(sweep, skipBadTimezone, u.UserID, u.Timezone)
+			continue
+		}
+		// This is the only sweep gated on the evening hour, not the morning hour.
+		if !inFireWindow(local.Hour(), u.EveningHour) {
+			b.skip(sweep, skipOutsideWindow, u.UserID, u.Timezone)
+			continue
 		}
 		if !notification.IsProType(notification.TypeDailySummary) || u.Plan != planPro {
+			b.skip(sweep, skipPlanGate, u.UserID, u.Timezone)
 			continue // both outputs are Pro-only
 		}
 		if !u.DailySummaryEnabled && !u.StreaksEnabled {
+			b.skip(sweep, skipToggleOff, u.UserID, u.Timezone)
 			continue // user opted out of both this sweep's families
 		}
 
+		localToday := local.Format(scheduledForLayout)
 		completed, err := n.repo.CountCompletedOn(ctx, u.UserID, u.Timezone, localToday)
 		if err != nil {
 			log.Error().Err(err).Str("user_id", u.UserID).Msg("summary sweep: count completed failed")
 			continue
 		}
+		if dryRun {
+			continue
+		}
 
 		if u.DailySummaryEnabled && n.emitSummary(ctx, u, localToday, completed) {
-			generated++
+			b.Fired++
 		}
 		if u.StreaksEnabled && n.emitStreak(ctx, u, localToday, completed) {
-			generated++
+			b.Fired++
 		}
 	}
-	return generated, nil
+	return b, nil
 }
 
 // emitSummary creates the daily_summary when the user completed at least one task
@@ -162,21 +174,6 @@ func currentStreak(dates []string, localToday string) int {
 // isMilestone reports whether a streak length is a celebrated milestone.
 func isMilestone(streak int) bool {
 	return slices.Contains(streakMilestones, streak)
-}
-
-// summaryLocalToday reports whether the user should be swept this hour and, if so,
-// their local ISO "today". A user fires only when their local hour equals
-// summaryLocalHour; an unparseable timezone is skipped (ok=false).
-func summaryLocalToday(nowUTC time.Time, tz string) (string, bool) {
-	loc, err := time.LoadLocation(tz)
-	if err != nil {
-		return "", false
-	}
-	local := nowUTC.In(loc)
-	if local.Hour() != summaryLocalHour {
-		return "", false
-	}
-	return local.Format(scheduledForLayout), true
 }
 
 // completedCountMeta encodes the completed-today count for the client.

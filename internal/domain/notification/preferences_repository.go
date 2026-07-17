@@ -16,6 +16,7 @@ func (r *pgRepository) GetPreferences(ctx context.Context, userID string) (Prefe
 		SELECT user_id, email_digest, push_enabled, sms_enabled,
 		       before_due_minutes, after_due_minutes,
 		       overdue_enabled, daily_summary_enabled, inbox_nudges_enabled, streaks_enabled,
+		       morning_hour, evening_hour,
 		       updated_at
 		FROM notification_preferences
 		WHERE user_id = @userID`,
@@ -23,6 +24,7 @@ func (r *pgRepository) GetPreferences(ctx context.Context, userID string) (Prefe
 	).Scan(&p.UserID, &p.EmailDigest, &p.PushEnabled, &p.SMSEnabled,
 		&p.BeforeDueMinutes, &p.AfterDueMinutes,
 		&p.OverdueEnabled, &p.DailySummaryEnabled, &p.InboxNudgesEnabled, &p.StreaksEnabled,
+		&p.MorningHour, &p.EveningHour,
 		&p.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -58,6 +60,7 @@ func (r *pgRepository) UpsertPreferences(ctx context.Context, userID string, u U
 			user_id, email_digest, push_enabled, sms_enabled,
 			before_due_minutes, after_due_minutes,
 			overdue_enabled, daily_summary_enabled, inbox_nudges_enabled, streaks_enabled,
+			morning_hour, evening_hour,
 			updated_at
 		) VALUES (
 			@userID,
@@ -70,6 +73,8 @@ func (r *pgRepository) UpsertPreferences(ctx context.Context, userID string, u U
 			COALESCE(@dailySummaryEnabled::boolean, @defDailySummaryEnabled),
 			COALESCE(@inboxNudgesEnabled::boolean, @defInboxNudgesEnabled),
 			COALESCE(@streaksEnabled::boolean, @defStreaksEnabled),
+			COALESCE(@morningHour::smallint, @defMorningHour),
+			COALESCE(@eveningHour::smallint, @defEveningHour),
 			NOW()
 		)
 		ON CONFLICT (user_id) DO UPDATE SET
@@ -82,10 +87,13 @@ func (r *pgRepository) UpsertPreferences(ctx context.Context, userID string, u U
 			daily_summary_enabled = COALESCE(@dailySummaryEnabled::boolean, notification_preferences.daily_summary_enabled),
 			inbox_nudges_enabled  = COALESCE(@inboxNudgesEnabled::boolean, notification_preferences.inbox_nudges_enabled),
 			streaks_enabled       = COALESCE(@streaksEnabled::boolean, notification_preferences.streaks_enabled),
+			morning_hour          = COALESCE(@morningHour::smallint, notification_preferences.morning_hour),
+			evening_hour          = COALESCE(@eveningHour::smallint, notification_preferences.evening_hour),
 			updated_at            = NOW()
 		RETURNING user_id, email_digest, push_enabled, sms_enabled,
 		          before_due_minutes, after_due_minutes,
 		          overdue_enabled, daily_summary_enabled, inbox_nudges_enabled, streaks_enabled,
+		          morning_hour, evening_hour,
 		          updated_at`,
 		pgx.NamedArgs{
 			"userID":                 userID,
@@ -98,6 +106,8 @@ func (r *pgRepository) UpsertPreferences(ctx context.Context, userID string, u U
 			"dailySummaryEnabled":    u.DailySummaryEnabled,
 			"inboxNudgesEnabled":     u.InboxNudgesEnabled,
 			"streaksEnabled":         u.StreaksEnabled,
+			"morningHour":            u.MorningHour,
+			"eveningHour":            u.EveningHour,
 			"defEmailDigest":         DefaultEmailDigest,
 			"defPushEnabled":         DefaultPushEnabled,
 			"defSMSEnabled":          DefaultSMSEnabled,
@@ -107,10 +117,13 @@ func (r *pgRepository) UpsertPreferences(ctx context.Context, userID string, u U
 			"defDailySummaryEnabled": DefaultDailySummaryEnabled,
 			"defInboxNudgesEnabled":  DefaultInboxNudgesEnabled,
 			"defStreaksEnabled":      DefaultStreaksEnabled,
+			"defMorningHour":         DefaultMorningHour,
+			"defEveningHour":         DefaultEveningHour,
 		},
 	).Scan(&p.UserID, &p.EmailDigest, &p.PushEnabled, &p.SMSEnabled,
 		&p.BeforeDueMinutes, &p.AfterDueMinutes,
 		&p.OverdueEnabled, &p.DailySummaryEnabled, &p.InboxNudgesEnabled, &p.StreaksEnabled,
+		&p.MorningHour, &p.EveningHour,
 		&p.UpdatedAt)
 	if err != nil {
 		return Preferences{}, fmt.Errorf("notification.UpsertPreferences: %w", err)

@@ -113,7 +113,8 @@ Authenticate and receive tokens.
   "identifier": "user@example.com",
   "password": "Secret1234",
   "remember": true,
-  "platform": "web"
+  "platform": "web",
+  "timezone": "Europe/London"
 }
 ```
 
@@ -123,6 +124,7 @@ Authenticate and receive tokens.
 | `password`   | string  | Yes      |                                                                 |
 | `remember`   | boolean | Yes      | `true` → 7-day refresh token; `false` → 24-hour                 |
 | `platform`   | string  | No       | `"web"` \| `"mobile"`                                           |
+| `timezone`   | string  | No       | Client IANA zone. Best-effort self-heal: if valid and different from the stored value, the user's `timezone` is updated (an invalid/absent value is ignored — never fails the login). Lets an existing `'UTC'`-default row correct itself on next login. |
 
 **Response — 200 OK**
 
@@ -299,10 +301,13 @@ Retrieve the authenticated user's profile.
   "lastName": "Doe",
   "theme": "light",
   "language": "en",
+  "timezone": "Europe/London",
   "imageUrl": "https://...",
   "plan": "free"
 }
 ```
+
+`timezone` is the user's IANA zone (drives when proactive-notification sweeps fire — see §3.12). Also echoed by `PATCH /v1/users/me`.
 
 **Errors:** `UNAUTHORIZED` (401)
 
@@ -329,7 +334,9 @@ Update user profile fields.
 
 `language` must be one of `en`, `he`, `ru` (validated in the service layer → `INVALID_INPUT` otherwise). Drives the UI language for logged-in users (and, later, localized emails). See §10.
 
-**Response — 200 OK** — Updated `IUser` object
+`timezone` must be a valid IANA name resolvable by `time.LoadLocation` (e.g. `Europe/London`); an invalid value (garbage, an offset like `UTC+3`, or empty) returns `INVALID_INPUT` (422) and the stored value is left unchanged — it is **never** silently coerced to UTC, since a wrong stored zone makes every reminder fire at the wrong hour. `'UTC'` remains the column default for a brand-new row; that is distinct from overwriting explicit input. The client sends `Intl.DateTimeFormat().resolvedOptions().timeZone` on every login, so an existing `'UTC'` row self-heals on next login.
+
+**Response — 200 OK** — Updated `IUser` object (echoes `timezone`)
 
 ---
 
@@ -1388,7 +1395,9 @@ Get the user's notification preferences (defaults when no row exists).
   "overdueEnabled": true,
   "dailySummaryEnabled": true,
   "inboxNudgesEnabled": true,
-  "streaksEnabled": true
+  "streaksEnabled": true,
+  "morningHour": 8,
+  "eveningHour": 20
 }
 ```
 
@@ -1399,6 +1408,12 @@ Get the user's notification preferences (defaults when no row exists).
   `overdueEnabled` → overdue sweep · `dailySummaryEnabled` → end-of-day summary ·
   `inboxNudgesEnabled` → inbox nudges · `streaksEnabled` → streak milestone. All
   default `true`; an absent preferences row means "all on".
+- `morningHour` (5–11, default 8) is the local hour the morning sweeps fire at
+  (day-start, inbox, overdue, due-notify); `eveningHour` (18–22, default 20) drives
+  the end-of-day summary sweep. Both are validated server-side (out of range →
+  `INVALID_INPUT`) and backed by a DB CHECK. Each sweep fires within a 3-hour
+  catch-up window from its hour (insures against a missed hourly tick — DST, a
+  failed cron run, a cold start), clamped so it never wraps past midnight.
 
 ---
 

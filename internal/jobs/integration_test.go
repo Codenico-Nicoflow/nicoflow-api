@@ -171,24 +171,24 @@ func TestSweep_GeneratesAndIsIdempotent(t *testing.T) {
 	jobs.SetClock(notifier, func() time.Time { return pinned })
 
 	// Run 1 → one notification created.
-	n, err := notifier.Run(context.Background())
+	n, err := notifier.Run(context.Background(), false)
 	if err != nil {
 		t.Fatalf("run 1: %v", err)
 	}
-	if n != 1 {
-		t.Fatalf("run 1 generated = %d, want 1", n)
+	if n.Fired != 1 {
+		t.Fatalf("run 1 generated = %d, want 1", n.Fired)
 	}
 	if got := countNotifications(t, pool, uid); got != 1 {
 		t.Fatalf("after run 1: %d notifications, want 1", got)
 	}
 
 	// Run 2 same hour → no new rows.
-	n, err = notifier.Run(context.Background())
+	n, err = notifier.Run(context.Background(), false)
 	if err != nil {
 		t.Fatalf("run 2: %v", err)
 	}
-	if n != 0 {
-		t.Fatalf("run 2 generated = %d, want 0 (idempotent)", n)
+	if n.Fired != 0 {
+		t.Fatalf("run 2 generated = %d, want 0 (idempotent)", n.Fired)
 	}
 	if got := countNotifications(t, pool, uid); got != 1 {
 		t.Fatalf("after run 2: %d notifications, want 1 (idempotent)", got)
@@ -224,12 +224,12 @@ func TestSweep_SkipsTerminalTasks(t *testing.T) {
 	notifier := jobs.NewDueDateNotifier(jobs.NewRepository(pool), notifSvc, "")
 	jobs.SetClock(notifier, func() time.Time { return pinned })
 
-	n, err := notifier.Run(context.Background())
+	n, err := notifier.Run(context.Background(), false)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if n != 0 || countNotifications(t, pool, uid) != 0 {
-		t.Fatalf("terminal task generated a reminder; generated=%d", n)
+	if n.Fired != 0 || countNotifications(t, pool, uid) != 0 {
+		t.Fatalf("terminal task generated a reminder; generated=%d", n.Fired)
 	}
 }
 
@@ -249,19 +249,19 @@ func TestOverdueSweep_GeneratesAndIsIdempotent(t *testing.T) {
 	notifier := jobs.NewOverdueNotifier(jobs.NewRepository(pool), notifSvc)
 	jobs.SetOverdueClock(notifier, func() time.Time { return pinned })
 
-	n, err := notifier.Run(context.Background())
+	n, err := notifier.Run(context.Background(), false)
 	if err != nil {
 		t.Fatalf("run 1: %v", err)
 	}
-	if n != 1 || countNotifications(t, pool, uid) != 1 {
-		t.Fatalf("run 1: generated=%d, want 1", n)
+	if n.Fired != 1 || countNotifications(t, pool, uid) != 1 {
+		t.Fatalf("run 1: generated=%d, want 1", n.Fired)
 	}
 
-	n, err = notifier.Run(context.Background())
+	n, err = notifier.Run(context.Background(), false)
 	if err != nil {
 		t.Fatalf("run 2: %v", err)
 	}
-	if n != 0 || countNotifications(t, pool, uid) != 1 {
-		t.Fatalf("run 2: generated=%d / count=%d, want 0 new (idempotent)", n, countNotifications(t, pool, uid))
+	if n.Fired != 0 || countNotifications(t, pool, uid) != 1 {
+		t.Fatalf("run 2: generated=%d / count=%d, want 0 new (idempotent)", n.Fired, countNotifications(t, pool, uid))
 	}
 }

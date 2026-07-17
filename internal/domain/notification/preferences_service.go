@@ -23,6 +23,12 @@ func (s *service) UpdatePreferences(ctx context.Context, userID string, u Update
 	if err := validateLeadTime("afterDueMinutes", u.AfterDueMinutes); err != nil {
 		return PreferencesView{}, err
 	}
+	if err := validateHour("morningHour", u.MorningHour, MorningHourMin, MorningHourMax); err != nil {
+		return PreferencesView{}, err
+	}
+	if err := validateHour("eveningHour", u.EveningHour, EveningHourMin, EveningHourMax); err != nil {
+		return PreferencesView{}, err
+	}
 	p, err := s.repo.UpsertPreferences(ctx, userID, u)
 	if err != nil {
 		return PreferencesView{}, err
@@ -38,6 +44,19 @@ func validateLeadTime(field string, minutes *int) error {
 	if *minutes < 0 || *minutes > LeadTimeMax {
 		return apperror.New(http.StatusBadRequest, apperror.ErrInvalidInput,
 			field+" must be between 0 and "+strconv.Itoa(LeadTimeMax)+" minutes")
+	}
+	return nil
+}
+
+// validateHour enforces min ≤ hour ≤ max when the field is present. Mirrors the
+// migration-035 CHECK so a bad value is rejected before the DB round-trip.
+func validateHour(field string, hour *int, min, max int) error {
+	if hour == nil {
+		return nil
+	}
+	if *hour < min || *hour > max {
+		return apperror.New(http.StatusBadRequest, apperror.ErrInvalidInput,
+			field+" must be between "+strconv.Itoa(min)+" and "+strconv.Itoa(max))
 	}
 	return nil
 }

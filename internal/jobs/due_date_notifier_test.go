@@ -9,36 +9,25 @@ import (
 )
 
 func TestReminderTargetDate(t *testing.T) {
-	// 2026-07-14 05:00 UTC = 08:00 in Asia/Jerusalem (UTC+3, summer).
-	at05UTC := time.Date(2026, 7, 14, 5, 0, 0, 0, time.UTC)
-	// 2026-07-14 06:00 UTC = 09:00 in Asia/Jerusalem → not the reminder hour.
-	at06UTC := time.Date(2026, 7, 14, 6, 0, 0, 0, time.UTC)
+	// Timezone + fire-window gating now lives in the caller (see window_test.go);
+	// reminderTargetDate only maps a resolved local time + lead to the target date.
+	local := time.Date(2026, 7, 14, 8, 0, 0, 0, time.UTC)
 
 	tests := []struct {
 		name       string
-		now        time.Time
-		tz         string
+		local      time.Time
 		beforeMins int
 		wantDate   string
-		wantOK     bool
 	}{
-		{"local 08:00, 24h lead → local tomorrow", at05UTC, "Asia/Jerusalem", 1440, "2026-07-15", true},
-		{"local 08:00, 0 lead → local today", at05UTC, "Asia/Jerusalem", 0, "2026-07-14", true},
-		{"local 08:00, 48h lead → +2 days", at05UTC, "Asia/Jerusalem", 2880, "2026-07-16", true},
-		{"local 09:00 → skip", at06UTC, "Asia/Jerusalem", 1440, "", false},
-		{"UTC user at 08:00 fires", time.Date(2026, 7, 14, 8, 0, 0, 0, time.UTC), "UTC", 1440, "2026-07-15", true},
-		{"UTC user at 05:00 skips", at05UTC, "UTC", 1440, "", false},
-		{"bad timezone → skip", at05UTC, "Not/AZone", 1440, "", false},
-		{"negative lead clamps to today", at05UTC, "Asia/Jerusalem", -100, "2026-07-14", true},
+		{"24h lead → local tomorrow", local, 1440, "2026-07-15"},
+		{"0 lead → local today", local, 0, "2026-07-14"},
+		{"48h lead → +2 days", local, 2880, "2026-07-16"},
+		{"negative lead clamps to today", local, -100, "2026-07-14"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := reminderTargetDate(tt.now, tt.tz, tt.beforeMins)
-			if ok != tt.wantOK {
-				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
-			}
-			if got != tt.wantDate {
+			if got := reminderTargetDate(tt.local, tt.beforeMins); got != tt.wantDate {
 				t.Fatalf("date = %q, want %q", got, tt.wantDate)
 			}
 		})
@@ -81,12 +70,20 @@ func (f *fakeRepo) ListRemindableUsers(_ context.Context) ([]RemindableUser, err
 	if f.usersErr != nil || f.familiesOff {
 		return f.users, f.usersErr
 	}
-	// Mirror the DB default: every returned row has all families enabled unless a
-	// test explicitly overrode a toggle on the fixture.
+	// Mirror the DB default: every returned row has all families enabled and the
+	// reminder hours defaulted (8/20) unless a test explicitly overrode them on the
+	// fixture — the real ListRemindableUsers COALESCEs an absent preferences row the
+	// same way.
 	out := make([]RemindableUser, len(f.users))
 	for i, u := range f.users {
 		if !u.OverdueEnabled && !u.DailySummaryEnabled && !u.InboxNudgesEnabled && !u.StreaksEnabled {
 			u.OverdueEnabled, u.DailySummaryEnabled, u.InboxNudgesEnabled, u.StreaksEnabled = true, true, true, true
+		}
+		if u.MorningHour == 0 {
+			u.MorningHour = 8
+		}
+		if u.EveningHour == 0 {
+			u.EveningHour = 20
 		}
 		out[i] = u
 	}
@@ -153,12 +150,12 @@ func TestRun_FiresForLocal0800User(t *testing.T) {
 	n := NewDueDateNotifier(repo, creator, "")
 	n.now = func() time.Time { return time.Date(2026, 7, 14, 8, 0, 0, 0, time.UTC) }
 
-	generated, err := n.Run(context.Background())
+	generated, err := n.Run(context.Background(), false)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if generated != 1 {
-		t.Fatalf("generated = %d, want 1", generated)
+	if generated.Fired != 1 {
+		t.Fatalf("generated = %d, want 1", generated.Fired)
 	}
 	if len(creator.calls) != 1 {
 		t.Fatalf("Create calls = %d, want 1", len(creator.calls))
@@ -179,12 +176,12 @@ func TestRun_SkipsUserNotAt0800(t *testing.T) {
 	n := NewDueDateNotifier(repo, creator, "")
 	n.now = func() time.Time { return time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC) } // 12:00 UTC
 
-	generated, err := n.Run(context.Background())
+	generated, err := n.Run(context.Background(), false)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if generated != 0 || len(creator.calls) != 0 {
-		t.Fatalf("generated = %d, calls = %d, want 0/0 (not the reminder hour)", generated, len(creator.calls))
+	if generated.Fired != 0 || len(creator.calls) != 0 {
+		t.Fatalf("generated = %d, calls = %d, want 0/0 (not the reminder hour)", generated.Fired, len(creator.calls))
 	}
 }
 
@@ -198,12 +195,12 @@ func TestRun_DuplicateNotCounted(t *testing.T) {
 	n := NewDueDateNotifier(repo, creator, "")
 	n.now = func() time.Time { return time.Date(2026, 7, 14, 8, 0, 0, 0, time.UTC) }
 
-	generated, err := n.Run(context.Background())
+	generated, err := n.Run(context.Background(), false)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if generated != 0 {
-		t.Fatalf("generated = %d, want 0 (duplicate skipped)", generated)
+	if generated.Fired != 0 {
+		t.Fatalf("generated = %d, want 0 (duplicate skipped)", generated.Fired)
 	}
 	if len(creator.calls) != 1 {
 		t.Fatalf("Create still attempted once, got %d calls", len(creator.calls))

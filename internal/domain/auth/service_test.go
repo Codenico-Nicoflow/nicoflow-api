@@ -405,6 +405,54 @@ func TestLogin_RememberMe(t *testing.T) {
 	}
 }
 
+func TestLogin_TimezoneSelfHeal(t *testing.T) {
+	// The stored user's zone is "UTC" (fixedUser). Login should update it only when
+	// the client sends a valid IANA zone that differs — never on a bad or matching
+	// value, and never failing the login.
+	tests := []struct {
+		name       string
+		timezone   string
+		wantUpdate bool
+		wantStored string
+	}{
+		{"valid different zone heals", "Europe/Berlin", true, "Europe/Berlin"},
+		{"same zone → no update", "UTC", false, ""},
+		{"invalid zone → no update, login still succeeds", "Mars/Olympus", false, ""},
+		{"empty zone → no update", "", false, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var updatedTo string
+			var updateCalled bool
+			repo := happyRepo()
+			repo.updateUserFn = func(_ context.Context, _ string, req auth.UpdateMeRequest) (auth.User, error) {
+				updateCalled = true
+				if req.Timezone != nil {
+					updatedTo = *req.Timezone
+				}
+				return fixedUser(), nil
+			}
+
+			svc := auth.NewService(repo, testCfg())
+			_, err := svc.Login(context.Background(), auth.LoginRequest{
+				Identifier: "user@example.com",
+				Password:   "Secret123",
+				Timezone:   tt.timezone,
+			})
+			if err != nil {
+				t.Fatalf("login must succeed regardless of timezone: %v", err)
+			}
+			if updateCalled != tt.wantUpdate {
+				t.Fatalf("update called = %v, want %v", updateCalled, tt.wantUpdate)
+			}
+			if tt.wantUpdate && updatedTo != tt.wantStored {
+				t.Fatalf("healed to %q, want %q", updatedTo, tt.wantStored)
+			}
+		})
+	}
+}
+
 func TestLogin_EmailVerificationGate(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -929,6 +977,55 @@ func TestUpdateMe_Language(t *testing.T) {
 			}
 			if view.Language != tc.language {
 				t.Errorf("Language = %q, want %q", view.Language, tc.language)
+			}
+		})
+	}
+}
+
+func TestUpdateMe_Timezone(t *testing.T) {
+	tests := []struct {
+		name      string
+		timezone  string
+		wantError bool
+	}{
+		{name: "valid IANA persists", timezone: "Europe/Berlin", wantError: false},
+		{name: "another valid zone", timezone: "Asia/Jerusalem", wantError: false},
+		{name: "garbage → 422", timezone: "garbage", wantError: true},
+		{name: "fictional zone → 422", timezone: "Mars/Olympus", wantError: true},
+		{name: "offset form is not IANA → 422", timezone: "UTC+3", wantError: true},
+		{name: "empty → 422 (would silent-coerce to UTC)", timezone: "", wantError: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := happyRepo()
+			repo.updateUserFn = func(_ context.Context, _ string, req auth.UpdateMeRequest) (auth.User, error) {
+				u := fixedUser()
+				if req.Timezone != nil {
+					u.Timezone = *req.Timezone
+				}
+				return u, nil
+			}
+			svc := auth.NewService(repo, testCfg())
+
+			tz := tc.timezone
+			view, err := svc.UpdateMe(context.Background(), "usr_abc123", auth.UpdateMeRequest{Timezone: &tz})
+
+			if tc.wantError {
+				if err == nil {
+					t.Fatalf("expected error for timezone %q, got nil", tc.timezone)
+				}
+				var ae *apperror.AppError
+				if !errors.As(err, &ae) || ae.Code != apperror.ErrInvalidInput {
+					t.Fatalf("expected INVALID_INPUT, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("UpdateMe() error = %v", err)
+			}
+			if view.Timezone != tc.timezone {
+				t.Errorf("Timezone = %q, want %q", view.Timezone, tc.timezone)
 			}
 		})
 	}

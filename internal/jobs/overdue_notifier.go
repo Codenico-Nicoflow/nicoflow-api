@@ -26,28 +26,37 @@ func NewOverdueNotifier(repo Repository, c creator) *OverdueNotifier {
 	return &OverdueNotifier{repo: repo, creator: c, now: time.Now}
 }
 
-// Run executes one sweep and returns how many notifications were newly created
-// (dedupe-suppressed duplicates not counted). Safe to re-run within the same
-// local day: idempotency is guaranteed by the task_overdue dedupe_key.
-func (n *OverdueNotifier) Run(ctx context.Context) (int, error) {
+// Run executes one sweep and returns a breakdown of what happened. Safe to re-run
+// within the same local day: idempotency is guaranteed by the task_overdue
+// dedupe_key. When dryRun is true it computes the breakdown but inserts nothing.
+func (n *OverdueNotifier) Run(ctx context.Context, dryRun bool) (*SweepBreakdown, error) {
+	const sweep = "overdue"
 	users, err := n.repo.ListRemindableUsers(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("jobs.OverdueNotifier: list users: %w", err)
+		return nil, fmt.Errorf("jobs.OverdueNotifier: list users: %w", err)
 	}
 
 	nowUTC := n.now().UTC()
-	generated := 0
+	b := newBreakdown()
 
 	for _, u := range users {
-		if !u.OverdueEnabled {
-			continue // user opted out of overdue reminders
-		}
+		b.Considered++
 
-		localToday, ok := overdueLocalToday(nowUTC, u.Timezone)
+		local, ok := localHour(nowUTC, u.Timezone)
 		if !ok {
-			continue // not this user's reminder hour (or a bad timezone) → skip
+			b.skip(sweep, skipBadTimezone, u.UserID, u.Timezone)
+			continue
+		}
+		if !inFireWindow(local.Hour(), u.MorningHour) {
+			b.skip(sweep, skipOutsideWindow, u.UserID, u.Timezone)
+			continue
+		}
+		if !u.OverdueEnabled {
+			b.skip(sweep, skipToggleOff, u.UserID, u.Timezone)
+			continue
 		}
 
+		localToday := local.Format(scheduledForLayout)
 		tasks, err := n.repo.ListOverdueTasks(ctx, u.UserID, localToday)
 		if err != nil {
 			// One user's failure must not abort the whole sweep; log and continue.
@@ -56,6 +65,9 @@ func (n *OverdueNotifier) Run(ctx context.Context) (int, error) {
 		}
 
 		for _, t := range tasks {
+			if dryRun {
+				continue
+			}
 			_, inserted, err := n.creator.Create(ctx, notification.Notification{
 				UserID:    u.UserID,
 				Type:      notification.TypeTaskOverdue,
@@ -68,25 +80,9 @@ func (n *OverdueNotifier) Run(ctx context.Context) (int, error) {
 				continue
 			}
 			if inserted {
-				generated++
+				b.Fired++
 			}
 		}
 	}
-	return generated, nil
-}
-
-// overdueLocalToday reports whether the user should be swept this hour and, if so,
-// their local ISO "today". A user fires only when their local hour equals
-// reminderLocalHour; overdue = scheduled_for strictly before this date. An
-// unparseable timezone is skipped (ok=false).
-func overdueLocalToday(nowUTC time.Time, tz string) (string, bool) {
-	loc, err := time.LoadLocation(tz)
-	if err != nil {
-		return "", false
-	}
-	local := nowUTC.In(loc)
-	if local.Hour() != reminderLocalHour {
-		return "", false
-	}
-	return local.Format(scheduledForLayout), true
+	return b, nil
 }

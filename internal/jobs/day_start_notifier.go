@@ -31,24 +31,33 @@ func NewDayStartNotifier(repo Repository, c creator) *DayStartNotifier {
 	return &DayStartNotifier{repo: repo, creator: c, now: time.Now}
 }
 
-// Run executes one sweep and returns how many notifications were newly created
-// (dedupe-suppressed duplicates not counted). Safe to re-run within the same local
-// day: idempotency is guaranteed by each output's dedupe_key.
-func (n *DayStartNotifier) Run(ctx context.Context) (int, error) {
+// Run executes one sweep and returns a breakdown of what happened. Safe to re-run
+// within the same local day: idempotency is guaranteed by each output's
+// dedupe_key. When dryRun is true it computes the breakdown but inserts nothing.
+func (n *DayStartNotifier) Run(ctx context.Context, dryRun bool) (*SweepBreakdown, error) {
+	const sweep = "day-start"
 	users, err := n.repo.ListRemindableUsers(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("jobs.DayStartNotifier: list users: %w", err)
+		return nil, fmt.Errorf("jobs.DayStartNotifier: list users: %w", err)
 	}
 
 	nowUTC := n.now().UTC()
-	generated := 0
+	b := newBreakdown()
 
 	for _, u := range users {
-		localToday, ok := dayStartLocalToday(nowUTC, u.Timezone)
+		b.Considered++
+
+		local, ok := localHour(nowUTC, u.Timezone)
 		if !ok {
-			continue // not this user's 08:00 hour (or a bad timezone) → skip
+			b.skip(sweep, skipBadTimezone, u.UserID, u.Timezone)
+			continue
+		}
+		if !inFireWindow(local.Hour(), u.MorningHour) {
+			b.skip(sweep, skipOutsideWindow, u.UserID, u.Timezone)
+			continue
 		}
 
+		localToday := local.Format(scheduledForLayout)
 		tasks, err := n.repo.ListTasksScheduledOn(ctx, u.UserID, localToday)
 		if err != nil {
 			// One user's failure must not abort the whole sweep; log and continue.
@@ -57,17 +66,17 @@ func (n *DayStartNotifier) Run(ctx context.Context) (int, error) {
 		}
 
 		if len(tasks) > 0 {
-			if n.emitScheduledSummary(ctx, u, localToday, len(tasks)) {
-				generated++
+			if !dryRun && n.emitScheduledSummary(ctx, u, localToday, len(tasks)) {
+				b.Fired++
 			}
 			continue // has work scheduled → no nudge
 		}
 
-		if n.emitPlanNudge(ctx, u, localToday) {
-			generated++
+		if !dryRun && n.emitPlanNudge(ctx, u, localToday) {
+			b.Fired++
 		}
 	}
-	return generated, nil
+	return b, nil
 }
 
 // emitScheduledSummary creates the FREE one-line "N tasks scheduled today" summary
@@ -117,21 +126,6 @@ func (n *DayStartNotifier) emitPlanNudge(ctx context.Context, u RemindableUser, 
 		return false
 	}
 	return inserted
-}
-
-// dayStartLocalToday reports whether the user should be swept this hour and, if so,
-// their local ISO "today". A user fires only when their local hour equals
-// reminderLocalHour; an unparseable timezone is skipped (ok=false).
-func dayStartLocalToday(nowUTC time.Time, tz string) (string, bool) {
-	loc, err := time.LoadLocation(tz)
-	if err != nil {
-		return "", false
-	}
-	local := nowUTC.In(loc)
-	if local.Hour() != reminderLocalHour {
-		return "", false
-	}
-	return local.Format(scheduledForLayout), true
 }
 
 // scheduledCountMeta encodes the summary count so the client can render it without
