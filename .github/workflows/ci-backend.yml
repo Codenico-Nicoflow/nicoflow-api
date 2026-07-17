@@ -70,7 +70,9 @@ jobs:
       - name: Test
         env:
           TEST_DATABASE_URL: postgres://nicoflow:nicoflow@localhost:5432/nicoflow_test?sslmode=disable
-        run: go test ./... -tags=integration -race -count=1 -coverprofile=coverage.out -covermode=atomic
+        # -timeout 20m: bcrypt-heavy auth suite under -race approaches Go's default
+        # 10m per-package wall on CI runners; 20m adds headroom without hiding a hang.
+        run: go test ./... -tags=integration -race -count=1 -timeout 20m -coverprofile=coverage.out -covermode=atomic
 
       - name: Coverage gate (E-018 in-scope domains + utils)
         # E-018 covers auth/area/project/task/bucket. ai + billing are Phase 4/5

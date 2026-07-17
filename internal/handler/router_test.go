@@ -32,6 +32,9 @@ func (nopAuthService) ForgotPassword(context.Context, string) error { return nil
 func (nopAuthService) ResetPassword(context.Context, auth.ResetPasswordRequest) error {
 	return nil
 }
+func (nopAuthService) ChangePassword(context.Context, string, auth.ChangePasswordRequest) (auth.AuthResponse, error) {
+	return auth.AuthResponse{}, nil
+}
 func (nopAuthService) VerifyEmail(context.Context, auth.VerifyEmailRequest) error { return nil }
 func (nopAuthService) ResendVerification(context.Context, string) error           { return nil }
 func (nopAuthService) GetProfile(context.Context, string) (auth.UserView, error) {

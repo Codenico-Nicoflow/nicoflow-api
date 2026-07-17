@@ -49,6 +49,7 @@ type Service interface {
 	RefreshToken(ctx context.Context, rawRefreshToken string) (AuthResponse, error)
 	ForgotPassword(ctx context.Context, email string) error
 	ResetPassword(ctx context.Context, req ResetPasswordRequest) error
+	ChangePassword(ctx context.Context, userID string, req ChangePasswordRequest) (AuthResponse, error)
 	VerifyEmail(ctx context.Context, req VerifyEmailRequest) error
 	ResendVerification(ctx context.Context, email string) error
 	GetProfile(ctx context.Context, userID string) (UserView, error)
@@ -311,6 +312,58 @@ func (s *service) ResetPassword(ctx context.Context, req ResetPasswordRequest) e
 	_ = s.repo.DeleteAllRefreshTokens(ctx, prt.UserID)
 
 	return nil
+}
+
+// ChangePassword changes the password for an already-authenticated user.
+// It re-verifies currentPassword via bcrypt (mismatch → 401, no enumeration
+// concern since the caller is authenticated), enforces the register password
+// policy on newPassword server-side, then revokes ALL of the user's refresh
+// tokens and issues a fresh pair to the caller — every other device is signed
+// out while the changer stays logged in. A "password changed" email is fired
+// best-effort as a defense-in-depth signal.
+func (s *service) ChangePassword(ctx context.Context, userID string, req ChangePasswordRequest) (AuthResponse, error) {
+	if req.NewPassword != req.ConfirmPassword {
+		return AuthResponse{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "passwords do not match")
+	}
+	if err := validatePassword(req.NewPassword); err != nil {
+		return AuthResponse{}, err
+	}
+
+	user, err := s.repo.GetUserByID(ctx, userID)
+	if err != nil {
+		return AuthResponse{}, err
+	}
+
+	if !hashutil.Compare(user.PasswordHash, req.CurrentPassword) {
+		return AuthResponse{}, apperror.New(http.StatusUnauthorized, apperror.ErrUnauthorized, "current password is incorrect")
+	}
+
+	newHash, err := hashutil.Hash(req.NewPassword)
+	if err != nil {
+		return AuthResponse{}, fmt.Errorf("auth.ChangePassword hash: %w", err)
+	}
+	if err := s.repo.UpdatePassword(ctx, userID, newHash); err != nil {
+		return AuthResponse{}, err
+	}
+
+	// Revoke every refresh token (kicks all devices, including the caller's old
+	// one), then issue a fresh pair so the changer stays signed in.
+	if err := s.repo.DeleteAllRefreshTokens(ctx, userID); err != nil {
+		return AuthResponse{}, err
+	}
+
+	// Best-effort defense-in-depth email; must not block or fail the change.
+	if s.cfg.SMTPDsn != "" {
+		email := user.Email
+		userIDCopy := user.ID
+		go func() {
+			if err := emailutil.SendPasswordChanged(email, s.cfg.SMTPDsn); err != nil {
+				log.Error().Err(err).Str("user_id", userIDCopy).Msg("password-changed: send failed")
+			}
+		}()
+	}
+
+	return s.issueAuthResponse(ctx, user, s.cfg.RefreshTokenExpiry)
 }
 
 // VerifyEmail consumes a verification token and marks the user's email verified.

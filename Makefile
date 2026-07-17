@@ -19,11 +19,14 @@ dev:
 build:
 	go build -o bin/api ./cmd/api
 
+# -timeout 20m: the auth suite is intentionally bcrypt-heavy (cost 12) and, with
+# integration tests under -race, approaches Go's default 10m per-package wall on
+# slower CI runners. 20m gives headroom without masking a real hang.
 test:
-	go test ./... -race -count=1 -coverprofile=coverage.out -covermode=atomic
+	go test ./... -race -count=1 -timeout 20m -coverprofile=coverage.out -covermode=atomic
 
 test-integration:
-	go test ./... -tags=integration -race -count=1 -v
+	go test ./... -tags=integration -race -count=1 -timeout 20m -v
 
 lint:
 	golangci-lint run ./...

@@ -649,6 +649,119 @@ func TestResetPassword(t *testing.T) {
 	}
 }
 
+// secret123Hash is the bcrypt hash of "Secret123", computed once for the whole
+// package. bcrypt at cost 12 is deliberately slow, so hashing per-subtest would
+// add seconds to the already bcrypt-heavy auth suite (which runs under -race in
+// CI). Compute it a single time and reuse.
+var secret123Hash = func() string {
+	h, err := hashutil.Hash("Secret123")
+	if err != nil {
+		panic(err)
+	}
+	return h
+}()
+
+// userWithPasswordRepo returns a happyRepo whose GetUserByID yields a user whose
+// PasswordHash is bcrypt("Secret123") — so ChangePassword's current-password
+// check can succeed.
+func userWithPasswordRepo() *mockRepo {
+	repo := happyRepo()
+	repo.getUserByIDFn = func(_ context.Context, _ string) (auth.User, error) {
+		u := fixedUser()
+		u.PasswordHash = secret123Hash
+		return u, nil
+	}
+	return repo
+}
+
+func TestChangePassword(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     auth.ChangePasswordRequest
+		wantErr string
+	}{
+		{
+			name: "success",
+			req:  auth.ChangePasswordRequest{CurrentPassword: "Secret123", NewPassword: "NewPass123", ConfirmPassword: "NewPass123"},
+		},
+		{
+			name:    "wrong current password",
+			req:     auth.ChangePasswordRequest{CurrentPassword: "WrongPass1", NewPassword: "NewPass123", ConfirmPassword: "NewPass123"},
+			wantErr: apperror.ErrUnauthorized,
+		},
+		{
+			name:    "confirm mismatch",
+			req:     auth.ChangePasswordRequest{CurrentPassword: "Secret123", NewPassword: "NewPass123", ConfirmPassword: "Different1"},
+			wantErr: apperror.ErrInvalidInput,
+		},
+		{
+			name:    "weak new password — too short",
+			req:     auth.ChangePasswordRequest{CurrentPassword: "Secret123", NewPassword: "Aa1", ConfirmPassword: "Aa1"},
+			wantErr: apperror.ErrWeakPassword,
+		},
+		{
+			name:    "weak new password — no uppercase",
+			req:     auth.ChangePasswordRequest{CurrentPassword: "Secret123", NewPassword: "lowercase1", ConfirmPassword: "lowercase1"},
+			wantErr: apperror.ErrWeakPassword,
+		},
+		{
+			name:    "weak new password — no lowercase",
+			req:     auth.ChangePasswordRequest{CurrentPassword: "Secret123", NewPassword: "UPPERCASE1", ConfirmPassword: "UPPERCASE1"},
+			wantErr: apperror.ErrWeakPassword,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := userWithPasswordRepo()
+			svc := auth.NewService(repo, testCfg())
+
+			resp, err := svc.ChangePassword(context.Background(), "usr_abc123", tt.req)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error %q, got nil", tt.wantErr)
+				}
+				var ae *apperror.AppError
+				if !errors.As(err, &ae) || ae.Code != tt.wantErr {
+					t.Fatalf("expected error code %q, got %v", tt.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			// Success must issue a fresh token pair to the caller.
+			if resp.Token == "" || resp.RefreshToken == "" {
+				t.Fatalf("expected a fresh token pair, got token=%q refresh=%q", resp.Token, resp.RefreshToken)
+			}
+		})
+	}
+}
+
+// TestChangePassword_Success_RevokesAllTokens asserts the change revokes every
+// refresh token (kicking other devices) before issuing the caller's new pair.
+func TestChangePassword_Success_RevokesAllTokens(t *testing.T) {
+	repo := userWithPasswordRepo()
+	var revokedFor string
+	repo.deleteAllRefreshTokensFn = func(_ context.Context, userID string) error {
+		revokedFor = userID
+		return nil
+	}
+	svc := auth.NewService(repo, testCfg())
+
+	_, err := svc.ChangePassword(context.Background(), "usr_abc123", auth.ChangePasswordRequest{
+		CurrentPassword: "Secret123",
+		NewPassword:     "NewPass123",
+		ConfirmPassword: "NewPass123",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if revokedFor != "usr_abc123" {
+		t.Fatalf("expected all refresh tokens revoked for usr_abc123, got %q", revokedFor)
+	}
+}
+
 func TestLogoutAll(t *testing.T) {
 	var deletedAll bool
 	repo := happyRepo()
