@@ -194,7 +194,6 @@ func (r *pgRepo) UpdateUser(ctx context.Context, userID string, req UpdateMeRequ
 		UPDATE users SET
 		  first_name  = COALESCE(@firstName,  first_name),
 		  last_name   = COALESCE(@lastName,   last_name),
-		  email       = COALESCE(@email,       email),
 		  timezone    = COALESCE(@timezone,    timezone),
 		  theme       = COALESCE(@theme,       theme),
 		  language    = COALESCE(@language,    language),
@@ -207,7 +206,6 @@ func (r *pgRepo) UpdateUser(ctx context.Context, userID string, req UpdateMeRequ
 		pgx.NamedArgs{
 			"firstName": req.FirstName,
 			"lastName":  req.LastName,
-			"email":     req.Email,
 			"timezone":  req.Timezone,
 			"theme":     req.Theme,
 			"language":  req.Language,
@@ -222,9 +220,6 @@ func (r *pgRepo) UpdateUser(ctx context.Context, userID string, req UpdateMeRequ
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return User{}, apperror.New(http.StatusNotFound, apperror.ErrUserNotFound, "user not found")
-		}
-		if isUniqueViolation(err) {
-			return User{}, apperror.New(http.StatusConflict, apperror.ErrConflict, "email already in use")
 		}
 		return User{}, fmt.Errorf("auth.UpdateUser: %w", err)
 	}
@@ -544,13 +539,6 @@ func StartTokenGC(ctx context.Context, db *pgxpool.Pool) {
 			}
 		}
 	}()
-}
-
-// isUniqueViolation checks for PostgreSQL unique constraint violation (error code 23505).
-func isUniqueViolation(err error) bool {
-	type pgErr interface{ SQLState() string }
-	var pg pgErr
-	return errors.As(err, &pg) && pg.SQLState() == "23505"
 }
 
 // uniqueViolationField returns the constraint/index name of a PostgreSQL unique

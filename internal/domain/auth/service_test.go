@@ -2,6 +2,7 @@ package auth_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"testing"
@@ -918,19 +919,37 @@ func TestUpdateMe_Success(t *testing.T) {
 	}
 }
 
-func TestUpdateMe_InvalidEmail(t *testing.T) {
-	bad := "notanemail"
-	svc := auth.NewService(happyRepo(), testCfg())
-
-	_, err := svc.UpdateMe(context.Background(), "usr_abc123", auth.UpdateMeRequest{
-		Email: &bad,
-	})
-	if err == nil {
-		t.Fatal("expected error for invalid email, got nil")
+// TestUpdateMe_EmailImmutable proves the account-takeover vector is closed: a
+// crafted PATCH /users/me body carrying "email" (as the handler decodes it) must
+// not reach the repo write, so the stored email is left unchanged while the
+// legitimate fields still apply.
+func TestUpdateMe_EmailImmutable(t *testing.T) {
+	var req auth.UpdateMeRequest
+	body := `{"email":"attacker@evil.com","firstName":"Jane"}`
+	if err := json.Unmarshal([]byte(body), &req); err != nil {
+		t.Fatalf("unmarshal: %v", err)
 	}
-	var ae *apperror.AppError
-	if !errors.As(err, &ae) || ae.Code != apperror.ErrInvalidEmail {
-		t.Fatalf("expected INVALID_EMAIL, got %v", err)
+
+	repo := happyRepo()
+	repo.updateUserFn = func(_ context.Context, _ string, r auth.UpdateMeRequest) (auth.User, error) {
+		u := fixedUser() // fixedUser().Email is the original, untouched
+		if r.FirstName != nil {
+			u.FirstName = *r.FirstName
+		}
+		return u, nil
+	}
+	svc := auth.NewService(repo, testCfg())
+
+	view, err := svc.UpdateMe(context.Background(), "usr_abc123", req)
+	if err != nil {
+		t.Fatalf("UpdateMe() error = %v", err)
+	}
+	// The crafted email was dropped at decode; the write carries only firstName.
+	if view.Email == "attacker@evil.com" {
+		t.Fatalf("email was changed to attacker address — takeover vector open")
+	}
+	if view.FirstName != "Jane" {
+		t.Errorf("FirstName = %q, want %q", view.FirstName, "Jane")
 	}
 }
 

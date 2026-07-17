@@ -432,11 +432,6 @@ func (s *service) GetProfile(ctx context.Context, userID string) (UserView, erro
 }
 
 func (s *service) UpdateMe(ctx context.Context, userID string, req UpdateMeRequest) (UserView, error) {
-	if req.Email != nil {
-		if err := validateEmail(*req.Email); err != nil {
-			return UserView{}, err
-		}
-	}
 	if req.Language != nil {
 		if err := validateLanguage(*req.Language); err != nil {
 			return UserView{}, err
