@@ -345,7 +345,7 @@ func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request) {
 // @Param        body  body      UpdateMeRequest  true  "Fields to update"
 // @Success      200   {object}  UserEnvelope
 // @Failure      401   {object}  ErrorEnvelope  "UNAUTHORIZED"
-// @Failure      422   {object}  ErrorEnvelope  "INVALID_INPUT or INVALID_EMAIL"
+// @Failure      422   {object}  ErrorEnvelope  "INVALID_INPUT"
 // @Router       /users/me [patch]
 func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())

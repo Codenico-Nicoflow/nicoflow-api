@@ -117,10 +117,12 @@ type ResendVerificationRequest struct {
 
 // UpdateMeRequest is the body for PATCH /v1/users/me.
 // All fields are optional (pointer = absent means "do not update").
+// Email is deliberately absent — it is immutable via this path (account-takeover
+// vector: change-then-forgot-password). Username is likewise a login credential
+// and not updatable here.
 type UpdateMeRequest struct {
 	FirstName *string `json:"firstName"`
 	LastName  *string `json:"lastName"`
-	Email     *string `json:"email"`
 	Timezone  *string `json:"timezone"`
 	Theme     *string `json:"theme"`
 	Language  *string `json:"language"`

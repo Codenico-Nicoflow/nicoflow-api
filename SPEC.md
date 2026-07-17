@@ -325,12 +325,13 @@ Update user profile fields.
 {
   "firstName": "John",
   "lastName": "Doe",
-  "email": "new@example.com",
   "timezone": "Europe/London",
   "theme": "dark",
   "language": "he"
 }
 ```
+
+`email` and `username` are **immutable via this path** and are ignored if sent (an unknown `email` field is silently dropped at decode). Allowing email change here is an account-takeover vector — combined with the unauthenticated forgot-password flow, an attacker with a live session could change the address to their own and reset. Correct email change (verify-new + notify-old + password re-auth) is a separate security-reviewed epic; `username` is a login credential.
 
 `language` must be one of `en`, `he`, `ru` (validated in the service layer → `INVALID_INPUT` otherwise). Drives the UI language for logged-in users (and, later, localized emails). See §10.
 
