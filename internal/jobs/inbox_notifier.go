@@ -40,38 +40,51 @@ func NewInboxNotifier(repo Repository, c creator) *InboxNotifier {
 	return &InboxNotifier{repo: repo, creator: c, now: time.Now}
 }
 
-// Run executes one sweep and returns how many notifications were newly created
-// (dedupe-suppressed duplicates not counted). Safe to re-run within the same
-// window: idempotency is guaranteed by each output's dedupe_key.
-func (n *InboxNotifier) Run(ctx context.Context) (int, error) {
+// Run executes one sweep and returns a breakdown of what happened. Safe to re-run
+// within the same window: idempotency is guaranteed by each output's dedupe_key.
+// When dryRun is true it computes the breakdown but inserts nothing.
+func (n *InboxNotifier) Run(ctx context.Context, dryRun bool) (*SweepBreakdown, error) {
+	const sweep = "inbox"
 	users, err := n.repo.ListRemindableUsers(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("jobs.InboxNotifier: list users: %w", err)
+		return nil, fmt.Errorf("jobs.InboxNotifier: list users: %w", err)
 	}
 
 	nowUTC := n.now().UTC()
-	generated := 0
+	b := newBreakdown()
 
 	for _, u := range users {
-		local, ok := inboxLocalTime(nowUTC, u.Timezone)
+		b.Considered++
+
+		local, ok := localHour(nowUTC, u.Timezone)
 		if !ok {
-			continue // not this user's reminder hour (or a bad timezone) → skip
+			b.skip(sweep, skipBadTimezone, u.UserID, u.Timezone)
+			continue
+		}
+		if !inFireWindow(local.Hour(), u.MorningHour) {
+			b.skip(sweep, skipOutsideWindow, u.UserID, u.Timezone)
+			continue
 		}
 		if !notification.IsProType(notification.TypeInboxUnprocessed) || u.Plan != planPro {
+			b.skip(sweep, skipPlanGate, u.UserID, u.Timezone)
 			continue // both inbox nudges are Pro-only
 		}
 		if !u.InboxNudgesEnabled {
+			b.skip(sweep, skipToggleOff, u.UserID, u.Timezone)
 			continue // user opted out of inbox nudges
+		}
+		if dryRun {
+			continue
 		}
 
 		if n.emitUnprocessed(ctx, u, local) {
-			generated++
+			b.Fired++
 		}
 		if n.emitStale(ctx, u, local) {
-			generated++
+			b.Fired++
 		}
 	}
-	return generated, nil
+	return b, nil
 }
 
 // emitUnprocessed creates the daily inbox_unprocessed nudge when the user's
@@ -127,21 +140,6 @@ func (n *InboxNotifier) emitStale(ctx context.Context, u RemindableUser, local t
 		return false
 	}
 	return inserted
-}
-
-// inboxLocalTime reports whether the user should be swept this hour and, if so,
-// their local time. A user fires only when their local hour equals
-// reminderLocalHour; an unparseable timezone is skipped (ok=false).
-func inboxLocalTime(nowUTC time.Time, tz string) (time.Time, bool) {
-	loc, err := time.LoadLocation(tz)
-	if err != nil {
-		return time.Time{}, false
-	}
-	local := nowUTC.In(loc)
-	if local.Hour() != reminderLocalHour {
-		return time.Time{}, false
-	}
-	return local, true
 }
 
 // isoWeek renders a time as an ISO year-week key (e.g. "2026-W29") — the bucket the

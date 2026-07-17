@@ -148,6 +148,7 @@ type UserView struct {
 	LastName  string `json:"lastName"`
 	Theme     string `json:"theme"`
 	Language  string `json:"language"`
+	Timezone  string `json:"timezone"`
 	ImageURL  string `json:"imageUrl"`
 	Status    string `json:"status"`
 }
@@ -161,6 +162,7 @@ func userToView(u User) UserView {
 		LastName:  u.LastName,
 		Theme:     u.Theme,
 		Language:  u.Language,
+		Timezone:  u.Timezone,
 		ImageURL:  u.ImageURL,
 		Status:    u.Status,
 	}

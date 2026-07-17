@@ -31,7 +31,9 @@ func (r *pgRepository) ListRemindableUsers(ctx context.Context) ([]RemindableUse
 		       COALESCE(p.overdue_enabled, TRUE),
 		       COALESCE(p.daily_summary_enabled, TRUE),
 		       COALESCE(p.inbox_nudges_enabled, TRUE),
-		       COALESCE(p.streaks_enabled, TRUE)
+		       COALESCE(p.streaks_enabled, TRUE),
+		       COALESCE(p.morning_hour, 8),
+		       COALESCE(p.evening_hour, 20)
 		FROM users u
 		LEFT JOIN notification_preferences p ON p.user_id = u.id
 		WHERE u.deleted_at IS NULL`)
@@ -44,7 +46,8 @@ func (r *pgRepository) ListRemindableUsers(ctx context.Context) ([]RemindableUse
 	for rows.Next() {
 		var u RemindableUser
 		if err := rows.Scan(&u.UserID, &u.Email, &u.Plan, &u.Timezone, &u.BeforeDueMinutes, &u.EmailDigest,
-			&u.OverdueEnabled, &u.DailySummaryEnabled, &u.InboxNudgesEnabled, &u.StreaksEnabled); err != nil {
+			&u.OverdueEnabled, &u.DailySummaryEnabled, &u.InboxNudgesEnabled, &u.StreaksEnabled,
+			&u.MorningHour, &u.EveningHour); err != nil {
 			return nil, fmt.Errorf("jobs.ListRemindableUsers scan: %w", err)
 		}
 		out = append(out, u)

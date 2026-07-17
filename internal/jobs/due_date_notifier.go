@@ -14,10 +14,6 @@ import (
 	"github.com/nicoflow/nicoflow-api/pkg/emailutil"
 )
 
-// reminderLocalHour is the local hour (24h) at which a user's due-soon reminders
-// fire. The hourly sweep only acts on users whose current local hour equals this.
-const reminderLocalHour = 8
-
 // scheduledForLayout is the date format stored in tasks.scheduled_for (ISO date),
 // matching the task domain's own layout.
 const scheduledForLayout = "2006-01-02"
@@ -38,6 +34,11 @@ type RemindableUser struct {
 	DailySummaryEnabled bool
 	InboxNudgesEnabled  bool
 	StreaksEnabled      bool
+	// Reminder hours (NIC-1627). MorningHour drives the day-start/inbox/overdue/
+	// due-notify sweeps; EveningHour drives the summary sweep. An absent
+	// preferences row COALESCEs to the 8/20 defaults.
+	MorningHour int
+	EveningHour int
 }
 
 // DueTask is the minimal task shape the sweep needs to build a notification.
@@ -112,24 +113,34 @@ func NewDueDateNotifier(repo Repository, c creator, smtpDSN string) *DueDateNoti
 	}
 }
 
-// Run executes one sweep and returns how many notifications were newly created
-// (duplicates skipped by dedupe_key are not counted). It is safe to re-run within
-// the same hour: idempotency is guaranteed by the notification dedupe_key.
-func (n *DueDateNotifier) Run(ctx context.Context) (int, error) {
+// Run executes one sweep and returns a breakdown of what happened (considered /
+// fired / skipped-by-reason). It is safe to re-run within the same hour:
+// idempotency is guaranteed by the notification dedupe_key. When dryRun is true it
+// computes the breakdown but inserts nothing and sends no digest.
+func (n *DueDateNotifier) Run(ctx context.Context, dryRun bool) (*SweepBreakdown, error) {
+	const sweep = "due-date"
 	users, err := n.repo.ListRemindableUsers(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("jobs.DueDateNotifier: list users: %w", err)
+		return nil, fmt.Errorf("jobs.DueDateNotifier: list users: %w", err)
 	}
 
 	nowUTC := n.now().UTC()
-	generated := 0
+	b := newBreakdown()
 
 	for _, u := range users {
-		target, ok := reminderTargetDate(nowUTC, u.Timezone, u.BeforeDueMinutes)
+		b.Considered++
+
+		local, ok := localHour(nowUTC, u.Timezone)
 		if !ok {
-			continue // not this user's 08:00 hour (or a bad timezone) → skip
+			b.skip(sweep, skipBadTimezone, u.UserID, u.Timezone)
+			continue
+		}
+		if !inFireWindow(local.Hour(), u.MorningHour) {
+			b.skip(sweep, skipOutsideWindow, u.UserID, u.Timezone)
+			continue
 		}
 
+		target := reminderTargetDate(local, u.BeforeDueMinutes)
 		tasks, err := n.repo.ListTasksScheduledOn(ctx, u.UserID, target)
 		if err != nil {
 			// One user's failure shouldn't abort the whole sweep; log and continue.
@@ -138,6 +149,9 @@ func (n *DueDateNotifier) Run(ctx context.Context) (int, error) {
 		}
 
 		for _, t := range tasks {
+			if dryRun {
+				continue
+			}
 			_, inserted, err := n.creator.Create(ctx, notification.Notification{
 				UserID:    u.UserID,
 				Type:      notification.TypeTaskDueSoon,
@@ -150,16 +164,18 @@ func (n *DueDateNotifier) Run(ctx context.Context) (int, error) {
 				continue
 			}
 			if inserted {
-				generated++
+				b.Fired++
 			}
 		}
 
 		// Pro email digest: one batched summary of this user's due-soon tasks, gated
 		// on plan + the email_digest preference. Isolated — a send failure logs and
-		// continues, never aborting the sweep.
-		n.maybeSendDigest(u, tasks)
+		// continues, never aborting the sweep. Suppressed on dry runs.
+		if !dryRun {
+			n.maybeSendDigest(u, tasks)
+		}
 	}
-	return generated, nil
+	return b, nil
 }
 
 // maybeSendDigest emails a Pro user with email_digest on a batched summary of
@@ -179,26 +195,16 @@ func (n *DueDateNotifier) maybeSendDigest(u RemindableUser, tasks []DueTask) {
 	}
 }
 
-// reminderTargetDate reports whether the user should be reminded in this hour and,
-// if so, the local ISO target date. A user fires only when their local hour equals
-// reminderLocalHour; the target date is their local today plus the lead time
-// (beforeDueMinutes, default 1440 = tomorrow), so a 24h lead at 08:00 targets the
-// next local day. An unparseable timezone is skipped (ok=false).
-func reminderTargetDate(nowUTC time.Time, tz string, beforeDueMinutes int) (string, bool) {
-	loc, err := time.LoadLocation(tz)
-	if err != nil {
-		return "", false
-	}
-	local := nowUTC.In(loc)
-	if local.Hour() != reminderLocalHour {
-		return "", false
-	}
+// reminderTargetDate returns the local ISO target date for a due-soon reminder:
+// the user's local day plus the lead time (beforeDueMinutes, default 1440 =
+// tomorrow), so a 24h lead targets the next local day. The caller has already
+// resolved local and confirmed the fire window.
+func reminderTargetDate(local time.Time, beforeDueMinutes int) string {
 	if beforeDueMinutes < 0 {
 		beforeDueMinutes = 0
 	}
 	leadDays := beforeDueMinutes / 1440
-	target := local.AddDate(0, 0, leadDays)
-	return target.Format(scheduledForLayout), true
+	return local.AddDate(0, 0, leadDays).Format(scheduledForLayout)
 }
 
 // dedupeKey builds the idempotency key for a due-soon notification. Re-running the

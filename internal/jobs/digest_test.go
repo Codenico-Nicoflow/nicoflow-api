@@ -50,7 +50,7 @@ func TestDigest_ProWithDigestOnSends(t *testing.T) {
 	tasks := map[string][]DueTask{"u1": {{ID: "t1", Title: "A"}, {ID: "t2", Title: "B"}}}
 	n := newNotifierWithDigest(t, users, tasks, spy, "smtp://x")
 
-	if _, err := n.Run(context.Background()); err != nil {
+	if _, err := n.Run(context.Background(), false); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if len(spy.sent) != 1 {
@@ -69,7 +69,7 @@ func TestDigest_FreeUserSkipped(t *testing.T) {
 	tasks := map[string][]DueTask{"u1": {{ID: "t1", Title: "A"}}}
 	n := newNotifierWithDigest(t, users, tasks, spy, "smtp://x")
 
-	if _, err := n.Run(context.Background()); err != nil {
+	if _, err := n.Run(context.Background(), false); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if len(spy.sent) != 0 {
@@ -85,7 +85,7 @@ func TestDigest_ProOptedOutSkipped(t *testing.T) {
 	tasks := map[string][]DueTask{"u1": {{ID: "t1", Title: "A"}}}
 	n := newNotifierWithDigest(t, users, tasks, spy, "smtp://x")
 
-	if _, err := n.Run(context.Background()); err != nil {
+	if _, err := n.Run(context.Background(), false); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if len(spy.sent) != 0 {
@@ -101,7 +101,7 @@ func TestDigest_NoTasksNoSend(t *testing.T) {
 	// No tasks scheduled → nothing to summarise.
 	n := newNotifierWithDigest(t, users, map[string][]DueTask{}, spy, "smtp://x")
 
-	if _, err := n.Run(context.Background()); err != nil {
+	if _, err := n.Run(context.Background(), false); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if len(spy.sent) != 0 {
@@ -122,7 +122,7 @@ func TestDigest_BatchIsolation(t *testing.T) {
 	}
 	n := newNotifierWithDigest(t, users, tasks, spy, "smtp://x")
 
-	if _, err := n.Run(context.Background()); err != nil {
+	if _, err := n.Run(context.Background(), false); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if len(spy.sent) != 2 {

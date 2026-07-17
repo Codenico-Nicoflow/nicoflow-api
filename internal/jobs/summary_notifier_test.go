@@ -10,31 +10,6 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 )
 
-func TestSummaryLocalToday(t *testing.T) {
-	// 2026-07-14 17:00 UTC = 20:00 Asia/Jerusalem (UTC+3 summer) → end-of-day hour.
-	at17UTC := time.Date(2026, 7, 14, 17, 0, 0, 0, time.UTC)
-	tests := []struct {
-		name     string
-		now      time.Time
-		tz       string
-		wantDate string
-		wantOK   bool
-	}{
-		{"local 20:00 → today", at17UTC, "Asia/Jerusalem", "2026-07-14", true},
-		{"UTC 20:00 → today", time.Date(2026, 7, 14, 20, 0, 0, 0, time.UTC), "UTC", "2026-07-14", true},
-		{"local 08:00 → skip", time.Date(2026, 7, 14, 5, 0, 0, 0, time.UTC), "Asia/Jerusalem", "", false},
-		{"bad timezone → skip", at17UTC, "Not/AZone", "", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, ok := summaryLocalToday(tt.now, tt.tz)
-			if ok != tt.wantOK || got != tt.wantDate {
-				t.Fatalf("got (%q,%v), want (%q,%v)", got, ok, tt.wantDate, tt.wantOK)
-			}
-		})
-	}
-}
-
 func TestCurrentStreak(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -79,12 +54,12 @@ func TestSummaryRun_DailySummary(t *testing.T) {
 	n := NewSummaryNotifier(repo, creator)
 	n.now = at2000UTC
 
-	generated, err := n.Run(context.Background())
+	generated, err := n.Run(context.Background(), false)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if generated != 1 || len(creator.calls) != 1 {
-		t.Fatalf("generated=%d calls=%d, want 1/1", generated, len(creator.calls))
+	if generated.Fired != 1 || len(creator.calls) != 1 {
+		t.Fatalf("generated=%d calls=%d, want 1/1", generated.Fired, len(creator.calls))
 	}
 	got := creator.calls[0]
 	if got.Type != notification.TypeDailySummary ||
@@ -112,8 +87,8 @@ func TestSummaryRun_NoCompletionsSilent(t *testing.T) {
 	n := NewSummaryNotifier(repo, creator)
 	n.now = at2000UTC
 
-	if generated, _ := n.Run(context.Background()); generated != 0 || len(creator.calls) != 0 {
-		t.Fatalf("no completions → silent, got generated=%d calls=%d", generated, len(creator.calls))
+	if generated, _ := n.Run(context.Background(), false); generated.Fired != 0 || len(creator.calls) != 0 {
+		t.Fatalf("no completions → silent, got generated=%d calls=%d", generated.Fired, len(creator.calls))
 	}
 }
 
@@ -129,9 +104,9 @@ func TestSummaryRun_DailySummaryDisabledStreakOn(t *testing.T) {
 	n := NewSummaryNotifier(repo, creator)
 	n.now = at2000UTC
 
-	generated, _ := n.Run(context.Background())
-	if generated != 1 || len(creator.calls) != 1 {
-		t.Fatalf("generated=%d calls=%d, want 1/1 (streak only)", generated, len(creator.calls))
+	generated, _ := n.Run(context.Background(), false)
+	if generated.Fired != 1 || len(creator.calls) != 1 {
+		t.Fatalf("generated=%d calls=%d, want 1/1 (streak only)", generated.Fired, len(creator.calls))
 	}
 	if creator.calls[0].Type != notification.TypeStreakMilestone {
 		t.Fatalf("type = %q, want streak_milestone (daily_summary was disabled)", creator.calls[0].Type)
@@ -149,9 +124,9 @@ func TestSummaryRun_StreakDisabledSummaryOn(t *testing.T) {
 	n := NewSummaryNotifier(repo, creator)
 	n.now = at2000UTC
 
-	generated, _ := n.Run(context.Background())
-	if generated != 1 || len(creator.calls) != 1 {
-		t.Fatalf("generated=%d calls=%d, want 1/1 (summary only)", generated, len(creator.calls))
+	generated, _ := n.Run(context.Background(), false)
+	if generated.Fired != 1 || len(creator.calls) != 1 {
+		t.Fatalf("generated=%d calls=%d, want 1/1 (summary only)", generated.Fired, len(creator.calls))
 	}
 	if creator.calls[0].Type != notification.TypeDailySummary {
 		t.Fatalf("type = %q, want daily_summary (streaks was disabled)", creator.calls[0].Type)
@@ -168,8 +143,8 @@ func TestSummaryRun_FreeUserSkipped(t *testing.T) {
 	n := NewSummaryNotifier(repo, creator)
 	n.now = at2000UTC
 
-	if generated, _ := n.Run(context.Background()); generated != 0 || len(creator.calls) != 0 {
-		t.Fatalf("free user must be skipped, got generated=%d calls=%d", generated, len(creator.calls))
+	if generated, _ := n.Run(context.Background(), false); generated.Fired != 0 || len(creator.calls) != 0 {
+		t.Fatalf("free user must be skipped, got generated=%d calls=%d", generated.Fired, len(creator.calls))
 	}
 }
 
@@ -184,12 +159,12 @@ func TestSummaryRun_StreakMilestone(t *testing.T) {
 	n := NewSummaryNotifier(repo, creator)
 	n.now = at2000UTC
 
-	generated, err := n.Run(context.Background())
+	generated, err := n.Run(context.Background(), false)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if generated != 2 || len(creator.calls) != 2 {
-		t.Fatalf("want summary + streak, got generated=%d calls=%d", generated, len(creator.calls))
+	if generated.Fired != 2 || len(creator.calls) != 2 {
+		t.Fatalf("want summary + streak, got generated=%d calls=%d", generated.Fired, len(creator.calls))
 	}
 	streak := creator.calls[1]
 	if streak.Type != notification.TypeStreakMilestone ||
@@ -209,7 +184,7 @@ func TestSummaryRun_NonMilestoneStreakNoFire(t *testing.T) {
 	n := NewSummaryNotifier(repo, creator)
 	n.now = at2000UTC
 
-	if _, err := n.Run(context.Background()); err != nil {
+	if _, err := n.Run(context.Background(), false); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if len(creator.calls) != 1 || creator.calls[0].Type != notification.TypeDailySummary {
@@ -228,8 +203,8 @@ func TestSummaryRun_Idempotent(t *testing.T) {
 	n := NewSummaryNotifier(repo, creator)
 	n.now = at2000UTC
 
-	if generated, _ := n.Run(context.Background()); generated != 0 || len(creator.calls) != 2 {
-		t.Fatalf("want 0 generated + 2 attempts, got generated=%d calls=%d", generated, len(creator.calls))
+	if generated, _ := n.Run(context.Background(), false); generated.Fired != 0 || len(creator.calls) != 2 {
+		t.Fatalf("want 0 generated + 2 attempts, got generated=%d calls=%d", generated.Fired, len(creator.calls))
 	}
 }
 
@@ -242,8 +217,8 @@ func TestSummaryRun_SkipsUsersNotAtHour(t *testing.T) {
 	n := NewSummaryNotifier(repo, creator)
 	n.now = func() time.Time { return time.Date(2026, 7, 14, 8, 0, 0, 0, time.UTC) } // 08:00
 
-	if generated, _ := n.Run(context.Background()); generated != 0 || len(creator.calls) != 0 {
-		t.Fatalf("want 0/0 outside end-of-day hour, got %d/%d", generated, len(creator.calls))
+	if generated, _ := n.Run(context.Background(), false); generated.Fired != 0 || len(creator.calls) != 0 {
+		t.Fatalf("want 0/0 outside end-of-day hour, got %d/%d", generated.Fired, len(creator.calls))
 	}
 }
 
@@ -261,11 +236,11 @@ func TestSummaryRun_PerUserIsolation(t *testing.T) {
 	n := NewSummaryNotifier(repo, creator)
 	n.now = at2000UTC
 
-	generated, err := n.Run(context.Background())
+	generated, err := n.Run(context.Background(), false)
 	if err != nil {
 		t.Fatalf("Run must not return a per-user error: %v", err)
 	}
-	if generated != 1 || len(creator.calls) != 1 || creator.calls[0].UserID != "u2" {
-		t.Fatalf("want u2's summary despite u1 failing, got generated=%d calls=%d", generated, len(creator.calls))
+	if generated.Fired != 1 || len(creator.calls) != 1 || creator.calls[0].UserID != "u2" {
+		t.Fatalf("want u2's summary despite u1 failing, got generated=%d calls=%d", generated.Fired, len(creator.calls))
 	}
 }

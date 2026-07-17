@@ -934,6 +934,55 @@ func TestUpdateMe_Language(t *testing.T) {
 	}
 }
 
+func TestUpdateMe_Timezone(t *testing.T) {
+	tests := []struct {
+		name      string
+		timezone  string
+		wantError bool
+	}{
+		{name: "valid IANA persists", timezone: "Europe/Berlin", wantError: false},
+		{name: "another valid zone", timezone: "Asia/Jerusalem", wantError: false},
+		{name: "garbage → 422", timezone: "garbage", wantError: true},
+		{name: "fictional zone → 422", timezone: "Mars/Olympus", wantError: true},
+		{name: "offset form is not IANA → 422", timezone: "UTC+3", wantError: true},
+		{name: "empty → 422 (would silent-coerce to UTC)", timezone: "", wantError: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := happyRepo()
+			repo.updateUserFn = func(_ context.Context, _ string, req auth.UpdateMeRequest) (auth.User, error) {
+				u := fixedUser()
+				if req.Timezone != nil {
+					u.Timezone = *req.Timezone
+				}
+				return u, nil
+			}
+			svc := auth.NewService(repo, testCfg())
+
+			tz := tc.timezone
+			view, err := svc.UpdateMe(context.Background(), "usr_abc123", auth.UpdateMeRequest{Timezone: &tz})
+
+			if tc.wantError {
+				if err == nil {
+					t.Fatalf("expected error for timezone %q, got nil", tc.timezone)
+				}
+				var ae *apperror.AppError
+				if !errors.As(err, &ae) || ae.Code != apperror.ErrInvalidInput {
+					t.Fatalf("expected INVALID_INPUT, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("UpdateMe() error = %v", err)
+			}
+			if view.Timezone != tc.timezone {
+				t.Errorf("Timezone = %q, want %q", view.Timezone, tc.timezone)
+			}
+		})
+	}
+}
+
 func TestDeleteMe_RevokesAllTokens(t *testing.T) {
 	var softDeleted, revokedAll bool
 	repo := happyRepo()
