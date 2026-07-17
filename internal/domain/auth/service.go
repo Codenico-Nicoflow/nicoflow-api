@@ -168,11 +168,26 @@ func (s *service) Login(ctx context.Context, req LoginRequest) (AuthResponse, er
 		return AuthResponse{}, apperror.New(http.StatusForbidden, apperror.ErrEmailNotVerified, "email not verified")
 	}
 
+	s.selfHealTimezone(ctx, user, req.Timezone)
+
 	tokenTTL := s.cfg.RefreshTokenExpiry
 	if !req.Remember {
 		tokenTTL = 24 * time.Hour
 	}
 	return s.issueAuthResponse(ctx, user, tokenTTL)
+}
+
+// selfHealTimezone updates the stored timezone from the client's real zone
+// (NIC-1627), but only when it's a valid IANA name that actually differs.
+// Best-effort and never fatal: a bad or absent value leaves the stored zone
+// untouched, and an update error is logged, not returned — login must proceed.
+func (s *service) selfHealTimezone(ctx context.Context, user User, clientTZ string) {
+	if clientTZ == "" || clientTZ == user.Timezone || validateTimezone(clientTZ) != nil {
+		return
+	}
+	if _, err := s.repo.UpdateUser(ctx, user.ID, UpdateMeRequest{Timezone: &clientTZ}); err != nil {
+		log.Warn().Err(err).Str("user_id", user.ID).Msg("login: timezone self-heal failed")
+	}
 }
 
 func (s *service) Logout(ctx context.Context, _ string, rawRefreshToken string) error {

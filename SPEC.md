@@ -113,7 +113,8 @@ Authenticate and receive tokens.
   "identifier": "user@example.com",
   "password": "Secret1234",
   "remember": true,
-  "platform": "web"
+  "platform": "web",
+  "timezone": "Europe/London"
 }
 ```
 
@@ -123,6 +124,7 @@ Authenticate and receive tokens.
 | `password`   | string  | Yes      |                                                                 |
 | `remember`   | boolean | Yes      | `true` → 7-day refresh token; `false` → 24-hour                 |
 | `platform`   | string  | No       | `"web"` \| `"mobile"`                                           |
+| `timezone`   | string  | No       | Client IANA zone. Best-effort self-heal: if valid and different from the stored value, the user's `timezone` is updated (an invalid/absent value is ignored — never fails the login). Lets an existing `'UTC'`-default row correct itself on next login. |
 
 **Response — 200 OK**
 
