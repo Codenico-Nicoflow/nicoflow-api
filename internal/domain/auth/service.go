@@ -353,6 +353,10 @@ func (s *service) ChangePassword(ctx context.Context, userID string, req ChangeP
 		return AuthResponse{}, apperror.New(http.StatusUnauthorized, apperror.ErrUnauthorized, "current password is incorrect")
 	}
 
+	if hashutil.Compare(user.PasswordHash, req.NewPassword) {
+		return AuthResponse{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "new password must be different from your current password")
+	}
+
 	newHash, err := hashutil.Hash(req.NewPassword)
 	if err != nil {
 		return AuthResponse{}, fmt.Errorf("auth.ChangePassword hash: %w", err)

@@ -277,10 +277,11 @@ Change the password for the **currently logged-in** user (distinct from `reset-p
 
 - `currentPassword` is re-verified via bcrypt; a mismatch → `UNAUTHORIZED` (401).
 - `newPassword` policy is identical to register: 8–72 chars, ≥1 uppercase + ≥1 lowercase, validated server-side. `confirmPassword` must match.
+- `newPassword` must **differ from the current password** — a no-op change is rejected with `INVALID_INPUT` (422). Checked only after the current-password verify passes, so it never leaks whether a guessed value matches the stored password.
 
 **Response — 200 OK** — a fresh `{ token, refreshToken, user }` pair (same shape as login), plus a rotated `HttpOnly` refresh cookie. On success **all** of the user's refresh tokens are revoked and only the calling client is re-issued a pair — every other device is signed out while the changer stays signed in. A "password changed" notification email is sent best-effort (Mailtrap-only until E-044).
 
-**Errors:** `UNAUTHORIZED` (401 — missing access token or wrong current password), `WEAK_PASSWORD` (400), `INVALID_INPUT` (422 — password mismatch), `RATE_LIMITED` (429)
+**Errors:** `UNAUTHORIZED` (401 — missing access token or wrong current password), `WEAK_PASSWORD` (400), `INVALID_INPUT` (422 — password mismatch **or** new password equals current), `RATE_LIMITED` (429)
 
 ---
 
