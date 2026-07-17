@@ -34,9 +34,6 @@ type RemindableUser struct {
 	DailySummaryEnabled bool
 	InboxNudgesEnabled  bool
 	StreaksEnabled      bool
-	// Reminder hours (NIC-1627). MorningHour drives the day-start/inbox/overdue/
-	// due-notify sweeps; EveningHour drives the summary sweep. An absent
-	// preferences row COALESCEs to the 8/20 defaults.
 	MorningHour int
 	EveningHour int
 }

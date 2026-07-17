@@ -44,7 +44,7 @@ func TestService_UpdatePreferences_Validation(t *testing.T) {
 		{"before at cap ok", notification.UpdatePreferences{BeforeDueMinutes: ptrInt(notification.LeadTimeMax)}, false},
 		{"nil lead times ok", notification.UpdatePreferences{EmailDigest: ptrBool(false)}, false},
 
-		// Reminder hours (NIC-1627): morning 5–11, evening 18–22.
+		// Reminder hours: morning 5–11, evening 18–22.
 		{"morning below range", notification.UpdatePreferences{MorningHour: ptrInt(notification.MorningHourMin - 1)}, true},
 		{"morning above range", notification.UpdatePreferences{MorningHour: ptrInt(notification.MorningHourMax + 1)}, true},
 		{"morning at min ok", notification.UpdatePreferences{MorningHour: ptrInt(notification.MorningHourMin)}, false},

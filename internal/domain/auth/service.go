@@ -177,10 +177,10 @@ func (s *service) Login(ctx context.Context, req LoginRequest) (AuthResponse, er
 	return s.issueAuthResponse(ctx, user, tokenTTL)
 }
 
-// selfHealTimezone updates the stored timezone from the client's real zone
-// (NIC-1627), but only when it's a valid IANA name that actually differs.
-// Best-effort and never fatal: a bad or absent value leaves the stored zone
-// untouched, and an update error is logged, not returned — login must proceed.
+// selfHealTimezone updates the stored timezone from the client's real zone,
+// but only when it's a valid IANA name that actually differs. Best-effort and
+// never fatal: a bad or absent value leaves the stored zone untouched, and an
+// update error is logged, not returned — login must proceed.
 func (s *service) selfHealTimezone(ctx context.Context, user User, clientTZ string) {
 	if clientTZ == "" || clientTZ == user.Timezone || validateTimezone(clientTZ) != nil {
 		return

@@ -72,11 +72,7 @@ type LoginRequest struct {
 	Password   string `json:"password"`
 	Remember   bool   `json:"remember"`
 	Platform   string `json:"platform"`
-	// Timezone is the client's IANA zone (Intl.DateTimeFormat().resolvedOptions().
-	// timeZone), sent on every login so an existing 'UTC'-default row self-heals —
-	// no backfill migration needed. Optional and best-effort: an invalid or absent
-	// value never fails the login.
-	Timezone string `json:"timezone"`
+	Timezone   string `json:"timezone"`
 }
 
 // LoginIdentifier returns the identifier to authenticate with, preferring the
