@@ -95,6 +95,15 @@ type ResetPasswordRequest struct {
 	ConfirmPassword string `json:"confirmPassword"`
 }
 
+// ChangePasswordRequest is the body for POST /v1/auth/change-password.
+// The user is already authenticated (JWT); currentPassword is re-verified
+// via bcrypt before the change is applied.
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"currentPassword"`
+	NewPassword     string `json:"newPassword"`
+	ConfirmPassword string `json:"confirmPassword"`
+}
+
 // VerifyEmailRequest is the body for POST /v1/auth/verify-email.
 type VerifyEmailRequest struct {
 	Token string `json:"token"`

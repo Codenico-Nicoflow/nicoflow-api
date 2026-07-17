@@ -233,6 +233,39 @@ func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, map[string]string{"message": "password updated successfully"})
 }
 
+// ChangePassword godoc
+// @Summary      Change password (logged in)
+// @Description  Changes the authenticated user's password. Re-verifies currentPassword via bcrypt, enforces the register password policy on newPassword, revokes all refresh tokens, and issues a fresh token pair to the caller (every other device is signed out; the caller stays signed in). Sets a new HttpOnly refresh cookie.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        body  body      ChangePasswordRequest  true  "Current + new password"
+// @Success      200   {object}  AuthEnvelope   "New access token + rotated refresh cookie"
+// @Failure      401   {object}  ErrorEnvelope  "UNAUTHORIZED (missing access token or wrong current password)"
+// @Failure      400   {object}  ErrorEnvelope  "WEAK_PASSWORD"
+// @Failure      422   {object}  ErrorEnvelope  "INVALID_INPUT (password mismatch)"
+// @Failure      429   {object}  ErrorEnvelope  "RATE_LIMITED"
+// @Router       /auth/change-password [post]
+func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	userID := mw.UserIDFromCtx(r.Context())
+
+	var req ChangePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respond.Error(w, http.StatusBadRequest, apperror.ErrInvalidInput, "invalid request body")
+		return
+	}
+
+	resp, err := h.svc.ChangePassword(r.Context(), userID, req)
+	if err != nil {
+		writeAppError(w, r, err)
+		return
+	}
+
+	h.setRefreshCookie(w, resp.RefreshToken, resp.CookieMaxAge)
+	respond.JSON(w, http.StatusOK, resp)
+}
+
 // VerifyEmail godoc
 // @Summary      Verify email address
 // @Description  Confirms a user's email using the single-use token from the verification email.

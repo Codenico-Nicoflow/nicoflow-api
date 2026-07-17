@@ -112,6 +112,10 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 			r.Use(mw.RateLimitUser(1000, 100))
 			// logout-all revokes by the userID claim, so it needs a live access token.
 			r.Post("/logout-all", h.Auth.LogoutAll)
+			// change-password bcrypt-compares currentPassword, so an extra per-user
+			// limiter (5/min) throttles it as an online password oracle on top of the
+			// group's global RateLimitUser.
+			r.With(mw.RateLimitUser(5, 5)).Post("/change-password", h.Auth.ChangePassword)
 			r.Post("/biometric/register", h.Auth.BiometricRegister)
 		})
 	})

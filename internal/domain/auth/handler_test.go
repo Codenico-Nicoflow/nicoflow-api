@@ -22,6 +22,7 @@ type mockService struct {
 	refreshFn  func(ctx context.Context, raw string) (auth.AuthResponse, error)
 	resetFn    func(ctx context.Context, req auth.ResetPasswordRequest) error
 	verifyFn   func(ctx context.Context, req auth.VerifyEmailRequest) error
+	changePwFn func(ctx context.Context, userID string, req auth.ChangePasswordRequest) (auth.AuthResponse, error)
 }
 
 func (m *mockService) Register(ctx context.Context, req auth.RegisterRequest) (auth.AuthResponse, error) {
@@ -53,6 +54,12 @@ func (m *mockService) VerifyEmail(ctx context.Context, req auth.VerifyEmailReque
 		return m.verifyFn(ctx, req)
 	}
 	return nil
+}
+func (m *mockService) ChangePassword(ctx context.Context, userID string, req auth.ChangePasswordRequest) (auth.AuthResponse, error) {
+	if m.changePwFn != nil {
+		return m.changePwFn(ctx, userID, req)
+	}
+	return auth.AuthResponse{CookieMaxAge: int(testCfg().RefreshTokenExpiry.Seconds())}, nil
 }
 func (m *mockService) ResendVerification(_ context.Context, _ string) error {
 	return nil
@@ -420,6 +427,65 @@ func TestHandler_ResetPassword_InvalidToken(t *testing.T) {
 	env := decodeEnvelope(t, res)
 	if env.Error == nil || env.Error.Code != apperror.ErrInvalidToken {
 		t.Fatalf("error code = %+v, want INVALID_TOKEN", env.Error)
+	}
+}
+
+// TestHandler_ChangePassword_WrongCurrent asserts a service UNAUTHORIZED error
+// (wrong current password) is surfaced as 401 with the right code.
+func TestHandler_ChangePassword_WrongCurrent(t *testing.T) {
+	svc := &mockService{
+		changePwFn: func(_ context.Context, _ string, _ auth.ChangePasswordRequest) (auth.AuthResponse, error) {
+			return auth.AuthResponse{}, apperror.New(http.StatusUnauthorized, apperror.ErrUnauthorized, "current password is incorrect")
+		},
+	}
+	h := auth.NewHandler(svc, auth.HandlerConfig{})
+	r := httptest.NewRequest(http.MethodPost, "/v1/auth/change-password", jsonBody(t, auth.ChangePasswordRequest{
+		CurrentPassword: "WrongPass1", NewPassword: "NewPass123", ConfirmPassword: "NewPass123",
+	}))
+	w := httptest.NewRecorder()
+
+	h.ChangePassword(w, r)
+
+	res := w.Result()
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", res.StatusCode)
+	}
+	env := decodeEnvelope(t, res)
+	if env.Error == nil || env.Error.Code != apperror.ErrUnauthorized {
+		t.Fatalf("error code = %+v, want UNAUTHORIZED", env.Error)
+	}
+}
+
+// TestHandler_ChangePassword_Success asserts a happy change returns 200 with the
+// new token pair and sets a fresh refresh cookie.
+func TestHandler_ChangePassword_Success(t *testing.T) {
+	svc := &mockService{
+		changePwFn: func(_ context.Context, _ string, _ auth.ChangePasswordRequest) (auth.AuthResponse, error) {
+			return auth.AuthResponse{
+				Token:        "new.access.jwt",
+				RefreshToken: "new-raw-refresh",
+				CookieMaxAge: int(testCfg().RefreshTokenExpiry.Seconds()),
+			}, nil
+		},
+	}
+	h := auth.NewHandler(svc, auth.HandlerConfig{})
+	r := httptest.NewRequest(http.MethodPost, "/v1/auth/change-password", jsonBody(t, auth.ChangePasswordRequest{
+		CurrentPassword: "Secret123", NewPassword: "NewPass123", ConfirmPassword: "NewPass123",
+	}))
+	w := httptest.NewRecorder()
+
+	h.ChangePassword(w, r)
+
+	res := w.Result()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
+	}
+	env := decodeEnvelope(t, res)
+	if env.Error != nil {
+		t.Fatalf("error = %+v, want nil", env.Error)
+	}
+	if c := refreshCookie(res); c == nil || c.Value != "new-raw-refresh" || c.MaxAge <= 0 {
+		t.Fatalf("change-password must set a fresh refresh cookie, got %+v", c)
 	}
 }
 

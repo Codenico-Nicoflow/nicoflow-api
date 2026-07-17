@@ -621,3 +621,67 @@ func TestIntegration_VerifyEmail_InvalidToken(t *testing.T) {
 	err := svc.VerifyEmail(context.Background(), auth.VerifyEmailRequest{Token: "not-a-real-token"})
 	assertErrCode(t, err, apperror.ErrInvalidToken)
 }
+
+// ── Change password ─────────────────────────────────────────────────────────
+
+// TestIntegration_ChangePassword_Success runs the full flow against a real DB:
+// the change revokes every pre-existing session, issues a valid fresh pair to
+// the caller, and rotates the credential (new password logs in, old one fails).
+func TestIntegration_ChangePassword_Success(t *testing.T) {
+	svc, _ := integrationSvc(t)
+	reg := mustRegister(t, svc)
+
+	resp, err := svc.ChangePassword(context.Background(), reg.User.ID, auth.ChangePasswordRequest{
+		CurrentPassword: "Integrate1",
+		NewPassword:     "NewIntegrate1",
+		ConfirmPassword: "NewIntegrate1",
+	})
+	if err != nil {
+		t.Fatalf("ChangePassword() error = %v", err)
+	}
+
+	// Fresh pair issued to the caller — and it must actually work.
+	if resp.Token == "" || resp.RefreshToken == "" {
+		t.Fatalf("expected a fresh token pair, got token=%q refresh=%q", resp.Token, resp.RefreshToken)
+	}
+	if _, err := svc.RefreshToken(context.Background(), resp.RefreshToken); err != nil {
+		t.Fatalf("new refresh token should be valid: %v", err)
+	}
+
+	// Pre-change session must be revoked (all-device kick).
+	if _, err := svc.RefreshToken(context.Background(), reg.RefreshToken); err == nil {
+		t.Fatal("expected pre-change refresh token to be revoked")
+	}
+
+	// Credential rotated: new password logs in, old one does not.
+	if _, err := svc.Login(context.Background(), auth.LoginRequest{
+		Identifier: "integration@example.com", Password: "NewIntegrate1",
+	}); err != nil {
+		t.Fatalf("login with new password should succeed: %v", err)
+	}
+	_, err = svc.Login(context.Background(), auth.LoginRequest{
+		Identifier: "integration@example.com", Password: "Integrate1",
+	})
+	assertErrCode(t, err, apperror.ErrUnauthorized)
+}
+
+// TestIntegration_ChangePassword_WrongCurrent asserts a wrong current password
+// is rejected and the credential is left unchanged.
+func TestIntegration_ChangePassword_WrongCurrent(t *testing.T) {
+	svc, _ := integrationSvc(t)
+	reg := mustRegister(t, svc)
+
+	_, err := svc.ChangePassword(context.Background(), reg.User.ID, auth.ChangePasswordRequest{
+		CurrentPassword: "WrongPass1",
+		NewPassword:     "NewIntegrate1",
+		ConfirmPassword: "NewIntegrate1",
+	})
+	assertErrCode(t, err, apperror.ErrUnauthorized)
+
+	// Original password must still work.
+	if _, err := svc.Login(context.Background(), auth.LoginRequest{
+		Identifier: "integration@example.com", Password: "Integrate1",
+	}); err != nil {
+		t.Fatalf("original password should still work after a failed change: %v", err)
+	}
+}

@@ -31,6 +31,13 @@ func SendVerificationEmail(to, verifyURL, smtpDSN string) error {
 	return send(smtpDSN, to, "Verify your Nicoflow email", buildVerificationEmail(verifyURL))
 }
 
+// SendPasswordChanged notifies the user that their account password was
+// changed. Defense-in-depth: if the change wasn't them, they learn immediately
+// and can recover the account. smtpDSN format: smtp://user:pass@host:port
+func SendPasswordChanged(to, smtpDSN string) error {
+	return send(smtpDSN, to, "Your Nicoflow password was changed", buildPasswordChangedEmail())
+}
+
 // send performs a timeout-bounded SMTP delivery. Unlike smtp.SendMail it dials
 // with a deadline and sets a connection-wide deadline covering the whole
 // exchange, so a hung host cannot block the caller indefinitely. It negotiates
@@ -131,6 +138,16 @@ func buildVerificationEmail(verifyURL string) string {
 		`<p>Click the button below to confirm your email address. This link expires in <strong>24 hours</strong>.</p>`,
 		`<a href="` + verifyURL + `" style="display:inline-block;padding:12px 24px;background:#6366f1;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold">Verify email</a>`,
 		`<p style="color:#6b7280;font-size:13px;margin-top:24px">If you didn't create a Nicoflow account, you can safely ignore this email.</p>`,
+		`</body></html>`,
+	}, "\n")
+}
+
+func buildPasswordChangedEmail() string {
+	return strings.Join([]string{
+		`<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">`,
+		`<h2>Your Nicoflow password was changed</h2>`,
+		`<p>The password on your Nicoflow account was just changed. All other devices have been signed out.</p>`,
+		`<p style="color:#6b7280;font-size:13px;margin-top:24px">If this wasn't you, reset your password immediately and contact support.</p>`,
 		`</body></html>`,
 	}, "\n")
 }
