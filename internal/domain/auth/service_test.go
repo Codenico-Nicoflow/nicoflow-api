@@ -758,6 +758,11 @@ func TestChangePassword(t *testing.T) {
 			req:     auth.ChangePasswordRequest{CurrentPassword: "Secret123", NewPassword: "UPPERCASE1", ConfirmPassword: "UPPERCASE1"},
 			wantErr: apperror.ErrWeakPassword,
 		},
+		{
+			name:    "new password same as current",
+			req:     auth.ChangePasswordRequest{CurrentPassword: "Secret123", NewPassword: "Secret123", ConfirmPassword: "Secret123"},
+			wantErr: apperror.ErrInvalidInput,
+		},
 	}
 
 	for _, tt := range tests {
@@ -784,6 +789,41 @@ func TestChangePassword(t *testing.T) {
 				t.Fatalf("expected a fresh token pair, got token=%q refresh=%q", resp.Token, resp.RefreshToken)
 			}
 		})
+	}
+}
+
+// TestChangePassword_SameAsCurrent_NoWrite asserts a no-op change (new == current)
+// is rejected before any write: the password is not re-hashed/stored and no
+// refresh tokens are revoked.
+func TestChangePassword_SameAsCurrent_NoWrite(t *testing.T) {
+	repo := userWithPasswordRepo()
+	updated := false
+	repo.updatePasswordFn = func(_ context.Context, _, _ string) error {
+		updated = true
+		return nil
+	}
+	revoked := false
+	repo.deleteAllRefreshTokensFn = func(_ context.Context, _ string) error {
+		revoked = true
+		return nil
+	}
+	svc := auth.NewService(repo, testCfg())
+
+	_, err := svc.ChangePassword(context.Background(), "usr_abc123", auth.ChangePasswordRequest{
+		CurrentPassword: "Secret123",
+		NewPassword:     "Secret123",
+		ConfirmPassword: "Secret123",
+	})
+
+	var ae *apperror.AppError
+	if !errors.As(err, &ae) || ae.Code != apperror.ErrInvalidInput {
+		t.Fatalf("expected INVALID_INPUT, got %v", err)
+	}
+	if updated {
+		t.Error("password was written despite being unchanged")
+	}
+	if revoked {
+		t.Error("refresh tokens were revoked despite no change")
 	}
 }
 
