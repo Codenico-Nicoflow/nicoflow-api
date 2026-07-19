@@ -31,9 +31,13 @@ type Config struct {
 	S3Bucket          string
 	CORSOrigins       string
 	TrustedProxyCIDRs string
-	AppEnv            string
-	Port              string
-	LogLevel          string
+	// RateLimitBypassToken lets the E2E suite opt out of rate limiting: a request
+	// carrying X-E2E-Bypass equal to this value skips the IP/user limiters. Only
+	// set on staging (never prod). Unset ⇒ no bypass, limits always apply.
+	RateLimitBypassToken string
+	AppEnv               string
+	Port                 string
+	LogLevel             string
 	// SkipMigrations disables the run-on-boot migration step (default false).
 	SkipMigrations bool
 	MinIOEndpoint  string
@@ -89,6 +93,7 @@ func Load() Config {
 		S3Bucket:                 os.Getenv("S3_BUCKET_NAME"),
 		CORSOrigins:              os.Getenv("CORS_ORIGINS"),
 		TrustedProxyCIDRs:        os.Getenv("TRUSTED_PROXY"),
+		RateLimitBypassToken:     os.Getenv("RATE_LIMIT_BYPASS_TOKEN"),
 		AppEnv:                   os.Getenv("APP_ENV"),
 		Port:                     port,
 		LogLevel:                 logLevel,
