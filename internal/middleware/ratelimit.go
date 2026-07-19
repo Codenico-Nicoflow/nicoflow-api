@@ -26,7 +26,7 @@ func SetRateLimitBypassToken(token string) {
 	rateLimitBypassToken = token
 }
 
-const bypassHeader = "X-E2E-Bypass"
+const bypassHeader = "X-E2E-Bypass" // #nosec G101 -- header name, not a credential
 
 type limiterEntry struct {
 	limiter  *rate.Limiter
