@@ -77,6 +77,73 @@ func TestParseCIDRs_SkipsInvalid(t *testing.T) {
 	}
 }
 
+func TestRateLimit_BypassToken(t *testing.T) {
+	SetRateLimitBypassToken("secret-token")
+	t.Cleanup(func() { SetRateLimitBypassToken("") })
+
+	// A 1/min limiter would 429 the 2nd request; the bypass header must skip it.
+	mw := RateLimitIP(1, 1, nil)
+	var called int
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	for i := range 5 {
+		r := req("203.0.113.9:1111", "")
+		r.Header.Set(bypassHeader, "secret-token")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("bypass #%d: status = %d, want 204 (limiter skipped)", i, rec.Code)
+		}
+	}
+	if called != 5 {
+		t.Errorf("handler called %d times, want 5 — bypass must skip the limiter", called)
+	}
+}
+
+func TestRateLimit_WrongBypassToken_StillLimited(t *testing.T) {
+	SetRateLimitBypassToken("secret-token")
+	t.Cleanup(func() { SetRateLimitBypassToken("") })
+
+	mw := RateLimitIP(1, 1, nil)
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+
+	// First passes (burst 1), second must 429 — a wrong token grants no bypass.
+	statuses := make([]int, 2)
+	for i := range 2 {
+		r := req("203.0.113.10:2222", "")
+		r.Header.Set(bypassHeader, "wrong")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		statuses[i] = rec.Code
+	}
+	if statuses[0] != http.StatusNoContent || statuses[1] != http.StatusTooManyRequests {
+		t.Errorf("statuses = %v, want [204 429] — wrong token must not bypass", statuses)
+	}
+}
+
+func TestRateLimit_BypassDisabledWhenUnset(t *testing.T) {
+	SetRateLimitBypassToken("") // disabled
+
+	mw := RateLimitIP(1, 1, nil)
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+
+	// Even with a header present, no configured token ⇒ limiter still applies.
+	statuses := make([]int, 2)
+	for i := range 2 {
+		r := req("203.0.113.11:3333", "")
+		r.Header.Set(bypassHeader, "anything")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		statuses[i] = rec.Code
+	}
+	if statuses[0] != http.StatusNoContent || statuses[1] != http.StatusTooManyRequests {
+		t.Errorf("statuses = %v, want [204 429] — bypass must be off when unset", statuses)
+	}
+}
+
 func TestRateLimit_SkipsOptionsPreflight(t *testing.T) {
 	// A 1/min limiter would 429 the 2nd request; OPTIONS must bypass it entirely.
 	mw := RateLimitIP(1, 1, nil)

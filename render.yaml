@@ -72,6 +72,11 @@ services:
       # Exact Vercel staging origin, no trailing slash, no wildcard (must match the FE origin):
       - key: CORS_ORIGINS
         sync: false
+      # E2E rate-limit bypass token (staging only). A request with header
+      # `X-E2E-Bypass: <this>` skips the rate limiters so the live E2E suite
+      # isn't throttled. NEVER set this on production. Unset ⇒ no bypass.
+      - key: RATE_LIMIT_BYPASS_TOKEN
+        sync: false
       # Same Vercel origin — used to build verify-email / reset-password links:
       - key: APP_BASE_URL
         sync: false

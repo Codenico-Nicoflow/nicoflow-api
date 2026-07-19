@@ -55,6 +55,7 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 	r.Use(mw.CORS(cfg.CORSOrigins))
 	// 6. Rate limit by IP (global)
 	trustedProxies := splitCSV(cfg.TrustedProxyCIDRs)
+	mw.SetRateLimitBypassToken(cfg.RateLimitBypassToken)
 	r.Use(mw.RateLimitIP(100, 20, trustedProxies))
 
 	// ── Public routes ──────────────────────────────────────────────────────────

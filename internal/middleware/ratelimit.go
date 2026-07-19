@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"math"
 	"net"
@@ -14,6 +15,18 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
 	"github.com/nicoflow/nicoflow-api/pkg/respond"
 )
+
+// rateLimitBypassToken, when non-empty, lets a request carrying a matching
+// X-E2E-Bypass header skip rate limiting. Set once at startup via
+// SetRateLimitBypassToken (from config); only configured on staging, never prod.
+var rateLimitBypassToken string
+
+// SetRateLimitBypassToken configures the E2E rate-limit bypass. Empty ⇒ disabled.
+func SetRateLimitBypassToken(token string) {
+	rateLimitBypassToken = token
+}
+
+const bypassHeader = "X-E2E-Bypass"
 
 type limiterEntry struct {
 	limiter  *rate.Limiter
@@ -75,6 +88,15 @@ func rateLimitMiddleware(store *limiterStore, keyFn func(*http.Request) string) 
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Never throttle CORS preflights — a 429 lacks ACAO and looks like a CORS error.
 			if r.Method == http.MethodOptions {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// E2E bypass: a correct X-E2E-Bypass token skips the limiter entirely.
+			// Only active when a token is configured (staging only, never prod).
+			if rateLimitBypassToken != "" && subtle.ConstantTimeCompare(
+				[]byte(r.Header.Get(bypassHeader)), []byte(rateLimitBypassToken),
+			) == 1 {
 				next.ServeHTTP(w, r)
 				return
 			}
