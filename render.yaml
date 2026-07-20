@@ -96,113 +96,27 @@ services:
       - key: VAPID_SUBJECT
         sync: false
 
-  # ── Due-date reminder sweep (E-020) ─────────────────────────────────────────
-  # Hourly cron that POSTs the internal endpoint; the sweep itself decides which
-  # users are at their local 08:00. -f makes a non-2xx response fail the run (so
-  # Render surfaces it). API_HOST is wired from the web service; CRON_SECRET must
-  # match the web service's value (set the same secret on both in the dashboard).
+  # ── Notification sweeps (E-020 / E-025) ─────────────────────────────────────
+  # One hourly cron drives all five sweep endpoints in sequence. Each sweep decides
+  # itself which users are in their local reminder window and dedupes per window, so
+  # hourly invocation is safe and idempotent. Collapsed from five separate cron
+  # services into one to stay at a single $1/month floor instead of five.
+  #
+  # Each call is -fsS so a non-2xx surfaces the run as failed in Render; the loop
+  # exits non-zero on the first failing endpoint. API_HOST is wired from the web
+  # service; CRON_SECRET must match the web service's value (set both in dashboard).
   - type: cron
-    name: nicoflow-due-notify-staging
+    name: nicoflow-notify-staging
     runtime: image
     image:
       url: docker.io/curlimages/curl:8.11.1
     region: frankfurt
     schedule: "0 * * * *"
     startCommand: >
-      curl -fsS -X POST "https://$API_HOST/internal/jobs/due-notify"
-      -H "X-Internal-Token: $CRON_SECRET"
-    envVars:
-      - key: API_HOST
-        fromService:
-          name: nicoflow-api-staging
-          type: web
-          property: host
-      - key: CRON_SECRET
-        sync: false
-
-  # ── Overdue-task reminder sweep (E-025 / NIC-1566) ──────────────────────────
-  # Hourly cron; the sweep fires only for users at their local reminder hour and
-  # dedupes per task/day, so hourly invocation is safe. Same guard + host wiring
-  # as the due-notify cron above.
-  - type: cron
-    name: nicoflow-overdue-staging
-    runtime: image
-    image:
-      url: docker.io/curlimages/curl:8.11.1
-    region: frankfurt
-    schedule: "0 * * * *"
-    startCommand: >
-      curl -fsS -X POST "https://$API_HOST/internal/jobs/overdue"
-      -H "X-Internal-Token: $CRON_SECRET"
-    envVars:
-      - key: API_HOST
-        fromService:
-          name: nicoflow-api-staging
-          type: web
-          property: host
-      - key: CRON_SECRET
-        sync: false
-
-  # ── Start-of-day sweep (E-025 / NIC-1570) ───────────────────────────────────
-  # Hourly cron; the sweep fires only for users at their local 08:00 and dedupes
-  # per user/day, so hourly invocation is safe. Emits the FREE scheduled-today
-  # summary and the Pro plan-your-day nudge. Same guard + host wiring as above.
-  - type: cron
-    name: nicoflow-day-start-staging
-    runtime: image
-    image:
-      url: docker.io/curlimages/curl:8.11.1
-    region: frankfurt
-    schedule: "0 * * * *"
-    startCommand: >
-      curl -fsS -X POST "https://$API_HOST/internal/jobs/day-start"
-      -H "X-Internal-Token: $CRON_SECRET"
-    envVars:
-      - key: API_HOST
-        fromService:
-          name: nicoflow-api-staging
-          type: web
-          property: host
-      - key: CRON_SECRET
-        sync: false
-
-  # ── Inbox nudge sweep (E-025 / NIC-1571) ────────────────────────────────────
-  # Hourly cron; fires only for Pro users at their local reminder hour. Emits the
-  # daily unprocessed-count nudge and the weekly stale-capture warning, both
-  # deduped per window, so hourly invocation is safe. Same guard + host wiring.
-  - type: cron
-    name: nicoflow-inbox-staging
-    runtime: image
-    image:
-      url: docker.io/curlimages/curl:8.11.1
-    region: frankfurt
-    schedule: "0 * * * *"
-    startCommand: >
-      curl -fsS -X POST "https://$API_HOST/internal/jobs/inbox"
-      -H "X-Internal-Token: $CRON_SECRET"
-    envVars:
-      - key: API_HOST
-        fromService:
-          name: nicoflow-api-staging
-          type: web
-          property: host
-      - key: CRON_SECRET
-        sync: false
-
-  # ── End-of-day summary + streak sweep (E-025 / NIC-1572) ─────────────────────
-  # Hourly cron; fires only for Pro users at their local 20:00. Emits the daily
-  # completion summary and a streak-milestone celebration, both deduped, so hourly
-  # invocation is safe. Same guard + host wiring.
-  - type: cron
-    name: nicoflow-summary-staging
-    runtime: image
-    image:
-      url: docker.io/curlimages/curl:8.11.1
-    region: frankfurt
-    schedule: "0 * * * *"
-    startCommand: >
-      curl -fsS -X POST "https://$API_HOST/internal/jobs/summary"
-      -H "X-Internal-Token: $CRON_SECRET"
+      for job in due-notify overdue day-start inbox summary; do
+      curl -fsS -X POST "https://$API_HOST/internal/jobs/$job"
+      -H "X-Internal-Token: $CRON_SECRET" || exit 1;
+      done
     envVars:
       - key: API_HOST
         fromService:
