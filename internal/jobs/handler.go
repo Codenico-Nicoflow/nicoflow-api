@@ -82,3 +82,35 @@ func (h *Handler) Inbox(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Summary(w http.ResponseWriter, r *http.Request) {
 	runSweep(w, r, "summary", h.summaryNotifier.Run)
 }
+
+// RunAll runs every sweep in sequence and returns a per-sweep breakdown map. The
+// single hourly Render cron hits this one endpoint instead of curl-looping over
+// five (which a shell-less cron command can't do reliably). Each sweep is
+// idempotent, so re-running the whole set within an hour is safe. ?dryRun=true is
+// propagated to every sweep. One sweep's failure aborts with 500; the rest are
+// idempotent and pick up on the next tick.
+func (h *Handler) RunAll(w http.ResponseWriter, r *http.Request) {
+	dryRun := r.URL.Query().Get("dryRun") == "true"
+	sweeps := []struct {
+		name string
+		run  runFunc
+	}{
+		{"due-date", h.dueNotifier.Run},
+		{"overdue", h.overdueNotifier.Run},
+		{"day-start", h.dayStartNotifier.Run},
+		{"inbox", h.inboxNotifier.Run},
+		{"summary", h.summaryNotifier.Run},
+	}
+
+	results := make(map[string]*SweepBreakdown, len(sweeps))
+	for _, s := range sweeps {
+		breakdown, err := s.run(r.Context(), dryRun)
+		if err != nil {
+			log.Error().Err(err).Str("request_id", mw.GetRequestID(r.Context())).Msgf("%s sweep failed", s.name)
+			respond.Error(w, http.StatusInternalServerError, apperror.ErrInternalServerError, "sweep failed")
+			return
+		}
+		results[s.name] = breakdown
+	}
+	respond.JSON(w, http.StatusOK, results)
+}
