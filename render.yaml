@@ -17,10 +17,10 @@ databases:
     # Region MUST match the web service below — the API connects over Render's private
     # network using the DB's internal hostname, which only resolves within the same region.
     region: frankfurt
-    # Starter (~$7/mo, persistent). Was `free` originally; upgraded in the dashboard,
-    # so the blueprint must declare `starter` too — a `free` here conflicts with the
-    # live paid DB and fails the blueprint sync.
-    plan: starter
+    # Paid persistent tier. Legacy plan names (`starter`/`standard`/`pro`) are dead
+    # for new Postgres — must use the flexible instance types (`basic-*`/`pro-*`).
+    # Matches the dashboard instance type (Basic-256mb); a mismatch fails the sync.
+    plan: basic-256mb
     postgresMajorVersion: "16"
 
 services:
