@@ -115,11 +115,11 @@ services:
     plan: starter
     region: frankfurt
     schedule: "0 * * * *"
-    startCommand: >
-      for job in due-notify overdue day-start inbox summary; do
+    dockerCommand: >
+      sh -c 'for job in due-notify overdue day-start inbox summary; do
       curl -fsS -X POST "https://$API_HOST/internal/jobs/$job"
       -H "X-Internal-Token: $CRON_SECRET" || exit 1;
-      done
+      done'
     envVars:
       - key: API_HOST
         fromService:
