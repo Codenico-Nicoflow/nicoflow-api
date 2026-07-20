@@ -99,14 +99,16 @@ services:
         sync: false
 
   # ── Notification sweeps (E-020 / E-025) ─────────────────────────────────────
-  # One hourly cron drives all five sweep endpoints in sequence. Each sweep decides
-  # itself which users are in their local reminder window and dedupes per window, so
-  # hourly invocation is safe and idempotent. Collapsed from five separate cron
-  # services into one to stay at a single $1/month floor instead of five.
+  # One hourly cron hits the /internal/jobs/run-all endpoint, which runs all five
+  # sweeps server-side in sequence. Each sweep decides which users are in their local
+  # reminder window and dedupes per window, so hourly invocation is safe/idempotent.
+  # One combined cron = a single $1/month floor instead of five.
   #
-  # Each call is -fsS so a non-2xx surfaces the run as failed in Render; the loop
-  # exits non-zero on the first failing endpoint. API_HOST is wired from the web
-  # service; CRON_SECRET must match the web service's value (set both in dashboard).
+  # The command is a SINGLE curl (no shell loop): Render's dockerCommand tokenises on
+  # whitespace and mangled a quoted `sh -c 'for ...; done'` script (exit 127). One
+  # curl has no shell constructs to break, so the curl image works as-is. -f fails the
+  # run on any non-2xx. API_HOST is wired from the web service; CRON_SECRET must match
+  # the web service's value (set on the cron service in the dashboard).
   - type: cron
     name: nicoflow-notify-staging
     runtime: image
@@ -115,11 +117,7 @@ services:
     plan: starter
     region: frankfurt
     schedule: "0 * * * *"
-    dockerCommand: >
-      sh -c 'for job in due-notify overdue day-start inbox summary; do
-      curl -fsS -X POST "https://$API_HOST/internal/jobs/$job"
-      -H "X-Internal-Token: $CRON_SECRET" || exit 1;
-      done'
+    dockerCommand: 'curl -fsS -X POST "https://$API_HOST/internal/jobs/run-all" -H "X-Internal-Token: $CRON_SECRET"'
     envVars:
       - key: API_HOST
         fromService:
