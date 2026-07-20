@@ -17,10 +17,10 @@ databases:
     # Region MUST match the web service below — the API connects over Render's private
     # network using the DB's internal hostname, which only resolves within the same region.
     region: frankfurt
-    # Free Postgres expires (~30 days) and is then deleted. Plan: upgrade to `starter`
-    # (~$7/mo, persistent) before expiry if staging is still in use — one-line change,
-    # no rebuild/migration needed. Until then it holds only throwaway test data.
-    plan: free
+    # Starter (~$7/mo, persistent). Was `free` originally; upgraded in the dashboard,
+    # so the blueprint must declare `starter` too — a `free` here conflicts with the
+    # live paid DB and fails the blueprint sync.
+    plan: starter
     postgresMajorVersion: "16"
 
 services:
@@ -28,7 +28,9 @@ services:
     name: nicoflow-api-staging
     runtime: docker
     dockerfilePath: ./Dockerfile
-    plan: free
+    # Starter (~$7/mo). Was `free`; upgraded in the dashboard, so the blueprint must
+    # match — a `free` here conflicts with the live paid service and fails the sync.
+    plan: starter
     # Must match the database region above so the internal DB hostname resolves.
     region: frankfurt
     branch: staging
@@ -110,6 +112,7 @@ services:
     runtime: image
     image:
       url: docker.io/curlimages/curl:8.11.1
+    plan: starter
     region: frankfurt
     schedule: "0 * * * *"
     startCommand: >
