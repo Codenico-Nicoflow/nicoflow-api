@@ -119,10 +119,11 @@ services:
     schedule: "0 * * * *"
     dockerCommand: 'curl -fsS -X POST "https://$API_HOST/internal/jobs/run-all" -H "X-Internal-Token: $CRON_SECRET"'
     envVars:
+      # Public hostname, hardcoded — NOT fromService(property: host), which returns the
+      # PRIVATE-network hostname that a cron job can't route to (curl exit 7, connect
+      # fails in ~2ms). There is no fromService property for the public .onrender.com
+      # host, so it's a literal here. Update if the service's public host changes.
       - key: API_HOST
-        fromService:
-          name: nicoflow-api-staging
-          type: web
-          property: host
+        value: nicoflow-api-staging.onrender.com
       - key: CRON_SECRET
         sync: false
