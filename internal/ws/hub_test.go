@@ -2,8 +2,14 @@ package ws
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
+
+	"github.com/nicoflow/nicoflow-api/pkg/jwtutil"
 )
 
 // newTestClient builds a Client with just a send channel — enough to exercise the
@@ -88,5 +94,37 @@ func TestHub_BroadcastToUser_DropsSlowClient(t *testing.T) {
 	h.mu.RUnlock()
 	if stillRegistered {
 		t.Error("slow client was not dropped")
+	}
+}
+
+// CloseAll must send each live connection a clean 1000 close frame (not just drop
+// the socket), so a graceful shutdown ends connections cleanly.
+func TestHub_CloseAll_SendsNormalClosure(t *testing.T) {
+	hub := NewHub()
+	h := NewHandler(hub, testSecret, "")
+	srv := httptest.NewServer(http.HandlerFunc(h.Upgrade))
+	defer srv.Close()
+
+	token, err := jwtutil.Issue("usr_1", "a@b.co", "free", testSecret, time.Minute)
+	if err != nil {
+		t.Fatalf("issue token: %v", err)
+	}
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(srv.URL, token), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	waitFor(t, func() bool {
+		hub.mu.RLock()
+		defer hub.mu.RUnlock()
+		return len(hub.clients["usr_1"]) == 1
+	}, "client registered")
+
+	hub.CloseAll()
+
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	if _, _, readErr := conn.ReadMessage(); !websocket.IsCloseError(readErr, websocket.CloseNormalClosure) {
+		t.Errorf("close code = %v, want 1000 CloseNormalClosure", readErr)
 	}
 }
