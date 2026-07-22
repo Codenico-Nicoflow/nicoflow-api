@@ -164,9 +164,13 @@ func main() {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	// Close WS connections first: their read/write pumps run for the connection's
+	// lifetime, so srv.Shutdown would otherwise block the full timeout waiting on
+	// them. CloseAll sends each a clean close frame and lets the pumps exit, so the
+	// HTTP drain below finishes fast.
+	wsHub.CloseAll()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Error().Err(err).Msg("graceful shutdown timed out")
 	}
-	wsHub.CloseAll()
 	log.Info().Msg("server shut down cleanly")
 }
