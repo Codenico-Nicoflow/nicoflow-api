@@ -36,12 +36,14 @@ type Service interface {
 }
 
 type service struct {
-	repo Repository
+	repo        Repository
+	broadcaster Broadcaster // nil disables emission
 }
 
-// NewService creates a new area Service.
-func NewService(repo Repository) Service {
-	return &service{repo: repo}
+// NewService creates a new area Service. broadcaster may be nil (real-time
+// emission disabled); pass the ws adapter to light up live updates.
+func NewService(repo Repository, broadcaster Broadcaster) Service {
+	return &service{repo: repo, broadcaster: broadcaster}
 }
 
 func (s *service) List(ctx context.Context, userID string, f ListAreasFilter) (ListAreasResponse, error) {
@@ -124,7 +126,9 @@ func (s *service) Create(ctx context.Context, userID, plan string, req CreateAre
 	if err != nil {
 		return AreaView{}, err
 	}
-	return areaToView(a), nil
+	view := areaToView(a)
+	s.emit(userID, Event{Type: EventCreated, Payload: view})
+	return view, nil
 }
 
 func (s *service) Update(ctx context.Context, userID, id string, req UpdateAreaRequest) (AreaView, error) {
@@ -148,11 +152,17 @@ func (s *service) Update(ctx context.Context, userID, id string, req UpdateAreaR
 	if err != nil {
 		return AreaView{}, err
 	}
-	return areaToView(a), nil
+	view := areaToView(a)
+	s.emit(userID, Event{Type: EventUpdated, Payload: view})
+	return view, nil
 }
 
 func (s *service) Delete(ctx context.Context, userID, id string) error {
-	return s.repo.Delete(ctx, userID, id)
+	if err := s.repo.Delete(ctx, userID, id); err != nil {
+		return err
+	}
+	s.emit(userID, Event{Type: EventDeleted, Payload: Ref{ID: id}})
+	return nil
 }
 
 func (s *service) Reorder(ctx context.Context, userID string, req ReorderRequest) (int, error) {

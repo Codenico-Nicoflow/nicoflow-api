@@ -42,6 +42,10 @@ type Service interface {
 	ListByProject(ctx context.Context, userID, projectID string, f ListTasksFilter) (ListTasksResponse, error)
 	Get(ctx context.Context, userID, id string) (TaskView, error)
 	Create(ctx context.Context, userID, projectID, plan string, req CreateTaskRequest) (TaskView, error)
+	// CreateWithoutEvent is Create minus the task.created emit — for callers that
+	// compose the create into a larger operation (bucket process) and emit the
+	// event themselves only once the whole operation succeeds (both-or-neither).
+	CreateWithoutEvent(ctx context.Context, userID, projectID, plan string, req CreateTaskRequest) (TaskView, error)
 	Update(ctx context.Context, userID, id, plan string, req UpdateTaskRequest) (TaskView, error)
 	Delete(ctx context.Context, userID, id string) error
 	SetStatus(ctx context.Context, userID, id, plan, status string) (TaskView, error)
@@ -52,15 +56,18 @@ type Service interface {
 }
 
 type service struct {
-	repo  Repository
-	now   func() time.Time // injectable clock — Focus/Time-Spread read time only through this
-	notif notifier         // best-effort notification emitter; nil disables emission
+	repo        Repository
+	now         func() time.Time // injectable clock — Focus/Time-Spread read time only through this
+	notif       notifier         // best-effort notification emitter; nil disables emission
+	broadcaster Broadcaster      // real-time WS emitter; nil disables emission
 }
 
 // NewService creates a new task service with a real clock. notif may be nil
 // (notifications are best-effort); pass notification.Service to enable emission.
-func NewService(repo Repository, notif notifier) Service {
-	return &service{repo: repo, now: time.Now, notif: notif}
+// broadcaster may be nil (real-time emission disabled); pass the ws adapter to
+// light up live updates.
+func NewService(repo Repository, notif notifier, broadcaster Broadcaster) Service {
+	return &service{repo: repo, now: time.Now, notif: notif, broadcaster: broadcaster}
 }
 
 // NewServiceWithClock is like NewService but with an injected clock, for
@@ -108,6 +115,15 @@ func (s *service) Get(ctx context.Context, userID, id string) (TaskView, error) 
 }
 
 func (s *service) Create(ctx context.Context, userID, projectID, plan string, req CreateTaskRequest) (TaskView, error) {
+	view, err := s.CreateWithoutEvent(ctx, userID, projectID, plan, req)
+	if err != nil {
+		return TaskView{}, err
+	}
+	s.emit(userID, Event{Type: EventCreated, Payload: view})
+	return view, nil
+}
+
+func (s *service) CreateWithoutEvent(ctx context.Context, userID, projectID, plan string, req CreateTaskRequest) (TaskView, error) {
 	req, rollsOver, err := normalizeCreate(req)
 	if err != nil {
 		return TaskView{}, err
@@ -160,6 +176,18 @@ func (s *service) Create(ctx context.Context, userID, projectID, plan string, re
 }
 
 func (s *service) Update(ctx context.Context, userID, id, plan string, req UpdateTaskRequest) (TaskView, error) {
+	view, err := s.update(ctx, userID, id, plan, req)
+	if err != nil {
+		return TaskView{}, err
+	}
+	s.emit(userID, Event{Type: EventUpdated, Payload: view})
+	return view, nil
+}
+
+// update is the shared PATCH body behind Update and SetStatus. It emits no
+// real-time event itself — the callers do, so the edit endpoint fires
+// task.updated and the status endpoint task.status_changed, never both.
+func (s *service) update(ctx context.Context, userID, id, plan string, req UpdateTaskRequest) (TaskView, error) {
 	if err := validateUpdate(&req); err != nil {
 		return TaskView{}, err
 	}
@@ -193,7 +221,11 @@ func (s *service) Update(ctx context.Context, userID, id, plan string, req Updat
 }
 
 func (s *service) Delete(ctx context.Context, userID, id string) error {
-	return s.repo.Delete(ctx, userID, id)
+	if err := s.repo.Delete(ctx, userID, id); err != nil {
+		return err
+	}
+	s.emit(userID, Event{Type: EventDeleted, Payload: Ref{ID: id}})
+	return nil
 }
 
 const (
@@ -253,7 +285,12 @@ func (s *service) SetStatus(ctx context.Context, userID, id, plan, status string
 	if status == "" {
 		return TaskView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "status is required")
 	}
-	return s.Update(ctx, userID, id, plan, UpdateTaskRequest{Status: &status})
+	view, err := s.update(ctx, userID, id, plan, UpdateTaskRequest{Status: &status})
+	if err != nil {
+		return TaskView{}, err
+	}
+	s.emit(userID, Event{Type: EventStatusChanged, Payload: view})
+	return view, nil
 }
 
 // validateScheduledFor rejects a non-ISO scheduledFor. It is a soft date
@@ -277,7 +314,9 @@ func (s *service) Schedule(ctx context.Context, userID, id string, req ScheduleR
 	if err != nil {
 		return TaskView{}, err
 	}
-	return TaskToView(t), nil
+	view := TaskToView(t)
+	s.emit(userID, Event{Type: EventUpdated, Payload: view})
+	return view, nil
 }
 
 // ReorderOne moves a task to a target order and re-packs its siblings within
@@ -290,7 +329,9 @@ func (s *service) ReorderOne(ctx context.Context, userID, id string, displayOrde
 	if err != nil {
 		return TaskView{}, err
 	}
-	return TaskToView(t), nil
+	view := TaskToView(t)
+	s.emit(userID, Event{Type: EventUpdated, Payload: view})
+	return view, nil
 }
 
 func (s *service) enforceTaskLimit(ctx context.Context, userID, projectID string) error {

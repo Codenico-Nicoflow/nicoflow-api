@@ -108,13 +108,13 @@ func newTaskServer(t *testing.T, plan string) taskEnv {
 	email := "user-" + sanitizeEmail(t.Name()) + "-" + plan + testEmailDomain
 	userID, token := insertUser(t, pool, email, plan)
 
-	taskSvc := task.NewService(task.NewRepository(pool), nil)
+	taskSvc := task.NewService(task.NewRepository(pool), nil, nil)
 	h := handler.Handlers{
 		Auth:    auth.NewHandler(auth.NewService(auth.NewRepository(pool), cfg), auth.HandlerConfig{}),
-		Area:    area.NewHandler(area.NewService(area.NewRepository(pool))),
-		Project: project.NewHandler(project.NewService(project.NewRepository(pool))),
-		Task:    task.NewHandler(taskSvc, task.NewSubtaskService(task.NewSubtaskRepository(pool))),
-		Bucket:  bucket.NewHandler(bucket.NewService(bucket.NewRepository(pool), taskSvc, nil)),
+		Area:    area.NewHandler(area.NewService(area.NewRepository(pool), nil)),
+		Project: project.NewHandler(project.NewService(project.NewRepository(pool), nil)),
+		Task:    task.NewHandler(taskSvc, task.NewSubtaskService(task.NewSubtaskRepository(pool), nil)),
+		Bucket:  bucket.NewHandler(bucket.NewService(bucket.NewRepository(pool), taskSvc, nil, nil)),
 		AI:      ai.NewHandler(ai.NewService(ai.NewRepository(pool))),
 		Billing: billing.NewHandler(billing.NewService(billing.NewRepository(pool))),
 	}

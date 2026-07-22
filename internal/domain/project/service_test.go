@@ -177,7 +177,7 @@ func TestProjectService_Create(t *testing.T) {
 					return tt.createProject, nil
 				},
 			}
-			svc := project.NewService(repo)
+			svc := project.NewService(repo, nil)
 			view, err := svc.Create(context.Background(), "user1", "area1", tt.plan, tt.req)
 
 			if tt.wantCode != "" {
@@ -259,7 +259,7 @@ func TestProjectService_Update(t *testing.T) {
 					return tt.repoProj, tt.repoErr
 				},
 			}
-			svc := project.NewService(repo)
+			svc := project.NewService(repo, nil)
 			_, err := svc.Update(context.Background(), "user1", "p1", tt.req)
 
 			if tt.wantCode != "" {
@@ -316,7 +316,7 @@ func TestProjectService_Reorder(t *testing.T) {
 					return tt.repoResult, tt.repoErr
 				},
 			}
-			svc := project.NewService(repo)
+			svc := project.NewService(repo, nil)
 			n, err := svc.Reorder(context.Background(), "user1", tt.req)
 
 			if tt.wantCode != "" {

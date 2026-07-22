@@ -64,7 +64,7 @@ func TestUpdate_EmitsOnDoneEdge(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fn := &fakeNotifier{}
-			svc := NewService(updateRepo(tt.from, tt.to, tt.remaining), fn)
+			svc := NewService(updateRepo(tt.from, tt.to, tt.remaining), fn, nil)
 			status := tt.to
 			if _, err := svc.Update(context.Background(), "u1", "t1", "pro", UpdateTaskRequest{Status: &status}); err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -84,7 +84,7 @@ func TestUpdate_EmitsOnDoneEdge(t *testing.T) {
 
 func TestUpdate_TaskCompletedMetadataAndDedupe(t *testing.T) {
 	fn := &fakeNotifier{}
-	svc := NewService(updateRepo("active", "done", 3), fn)
+	svc := NewService(updateRepo("active", "done", 3), fn, nil)
 	status := "done"
 	if _, err := svc.Update(context.Background(), "u1", "t1", "pro", UpdateTaskRequest{Status: &status}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -104,7 +104,7 @@ func TestUpdate_TaskCompletedMetadataAndDedupe(t *testing.T) {
 // AC2: a notifier error must never fail the mutation.
 func TestUpdate_NotifyErrorDoesNotFailMutation(t *testing.T) {
 	fn := &fakeNotifier{failErr: errors.New("boom")}
-	svc := NewService(updateRepo("active", "done", 0), fn)
+	svc := NewService(updateRepo("active", "done", 0), fn, nil)
 	status := "done"
 	view, err := svc.Update(context.Background(), "u1", "t1", "pro", UpdateTaskRequest{Status: &status})
 	if err != nil {
@@ -117,7 +117,7 @@ func TestUpdate_NotifyErrorDoesNotFailMutation(t *testing.T) {
 
 // A nil notifier is a safe no-op (notifications disabled).
 func TestUpdate_NilNotifierIsNoop(t *testing.T) {
-	svc := NewService(updateRepo("active", "done", 0), nil)
+	svc := NewService(updateRepo("active", "done", 0), nil, nil)
 	status := "done"
 	if _, err := svc.Update(context.Background(), "u1", "t1", "pro", UpdateTaskRequest{Status: &status}); err != nil {
 		t.Fatalf("unexpected error: %v", err)

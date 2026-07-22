@@ -85,21 +85,22 @@ func main() {
 	secureCookie := cfg.AppEnv == "production" || cfg.AppEnv == "staging"
 	cookieCfg := auth.HandlerConfig{SecureCookie: secureCookie, CrossSite: cfg.CookieCrossSite}
 
+	// WebSocket hub — in-process, single instance (no Redis in v1). The per-domain
+	// adapters below inject it as each service's Broadcaster, so every successful
+	// mutation fans out a full-payload event to the user's live connections
+	// (NIC-1588 notifications, NIC-1629 domain events).
+	wsHub := ws.NewHub()
+
 	// Area domain.
 	areaRepo := area.NewRepository(pool)
-	areaSvc := area.NewService(areaRepo)
+	areaSvc := area.NewService(areaRepo, ws.NewAreaBroadcaster(wsHub))
 
 	// Project domain.
 	projectRepo := project.NewRepository(pool)
-	projectSvc := project.NewService(projectRepo)
+	projectSvc := project.NewService(projectRepo, ws.NewProjectBroadcaster(wsHub))
 
 	// Search — full-text across tasks, projects and areas.
 	searchSvc := search.NewService(search.NewRepository(pool))
-
-	// WebSocket hub — in-process, single instance (no Redis in v1). The notification
-	// The hub serves live WS connections; the adapter below injects it as the
-	// notification service's Broadcaster so notifications deliver instantly (NIC-1588).
-	wsHub := ws.NewHub()
 
 	// Notification domain. The ws adapter is the real-time Broadcaster: every
 	// created notification fans out over WS (fire-and-forget). Built before
@@ -117,12 +118,13 @@ func main() {
 	// Task domain (incl. subtasks). notificationSvc drives task_completed +
 	// project_completed real-time notifications (best-effort).
 	taskRepo := task.NewRepository(pool)
-	taskSvc := task.NewService(taskRepo, notificationSvc)
-	subtaskSvc := task.NewSubtaskService(task.NewSubtaskRepository(pool))
+	taskBroadcaster := ws.NewTaskBroadcaster(wsHub)
+	taskSvc := task.NewService(taskRepo, notificationSvc, taskBroadcaster)
+	subtaskSvc := task.NewSubtaskService(task.NewSubtaskRepository(pool), taskBroadcaster)
 
 	// Bucket (inbox) — process turns an item into a task via the task service;
 	// notificationSvc drives the Pro inbox_zero notification (best-effort).
-	bucketSvc := bucket.NewService(bucket.NewRepository(pool), taskSvc, notificationSvc)
+	bucketSvc := bucket.NewService(bucket.NewRepository(pool), taskSvc, notificationSvc, ws.NewBucketBroadcaster(wsHub))
 
 	// Sweep jobs — hourly, invoked by Render Cron Jobs via /internal/jobs/*.
 	jobsRepo := jobs.NewRepository(pool)

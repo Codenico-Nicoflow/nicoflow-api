@@ -95,13 +95,13 @@ func newBucketServer(t *testing.T, plan string) bucketEnv {
 	// Real notification service so bucket's inbox_zero path (and CountUnprocessed)
 	// runs end-to-end; broadcaster nil (poll-only in this epic).
 	notifSvc := notification.NewService(notification.NewRepository(pool), nil)
-	taskSvc := task.NewService(task.NewRepository(pool), notifSvc)
+	taskSvc := task.NewService(task.NewRepository(pool), notifSvc, nil)
 	h := handler.Handlers{
 		Auth:    auth.NewHandler(auth.NewService(auth.NewRepository(pool), cfg), auth.HandlerConfig{}),
-		Area:    area.NewHandler(area.NewService(area.NewRepository(pool))),
-		Project: project.NewHandler(project.NewService(project.NewRepository(pool))),
-		Task:    task.NewHandler(taskSvc, task.NewSubtaskService(task.NewSubtaskRepository(pool))),
-		Bucket:  bucket.NewHandler(bucket.NewService(bucket.NewRepository(pool), taskSvc, notifSvc)),
+		Area:    area.NewHandler(area.NewService(area.NewRepository(pool), nil)),
+		Project: project.NewHandler(project.NewService(project.NewRepository(pool), nil)),
+		Task:    task.NewHandler(taskSvc, task.NewSubtaskService(task.NewSubtaskRepository(pool), nil)),
+		Bucket:  bucket.NewHandler(bucket.NewService(bucket.NewRepository(pool), taskSvc, notifSvc, nil)),
 		AI:      ai.NewHandler(ai.NewService(ai.NewRepository(pool))),
 		Billing: billing.NewHandler(billing.NewService(billing.NewRepository(pool))),
 	}

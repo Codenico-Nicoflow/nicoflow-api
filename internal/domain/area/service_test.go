@@ -173,7 +173,7 @@ func TestAreaService_Create(t *testing.T) {
 					return tt.createArea, nil
 				},
 			}
-			svc := area.NewService(repo)
+			svc := area.NewService(repo, nil)
 			view, err := svc.Create(context.Background(), "user1", tt.plan, tt.req)
 
 			if tt.wantCode != "" {
@@ -246,7 +246,7 @@ func TestAreaService_Update(t *testing.T) {
 					return tt.repoArea, tt.repoErr
 				},
 			}
-			svc := area.NewService(repo)
+			svc := area.NewService(repo, nil)
 			_, err := svc.Update(context.Background(), "user1", "id1", tt.req)
 
 			if tt.wantCode != "" {
@@ -303,7 +303,7 @@ func TestAreaService_Reorder(t *testing.T) {
 					return tt.repoResult, tt.repoErr
 				},
 			}
-			svc := area.NewService(repo)
+			svc := area.NewService(repo, nil)
 			n, err := svc.Reorder(context.Background(), "user1", tt.req)
 
 			if tt.wantCode != "" {
