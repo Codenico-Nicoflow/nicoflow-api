@@ -11,6 +11,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/config"
 	"github.com/nicoflow/nicoflow-api/internal/domain/ai"
 	"github.com/nicoflow/nicoflow-api/internal/domain/area"
+	"github.com/nicoflow/nicoflow-api/internal/domain/attachment"
 	"github.com/nicoflow/nicoflow-api/internal/domain/auth"
 	"github.com/nicoflow/nicoflow-api/internal/domain/billing"
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
@@ -33,6 +34,7 @@ type Handlers struct {
 	AI           *ai.Handler
 	Billing      *billing.Handler
 	Search       *search.Handler
+	Attachment   *attachment.Handler
 	Notification *notification.Handler
 	Jobs         *jobs.Handler
 	WS           *ws.Handler
@@ -165,11 +167,14 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		r.Patch("/tasks/{taskId}/subtasks/{subtaskId}", h.Task.UpdateSubtask)
 		r.Delete("/tasks/{taskId}/subtasks/{subtaskId}", h.Task.DeleteSubtask)
 
-		// Attachments (task-scoped create/list + attachment-scoped download/delete)
-		r.Get("/tasks/{taskId}/attachments", h.Task.ListAttachments)
-		r.Post("/tasks/{taskId}/attachments", h.Task.CreateAttachment)
-		r.Get("/attachments/{id}/download", h.Task.DownloadAttachment)
-		r.Delete("/attachments/{id}", h.Task.DeleteAttachment)
+		// Attachments (E-024) — polymorphic-flat: owner is a {ownerType, ownerId}
+		// pair, not a nested path, so tasks (now) and notes (later) share one
+		// surface. Writes are Pro-gated in the service; reads + delete are open.
+		r.Post("/attachments/upload-url", h.Attachment.UploadURL)
+		r.Post("/attachments", h.Attachment.Confirm)
+		r.Get("/attachments", h.Attachment.List)
+		r.Get("/attachments/{id}/download-url", h.Attachment.DownloadURL)
+		r.Delete("/attachments/{id}", h.Attachment.Delete)
 
 		// Bucket (inbox)
 		r.Get("/bucket", h.Bucket.List)
