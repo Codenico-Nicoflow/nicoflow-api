@@ -11,6 +11,21 @@ import (
 	"github.com/nicoflow/nicoflow-api/pkg/respond"
 )
 
+// AttachmentGC runs the attachment garbage-collection sweep: orphan S3 objects
+// (never-confirmed uploads) and dead-owner rows. Defined here (the consumer) so
+// jobs never imports the attachment domain; the concrete is the attachment
+// service, injected at wire-up. Nil disables the GC step (feature off).
+type AttachmentGC interface {
+	RunGC(ctx context.Context) (GCSummary, error)
+}
+
+// GCSummary mirrors attachment.GCSummary — the small reap tally the GC sweep
+// returns (server-side log only, never user-facing).
+type GCSummary struct {
+	ObjectsDeleted int `json:"objectsDeleted"`
+	RowsDeleted    int `json:"rowsDeleted"`
+}
+
 // Handler exposes the internal job endpoints. These sit outside the public /v1
 // contract and are guarded by the InternalToken middleware, not JWT.
 type Handler struct {
@@ -19,16 +34,19 @@ type Handler struct {
 	dayStartNotifier *DayStartNotifier
 	inboxNotifier    *InboxNotifier
 	summaryNotifier  *SummaryNotifier
+	attachmentGC     AttachmentGC
 }
 
-// NewHandler builds the jobs Handler.
-func NewHandler(dueNotifier *DueDateNotifier, overdueNotifier *OverdueNotifier, dayStartNotifier *DayStartNotifier, inboxNotifier *InboxNotifier, summaryNotifier *SummaryNotifier) *Handler {
+// NewHandler builds the jobs Handler. attachmentGC may be nil (attachment
+// feature disabled) — the GC endpoint and run-all step then no-op.
+func NewHandler(dueNotifier *DueDateNotifier, overdueNotifier *OverdueNotifier, dayStartNotifier *DayStartNotifier, inboxNotifier *InboxNotifier, summaryNotifier *SummaryNotifier, attachmentGC AttachmentGC) *Handler {
 	return &Handler{
 		dueNotifier:      dueNotifier,
 		overdueNotifier:  overdueNotifier,
 		dayStartNotifier: dayStartNotifier,
 		inboxNotifier:    inboxNotifier,
 		summaryNotifier:  summaryNotifier,
+		attachmentGC:     attachmentGC,
 	}
 }
 
@@ -83,12 +101,39 @@ func (h *Handler) Summary(w http.ResponseWriter, r *http.Request) {
 	runSweep(w, r, "summary", h.summaryNotifier.Run)
 }
 
-// RunAll runs every sweep in sequence and returns a per-sweep breakdown map. The
-// single hourly Render cron hits this one endpoint instead of curl-looping over
-// five (which a shell-less cron command can't do reliably). Each sweep is
-// idempotent, so re-running the whole set within an hour is safe. ?dryRun=true is
-// propagated to every sweep. One sweep's failure aborts with 500; the rest are
-// idempotent and pick up on the next tick.
+// AttachmentGC runs one attachment garbage-collection sweep: it reaps orphan S3
+// objects (never-confirmed uploads) and dead-owner rows, returning a small tally.
+// Invoked by the Render cron via the run-all aggregator (and directly for ops).
+// Idempotent — a healthy pair is untouched, so re-running is safe. A nil GC (the
+// attachment feature is disabled) returns a zero summary.
+func (h *Handler) AttachmentGC(w http.ResponseWriter, r *http.Request) {
+	if h.attachmentGC == nil {
+		respond.JSON(w, http.StatusOK, GCSummary{})
+		return
+	}
+	sum, err := h.attachmentGC.RunGC(r.Context())
+	if err != nil {
+		log.Error().Err(err).Str("request_id", mw.GetRequestID(r.Context())).Msg("attachment-gc sweep failed")
+		respond.Error(w, http.StatusInternalServerError, apperror.ErrInternalServerError, "sweep failed")
+		return
+	}
+	respond.JSON(w, http.StatusOK, sum)
+}
+
+// RunAllResult is the aggregated run-all payload: the notification sweeps keyed
+// by name, plus the attachment-gc tally. Server-side log only, not user-facing.
+type RunAllResult struct {
+	Sweeps       map[string]*SweepBreakdown `json:"sweeps"`
+	AttachmentGC *GCSummary                 `json:"attachmentGc,omitempty"`
+}
+
+// RunAll runs every sweep in sequence and returns a combined result. The single
+// hourly Render cron hits this one endpoint instead of curl-looping over each
+// (which a shell-less cron command can't do reliably). Each sweep is idempotent,
+// so re-running the whole set within an hour is safe. ?dryRun=true is propagated
+// to the notification sweeps (the GC sweep has no dry-run and is skipped under
+// it). One sweep's failure aborts with 500; the rest are idempotent and pick up
+// on the next tick.
 func (h *Handler) RunAll(w http.ResponseWriter, r *http.Request) {
 	dryRun := r.URL.Query().Get("dryRun") == "true"
 	sweeps := []struct {
@@ -102,7 +147,7 @@ func (h *Handler) RunAll(w http.ResponseWriter, r *http.Request) {
 		{"summary", h.summaryNotifier.Run},
 	}
 
-	results := make(map[string]*SweepBreakdown, len(sweeps))
+	result := RunAllResult{Sweeps: make(map[string]*SweepBreakdown, len(sweeps))}
 	for _, s := range sweeps {
 		breakdown, err := s.run(r.Context(), dryRun)
 		if err != nil {
@@ -110,7 +155,20 @@ func (h *Handler) RunAll(w http.ResponseWriter, r *http.Request) {
 			respond.Error(w, http.StatusInternalServerError, apperror.ErrInternalServerError, "sweep failed")
 			return
 		}
-		results[s.name] = breakdown
+		result.Sweeps[s.name] = breakdown
 	}
-	respond.JSON(w, http.StatusOK, results)
+
+	// GC mutates the object store, so it's skipped under dryRun. A nil GC (feature
+	// off) is left out of the payload.
+	if !dryRun && h.attachmentGC != nil {
+		sum, err := h.attachmentGC.RunGC(r.Context())
+		if err != nil {
+			log.Error().Err(err).Str("request_id", mw.GetRequestID(r.Context())).Msg("attachment-gc sweep failed")
+			respond.Error(w, http.StatusInternalServerError, apperror.ErrInternalServerError, "sweep failed")
+			return
+		}
+		result.AttachmentGC = &sum
+	}
+
+	respond.JSON(w, http.StatusOK, result)
 }

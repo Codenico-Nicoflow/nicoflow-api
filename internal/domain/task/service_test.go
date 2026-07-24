@@ -26,6 +26,7 @@ type mockRepo struct {
 	updateSchedule   func(ctx context.Context, userID, id string, scheduledFor *string, rollsOver *bool) (Task, error)
 	repack           func(ctx context.Context, userID, id string, targetOrder int) (Task, error)
 	listActiveInbox  func(ctx context.Context, userID string) ([]Task, error)
+	existsByID       func(ctx context.Context, id string) (bool, error)
 }
 
 func (m *mockRepo) ListByProject(ctx context.Context, userID, projectID string, f ListTasksFilter) ([]Task, error) {
@@ -64,6 +65,12 @@ func (m *mockRepo) Repack(ctx context.Context, userID, id string, targetOrder in
 }
 func (m *mockRepo) ListActiveInboxByUser(ctx context.Context, userID string) ([]Task, error) {
 	return m.listActiveInbox(ctx, userID)
+}
+func (m *mockRepo) ExistsByID(ctx context.Context, id string) (bool, error) {
+	if m.existsByID != nil {
+		return m.existsByID(ctx, id)
+	}
+	return false, nil
 }
 
 func appErr(err error) *apperror.AppError {
@@ -473,4 +480,69 @@ func TestService_Focus(t *testing.T) {
 			t.Errorf("empty candidates → empty result, got %d", len(resp.Items))
 		}
 	})
+}
+
+// ── attachment cleanup on delete (NIC-1651) ──────────────────────────────────
+
+type fakeCleaner struct {
+	calls []cleanerCall
+	err   error
+}
+
+type cleanerCall struct{ userID, ownerType, ownerID string }
+
+func (f *fakeCleaner) DeleteAllForOwner(_ context.Context, userID, ownerType, ownerID string) error {
+	f.calls = append(f.calls, cleanerCall{userID, ownerType, ownerID})
+	return f.err
+}
+
+func TestService_Delete_InvokesCleaner(t *testing.T) {
+	repo := &mockRepo{deleteFn: func(_ context.Context, _, _ string) error { return nil }}
+	cleaner := &fakeCleaner{}
+	svc := NewService(repo, nil, nil).WithCleaner(cleaner)
+
+	if err := svc.Delete(context.Background(), "u1", "t1"); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(cleaner.calls) != 1 {
+		t.Fatalf("cleaner called %d times, want 1", len(cleaner.calls))
+	}
+	got := cleaner.calls[0]
+	if got != (cleanerCall{"u1", ownerTypeTask, "t1"}) {
+		t.Fatalf("cleaner called with %+v, want {u1 task t1}", got)
+	}
+}
+
+func TestService_Delete_CleanerErrorDoesNotFailDelete(t *testing.T) {
+	repo := &mockRepo{deleteFn: func(_ context.Context, _, _ string) error { return nil }}
+	cleaner := &fakeCleaner{err: errors.New("s3 unreachable")}
+	svc := NewService(repo, nil, nil).WithCleaner(cleaner)
+
+	if err := svc.Delete(context.Background(), "u1", "t1"); err != nil {
+		t.Fatalf("cleaner failure must not fail delete, got: %v", err)
+	}
+}
+
+func TestService_Delete_RepoErrorSkipsCleaner(t *testing.T) {
+	repo := &mockRepo{deleteFn: func(_ context.Context, _, _ string) error {
+		return apperror.New(http.StatusNotFound, apperror.ErrTaskNotFound, "not found")
+	}}
+	cleaner := &fakeCleaner{}
+	svc := NewService(repo, nil, nil).WithCleaner(cleaner)
+
+	if err := svc.Delete(context.Background(), "u1", "t1"); err == nil {
+		t.Fatal("expected delete error")
+	}
+	if len(cleaner.calls) != 0 {
+		t.Fatalf("cleaner must not run when the row delete failed, ran %d times", len(cleaner.calls))
+	}
+}
+
+func TestService_Delete_NilCleanerIsNoop(t *testing.T) {
+	repo := &mockRepo{deleteFn: func(_ context.Context, _, _ string) error { return nil }}
+	svc := NewService(repo, nil, nil) // no cleaner wired
+
+	if err := svc.Delete(context.Background(), "u1", "t1"); err != nil {
+		t.Fatalf("unexpected err with nil cleaner: %v", err)
+	}
 }

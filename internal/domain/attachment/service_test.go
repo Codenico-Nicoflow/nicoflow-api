@@ -45,6 +45,11 @@ func (f *fakeRepo) DeleteAllForOwner(context.Context, string, string, string) ([
 	return nil, nil
 }
 func (f *fakeRepo) ListByUser(context.Context, string) ([]Attachment, error) { return nil, nil }
+func (f *fakeRepo) AllKeys(context.Context) (map[string]struct{}, error)     { return nil, nil }
+func (f *fakeRepo) ListAllOwners(context.Context) ([]Owner, error)           { return nil, nil }
+func (f *fakeRepo) DeleteByOwner(context.Context, string, string) ([]Attachment, error) {
+	return nil, nil
+}
 
 type fakeStore struct {
 	enabled    bool
@@ -71,6 +76,7 @@ func (f *fakeStore) Delete(_ context.Context, key string) error {
 	f.deleted = append(f.deleted, key)
 	return nil
 }
+func (f *fakeStore) List(context.Context, string) ([]string, error) { return nil, nil }
 
 type fakeOwners struct{ err error }
 
@@ -144,7 +150,7 @@ func TestUploadURL_GateOrder(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			svc := NewService(&fakeRepo{}, &fakeStore{enabled: tc.enabled}, fakeOwners{err: tc.ownerErr}, nil)
+			svc := NewService(&fakeRepo{}, &fakeStore{enabled: tc.enabled}, fakeOwners{err: tc.ownerErr}, nil, nil)
 			_, err := svc.UploadURL(context.Background(), userID, tc.plan, tc.req)
 			if got := code(t, err); got != tc.wantCode {
 				t.Fatalf("code = %q, want %q", got, tc.wantCode)
@@ -154,7 +160,7 @@ func TestUploadURL_GateOrder(t *testing.T) {
 }
 
 func TestUploadURL_Success(t *testing.T) {
-	svc := NewService(&fakeRepo{}, &fakeStore{enabled: true}, fakeOwners{}, nil)
+	svc := NewService(&fakeRepo{}, &fakeStore{enabled: true}, fakeOwners{}, nil, nil)
 	resp, err := svc.UploadURL(context.Background(), userID, planPro,
 		UploadURLRequest{OwnerType: "task", OwnerID: "t1", FileName: "f.pdf", MimeType: "application/pdf", ClaimedSize: 1024})
 	if err != nil {
@@ -172,7 +178,7 @@ func TestConfirm_HeadObjectRevalidates(t *testing.T) {
 	// catch it, the object gets deleted, and no row is written.
 	store := &fakeStore{enabled: true, head: storage.HeadResult{ContentType: "image/svg+xml", ContentLength: 10}}
 	repo := &fakeRepo{inserted: true}
-	svc := NewService(repo, store, fakeOwners{}, nil)
+	svc := NewService(repo, store, fakeOwners{}, nil, nil)
 
 	_, err := svc.Confirm(context.Background(), userID, planPro, ConfirmRequest{S3Key: okKey, FileName: "x.png"})
 	if got := code(t, err); got != apperror.ErrInvalidInput {
@@ -189,7 +195,7 @@ func TestConfirm_StoresRealMetadataNotClaimed(t *testing.T) {
 	store := &fakeStore{enabled: true, head: storage.HeadResult{ContentType: "application/pdf", ContentLength: 2048}}
 	repo := &fakeRepo{inserted: true}
 	bc := &capBroadcaster{}
-	svc := NewService(repo, store, fakeOwners{}, bc)
+	svc := NewService(repo, store, fakeOwners{}, nil, bc)
 
 	view, err := svc.Confirm(context.Background(), userID, planPro, ConfirmRequest{S3Key: okKey, FileName: "report.pdf"})
 	if err != nil {
@@ -208,7 +214,7 @@ func TestConfirm_StoresRealMetadataNotClaimed(t *testing.T) {
 
 func TestConfirm_ForeignKeyPrefixIsNotFound(t *testing.T) {
 	store := &fakeStore{enabled: true}
-	svc := NewService(&fakeRepo{}, store, fakeOwners{}, nil)
+	svc := NewService(&fakeRepo{}, store, fakeOwners{}, nil, nil)
 	_, err := svc.Confirm(context.Background(), userID, planPro, ConfirmRequest{S3Key: "attachments/other/task/t1/obj", FileName: "x"})
 	if got := code(t, err); got != apperror.ErrResourceNotFound {
 		t.Fatalf("code = %q, want RESOURCE_NOT_FOUND", got)
@@ -236,7 +242,7 @@ func TestConfirm_QuotaErrorMapping(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store := &fakeStore{enabled: true, head: storage.HeadResult{ContentType: "application/pdf", ContentLength: 1024}}
 			repo := &fakeRepo{inserted: false, sumBytes: tc.sumBytes} // guard trips
-			svc := NewService(repo, store, fakeOwners{}, nil)
+			svc := NewService(repo, store, fakeOwners{}, nil, nil)
 			_, err := svc.Confirm(context.Background(), userID, planPro, ConfirmRequest{S3Key: okKey, FileName: "f.pdf"})
 			if got := code(t, err); got != tc.wantCode {
 				t.Fatalf("code = %q, want %q", got, tc.wantCode)
@@ -249,7 +255,7 @@ func TestConfirm_QuotaErrorMapping(t *testing.T) {
 }
 
 func TestConfirm_FreeBlocked(t *testing.T) {
-	svc := NewService(&fakeRepo{}, &fakeStore{enabled: true}, fakeOwners{}, nil)
+	svc := NewService(&fakeRepo{}, &fakeStore{enabled: true}, fakeOwners{}, nil, nil)
 	_, err := svc.Confirm(context.Background(), userID, "free", ConfirmRequest{S3Key: okKey})
 	if got := code(t, err); got != apperror.ErrPlanLimitExceeded {
 		t.Fatalf("code = %q, want PLAN_LIMIT_EXCEEDED", got)
@@ -262,7 +268,7 @@ func TestDelete_OpenOnFreePlan_EmitsEvent(t *testing.T) {
 	store := &fakeStore{enabled: true}
 	repo := &fakeRepo{getResult: Attachment{ID: "a1", UserID: userID, S3Key: okKey}}
 	bc := &capBroadcaster{}
-	svc := NewService(repo, store, fakeOwners{}, bc)
+	svc := NewService(repo, store, fakeOwners{}, nil, bc)
 
 	if err := svc.Delete(context.Background(), userID, "a1"); err != nil {
 		t.Fatalf("unexpected err: %v", err)
@@ -287,7 +293,7 @@ func (panicBroadcaster) Broadcast(string, Event) { panic("hub down") }
 func TestConfirm_BroadcastPanicDoesNotFailMutation(t *testing.T) {
 	store := &fakeStore{enabled: true, head: storage.HeadResult{ContentType: "application/pdf", ContentLength: 1024}}
 	repo := &fakeRepo{inserted: true}
-	svc := NewService(repo, store, fakeOwners{}, panicBroadcaster{})
+	svc := NewService(repo, store, fakeOwners{}, nil, panicBroadcaster{})
 
 	view, err := svc.Confirm(context.Background(), userID, planPro, ConfirmRequest{S3Key: okKey, FileName: "f.pdf"})
 	if err != nil {
@@ -301,7 +307,7 @@ func TestConfirm_BroadcastPanicDoesNotFailMutation(t *testing.T) {
 func TestDelete_BroadcastPanicDoesNotFailMutation(t *testing.T) {
 	store := &fakeStore{enabled: true}
 	repo := &fakeRepo{getResult: Attachment{ID: "a1", UserID: userID, S3Key: okKey}}
-	svc := NewService(repo, store, fakeOwners{}, panicBroadcaster{})
+	svc := NewService(repo, store, fakeOwners{}, nil, panicBroadcaster{})
 
 	if err := svc.Delete(context.Background(), userID, "a1"); err != nil {
 		t.Fatalf("broadcast panic must not fail delete, got %v", err)
@@ -313,7 +319,7 @@ func TestDelete_BroadcastPanicDoesNotFailMutation(t *testing.T) {
 
 func TestDelete_NotFoundPropagates(t *testing.T) {
 	repo := &fakeRepo{getErr: apperror.New(404, apperror.ErrResourceNotFound, "x")}
-	svc := NewService(repo, &fakeStore{enabled: true}, fakeOwners{}, nil)
+	svc := NewService(repo, &fakeStore{enabled: true}, fakeOwners{}, nil, nil)
 	if got := code(t, svc.Delete(context.Background(), userID, "missing")); got != apperror.ErrResourceNotFound {
 		t.Fatalf("code = %q, want RESOURCE_NOT_FOUND", got)
 	}
