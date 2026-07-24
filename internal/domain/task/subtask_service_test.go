@@ -83,7 +83,7 @@ func TestSubtaskService_Create(t *testing.T) {
 					return s, nil
 				},
 			}
-			_, err := NewSubtaskService(repo).Create(context.Background(), "u1", "t1", tt.req)
+			_, err := NewSubtaskService(repo, nil).Create(context.Background(), "u1", "t1", tt.req)
 			if tt.wantErr {
 				if ae := appErr(err); ae == nil || ae.Code != tt.wantCode {
 					t.Fatalf("want %s, got %+v", tt.wantCode, err)
@@ -107,7 +107,7 @@ func TestSubtaskService_List_NotOwned(t *testing.T) {
 	repo := &mockSubtaskRepo{
 		taskOwned: func(_ context.Context, _, _ string) (bool, error) { return false, nil },
 	}
-	_, err := NewSubtaskService(repo).List(context.Background(), "u1", "t1")
+	_, err := NewSubtaskService(repo, nil).List(context.Background(), "u1", "t1")
 	if ae := appErr(err); ae == nil || ae.Code != apperror.ErrResourceNotFound {
 		t.Fatalf("want RESOURCE_NOT_FOUND, got %+v", err)
 	}
@@ -116,7 +116,7 @@ func TestSubtaskService_List_NotOwned(t *testing.T) {
 func TestSubtaskService_Update_EmptyTitleRejected(t *testing.T) {
 	repo := &mockSubtaskRepo{}
 	empty := "   "
-	_, err := NewSubtaskService(repo).Update(context.Background(), "u1", "t1", "s1", UpdateSubtaskRequest{Title: &empty})
+	_, err := NewSubtaskService(repo, nil).Update(context.Background(), "u1", "t1", "s1", UpdateSubtaskRequest{Title: &empty})
 	if ae := appErr(err); ae == nil || ae.Code != apperror.ErrInvalidInput {
 		t.Fatalf("want INVALID_INPUT, got %+v", err)
 	}

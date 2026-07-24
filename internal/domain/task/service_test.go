@@ -192,7 +192,7 @@ func TestService_Create(t *testing.T) {
 					return task, nil
 				},
 			}
-			svc := NewService(repo, nil)
+			svc := NewService(repo, nil, nil)
 
 			view, err := svc.Create(context.Background(), "u1", "p1", tt.plan, tt.req)
 			if tt.wantErr {
@@ -263,7 +263,7 @@ func TestService_Update_CompletedAtTransitions(t *testing.T) {
 					return Task{ID: "t1", Status: "x"}, nil
 				},
 			}
-			svc := NewService(repo, nil)
+			svc := NewService(repo, nil, nil)
 
 			_, err := svc.Update(context.Background(), "u1", "t1", "pro", UpdateTaskRequest{Status: tt.newStatus})
 			if err != nil {
@@ -289,7 +289,7 @@ func TestService_Update_PlanLimitOnMoveIntoActive(t *testing.T) {
 			return Task{}, nil
 		},
 	}
-	svc := NewService(repo, nil)
+	svc := NewService(repo, nil, nil)
 
 	_, err := svc.Update(context.Background(), "u1", "t1", "free", UpdateTaskRequest{Status: ptr("active")})
 	if ae := appErr(err); ae == nil || ae.Code != apperror.ErrPlanLimitExceeded {
@@ -306,7 +306,7 @@ func TestService_ListByProject_NotOwned(t *testing.T) {
 	repo := &mockRepo{
 		projectOwned: func(_ context.Context, _, _ string) (bool, error) { return false, nil },
 	}
-	svc := NewService(repo, nil)
+	svc := NewService(repo, nil, nil)
 
 	_, err := svc.ListByProject(context.Background(), "u1", "p1", ListTasksFilter{})
 	if ae := appErr(err); ae == nil || ae.Code != apperror.ErrProjectNotFound {
@@ -317,7 +317,7 @@ func TestService_ListByProject_NotOwned(t *testing.T) {
 // ── quick actions ──────────────────────────────────────────────────────────────
 
 func TestService_SetStatus_EmptyRejected(t *testing.T) {
-	svc := NewService(&mockRepo{}, nil)
+	svc := NewService(&mockRepo{}, nil, nil)
 	_, err := svc.SetStatus(context.Background(), "u1", "t1", "pro", "")
 	if ae := appErr(err); ae == nil || ae.Code != apperror.ErrInvalidInput {
 		t.Fatalf("want INVALID_INPUT, got %+v", err)
@@ -336,7 +336,7 @@ func TestService_SetStatus_DelegatesToUpdate(t *testing.T) {
 			return Task{ID: "t1", Status: "done"}, nil
 		},
 	}
-	v, err := NewService(repo, nil).SetStatus(context.Background(), "u1", "t1", "pro", "done")
+	v, err := NewService(repo, nil, nil).SetStatus(context.Background(), "u1", "t1", "pro", "done")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -366,7 +366,7 @@ func TestService_Schedule(t *testing.T) {
 					return Task{ID: "t1", ScheduledFor: sf}, nil
 				},
 			}
-			_, err := NewService(repo, nil).Schedule(context.Background(), "u1", "t1", ScheduleRequest{ScheduledFor: tt.date})
+			_, err := NewService(repo, nil, nil).Schedule(context.Background(), "u1", "t1", ScheduleRequest{ScheduledFor: tt.date})
 			if tt.wantErr {
 				if ae := appErr(err); ae == nil || ae.Code != tt.wantCode {
 					t.Fatalf("want %s, got %+v", tt.wantCode, err)
@@ -402,7 +402,7 @@ func TestService_Update_ScheduledForValidation(t *testing.T) {
 					return Task{ID: "t1"}, nil
 				},
 			}
-			_, err := NewService(repo, nil).Update(context.Background(), "u1", "t1", "pro", UpdateTaskRequest{ScheduledFor: tt.sf})
+			_, err := NewService(repo, nil, nil).Update(context.Background(), "u1", "t1", "pro", UpdateTaskRequest{ScheduledFor: tt.sf})
 			if tt.wantErr {
 				if ae := appErr(err); ae == nil || ae.Code != tt.wantCode {
 					t.Fatalf("want %s, got %+v", tt.wantCode, err)
@@ -417,7 +417,7 @@ func TestService_Update_ScheduledForValidation(t *testing.T) {
 }
 
 func TestService_ReorderOne_NegativeRejected(t *testing.T) {
-	svc := NewService(&mockRepo{}, nil)
+	svc := NewService(&mockRepo{}, nil, nil)
 	_, err := svc.ReorderOne(context.Background(), "u1", "t1", -1)
 	if ae := appErr(err); ae == nil || ae.Code != apperror.ErrInvalidInput {
 		t.Fatalf("want INVALID_INPUT, got %+v", err)

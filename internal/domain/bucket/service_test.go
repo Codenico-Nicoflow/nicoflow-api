@@ -54,7 +54,7 @@ type mockTaskCreator struct {
 	create func(ctx context.Context, userID, projectID, plan string, req task.CreateTaskRequest) (task.TaskView, error)
 }
 
-func (m *mockTaskCreator) Create(ctx context.Context, userID, projectID, plan string, req task.CreateTaskRequest) (task.TaskView, error) {
+func (m *mockTaskCreator) CreateWithoutEvent(ctx context.Context, userID, projectID, plan string, req task.CreateTaskRequest) (task.TaskView, error) {
 	return m.create(ctx, userID, projectID, plan, req)
 }
 
@@ -98,7 +98,7 @@ func TestService_Create(t *testing.T) {
 					return b, nil
 				},
 			}
-			svc := bucket.NewService(repo, &mockTaskCreator{}, nil)
+			svc := bucket.NewService(repo, &mockTaskCreator{}, nil, nil)
 			view, err := svc.Create(context.Background(), "u1", tt.content)
 
 			if tt.wantCode != "" {
@@ -151,7 +151,7 @@ func TestService_Update(t *testing.T) {
 					return b, nil
 				},
 			}
-			svc := bucket.NewService(repo, &mockTaskCreator{}, nil)
+			svc := bucket.NewService(repo, &mockTaskCreator{}, nil, nil)
 			_, err := svc.Update(context.Background(), "u1", "b1", tt.content)
 
 			if tt.wantCode == "" {
@@ -183,7 +183,7 @@ func TestService_Process_Trash(t *testing.T) {
 			return b, nil
 		},
 	}
-	svc := bucket.NewService(repo, &mockTaskCreator{}, nil)
+	svc := bucket.NewService(repo, &mockTaskCreator{}, nil, nil)
 	_, err := svc.Process(context.Background(), "u1", "b1", "free", bucket.ProcessBucketRequest{ProcessingResult: bucket.ResultTrash})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -194,7 +194,7 @@ func TestService_Process_Trash(t *testing.T) {
 }
 
 func TestService_Process_Note_NotImplemented(t *testing.T) {
-	svc := bucket.NewService(&mockRepo{}, &mockTaskCreator{}, nil)
+	svc := bucket.NewService(&mockRepo{}, &mockTaskCreator{}, nil, nil)
 	_, err := svc.Process(context.Background(), "u1", "b1", "free", bucket.ProcessBucketRequest{ProcessingResult: bucket.ResultNote})
 	ae := appErr(err)
 	if ae == nil || ae.Status != http.StatusNotImplemented {
@@ -203,7 +203,7 @@ func TestService_Process_Note_NotImplemented(t *testing.T) {
 }
 
 func TestService_Process_InvalidResult(t *testing.T) {
-	svc := bucket.NewService(&mockRepo{}, &mockTaskCreator{}, nil)
+	svc := bucket.NewService(&mockRepo{}, &mockTaskCreator{}, nil, nil)
 	_, err := svc.Process(context.Background(), "u1", "b1", "free", bucket.ProcessBucketRequest{ProcessingResult: "bogus"})
 	ae := appErr(err)
 	if ae == nil || ae.Code != apperror.ErrInvalidInput || ae.Status != http.StatusUnprocessableEntity {
@@ -223,7 +223,7 @@ func TestService_Process_Task_RequiresProjectAndDetails(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			svc := bucket.NewService(&mockRepo{}, &mockTaskCreator{}, nil)
+			svc := bucket.NewService(&mockRepo{}, &mockTaskCreator{}, nil, nil)
 			_, err := svc.Process(context.Background(), "u1", "b1", "free", tt.req)
 			ae := appErr(err)
 			if ae == nil || ae.Code != apperror.ErrInvalidInput || ae.Status != http.StatusUnprocessableEntity {
@@ -247,7 +247,7 @@ func TestService_Process_Task_AlreadyProcessed(t *testing.T) {
 		taskCalled = true
 		return task.TaskView{}, nil
 	}}
-	svc := bucket.NewService(repo, tc, nil)
+	svc := bucket.NewService(repo, tc, nil, nil)
 	_, err := svc.Process(context.Background(), "u1", "b1", "free", bucket.ProcessBucketRequest{
 		ProcessingResult: bucket.ResultTask, ProjectID: ptr("p1"), TaskDetails: &bucket.ProcessTaskDetails{Title: "t"},
 	})
@@ -275,7 +275,7 @@ func TestService_Process_Task_PlanLimitAbortsBeforeMark(t *testing.T) {
 	tc := &mockTaskCreator{create: func(context.Context, string, string, string, task.CreateTaskRequest) (task.TaskView, error) {
 		return task.TaskView{}, planErr
 	}}
-	svc := bucket.NewService(repo, tc, nil)
+	svc := bucket.NewService(repo, tc, nil, nil)
 	_, err := svc.Process(context.Background(), "u1", "b1", "free", bucket.ProcessBucketRequest{
 		ProcessingResult: bucket.ResultTask, ProjectID: ptr("p1"), TaskDetails: &bucket.ProcessTaskDetails{Title: "t"},
 	})
@@ -305,7 +305,7 @@ func TestService_Process_Task_HappyPath_MapsDetailsAndMarks(t *testing.T) {
 		gotReq = req
 		return task.TaskView{ID: "task-123", ProjectID: projectID}, nil
 	}}
-	svc := bucket.NewService(repo, tc, nil)
+	svc := bucket.NewService(repo, tc, nil, nil)
 	view, err := svc.Process(context.Background(), "u1", "b1", "free", bucket.ProcessBucketRequest{
 		ProcessingResult: bucket.ResultTask,
 		ProjectID:        ptr("p1"),

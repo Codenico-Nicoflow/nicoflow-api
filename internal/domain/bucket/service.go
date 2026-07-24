@@ -20,10 +20,11 @@ const planPro = "pro"
 
 // TaskCreator is the slice of the task service the bucket domain depends on to
 // turn a processed item into a task. Defined here (the consumer) so the bucket
-// package never imports the concrete task service. The real *task.service
-// satisfies it.
+// package never imports the concrete task service. CreateWithoutEvent (not
+// Create) so the task.created emit is deferred to the end of the ordered
+// process operation — both events or neither, never one mid-way.
 type TaskCreator interface {
-	Create(ctx context.Context, userID, projectID, plan string, req task.CreateTaskRequest) (task.TaskView, error)
+	CreateWithoutEvent(ctx context.Context, userID, projectID, plan string, req task.CreateTaskRequest) (task.TaskView, error)
 }
 
 // Service defines the bucket (inbox) business logic interface.
@@ -39,15 +40,18 @@ type Service interface {
 }
 
 type service struct {
-	repo    Repository
-	taskSvc TaskCreator
-	notif   notifier // best-effort notification emitter; nil disables emission
+	repo        Repository
+	taskSvc     TaskCreator
+	notif       notifier    // best-effort notification emitter; nil disables emission
+	broadcaster Broadcaster // nil disables real-time emission
 }
 
 // NewService creates a new bucket service. notif may be nil (notifications are
 // best-effort); pass notification.Service to enable inbox_zero emission.
-func NewService(repo Repository, taskSvc TaskCreator, notif notifier) Service {
-	return &service{repo: repo, taskSvc: taskSvc, notif: notif}
+// broadcaster may be nil (real-time emission disabled); pass the ws adapter to
+// light up live updates.
+func NewService(repo Repository, taskSvc TaskCreator, notif notifier, broadcaster Broadcaster) Service {
+	return &service{repo: repo, taskSvc: taskSvc, notif: notif, broadcaster: broadcaster}
 }
 
 func (s *service) Create(ctx context.Context, userID, content string) (BucketView, error) {
@@ -63,7 +67,9 @@ func (s *service) Create(ctx context.Context, userID, content string) (BucketVie
 	if err != nil {
 		return BucketView{}, err
 	}
-	return BucketToView(created), nil
+	view := BucketToView(created)
+	s.emit(userID, Event{Type: EventCreated, Payload: view})
+	return view, nil
 }
 
 func (s *service) List(ctx context.Context, userID string) (BucketListResponse, error) {
@@ -102,6 +108,7 @@ func (s *service) Delete(ctx context.Context, userID, id, plan string) error {
 	if err := s.repo.Delete(ctx, userID, id); err != nil {
 		return err
 	}
+	s.emit(userID, Event{Type: EventDeleted, Payload: Ref{ID: id}})
 	// Deleting an unprocessed item can clear the inbox — emit inbox_zero if so.
 	s.maybeEmitInboxZero(ctx, userID, plan)
 	return nil
@@ -123,8 +130,10 @@ func (s *service) Process(ctx context.Context, userID, id, plan string, req Proc
 		if err != nil {
 			return BucketView{}, err
 		}
+		view := BucketToView(marked)
+		s.emit(userID, Event{Type: EventProcessed, Payload: view})
 		s.maybeEmitInboxZero(ctx, userID, plan)
-		return BucketToView(marked), nil
+		return view, nil
 	case ResultNote:
 		return BucketView{}, apperror.New(http.StatusNotImplemented, apperror.ErrServiceUnavailable, "note processing is not implemented")
 	default:
@@ -150,10 +159,10 @@ func (s *service) processToTask(ctx context.Context, userID, id, plan string, re
 		return BucketView{}, apperror.New(http.StatusConflict, apperror.ErrConflict, "bucket item is already processed")
 	}
 
-	// Create the task first. Its service enforces title validation, project
-	// ownership (PROJECT_NOT_FOUND), and the free-plan task cap
-	// (PLAN_LIMIT_EXCEEDED); any of these abort before the item is marked.
-	created, err := s.taskSvc.Create(ctx, userID, *req.ProjectID, plan, req.TaskDetails.toTaskCreateRequest())
+	// Create the task first — without its task.created emit. Its service enforces
+	// title validation, project ownership (PROJECT_NOT_FOUND), and the free-plan
+	// task cap (PLAN_LIMIT_EXCEEDED); any of these abort before the item is marked.
+	created, err := s.taskSvc.CreateWithoutEvent(ctx, userID, *req.ProjectID, plan, req.TaskDetails.toTaskCreateRequest())
 	if err != nil {
 		return BucketView{}, err
 	}
@@ -163,8 +172,13 @@ func (s *service) processToTask(ctx context.Context, userID, id, plan string, re
 	if err != nil {
 		return BucketView{}, err
 	}
+
+	// Both writes succeeded — fire both events together (both-or-neither).
+	view := BucketToView(marked)
+	s.emit(userID, Event{Type: EventProcessed, Payload: view})
+	s.emit(userID, Event{Type: EventTaskCreated, Payload: created})
 	s.maybeEmitInboxZero(ctx, userID, plan)
-	return BucketToView(marked), nil
+	return view, nil
 }
 
 // validateContent trims and enforces the 1..500 length rule (counted in runes).

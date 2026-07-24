@@ -16,7 +16,9 @@ const (
 	EventAreaCreated       EventType = "area.created"
 	EventAreaUpdated       EventType = "area.updated"
 	EventAreaDeleted       EventType = "area.deleted"
+	EventBucketCreated     EventType = "bucket.created"
 	EventBucketProcessed   EventType = "bucket.processed"
+	EventBucketDeleted     EventType = "bucket.deleted"
 	// EventNotificationCreated carries a full NotificationView. Renamed from the
 	// scaffold's "notification" to match the frontend event map (E-023) and the
 	// shape notification.Service already emits.

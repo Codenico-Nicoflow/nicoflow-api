@@ -35,7 +35,7 @@ func trashSvc(remaining int, fn *fakeNotifier) bucket.Service {
 		},
 		countUnprocessed: func(context.Context, string) (int, error) { return remaining, nil },
 	}
-	return bucket.NewService(repo, &mockTaskCreator{}, fn)
+	return bucket.NewService(repo, &mockTaskCreator{}, fn, nil)
 }
 
 func processTrash(t *testing.T, svc bucket.Service, plan string) {
@@ -82,7 +82,7 @@ func TestInboxZero_OnDelete(t *testing.T) {
 		delete:           func(context.Context, string, string) error { return nil },
 		countUnprocessed: func(context.Context, string) (int, error) { return 0, nil },
 	}
-	svc := bucket.NewService(repo, &mockTaskCreator{}, fn)
+	svc := bucket.NewService(repo, &mockTaskCreator{}, fn, nil)
 	if err := svc.Delete(context.Background(), "u1", "b1", "pro"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestInboxZero_CountErrorSwallowed(t *testing.T) {
 		},
 		countUnprocessed: func(context.Context, string) (int, error) { return 0, errors.New("db down") },
 	}
-	svc := bucket.NewService(repo, &mockTaskCreator{}, fn)
+	svc := bucket.NewService(repo, &mockTaskCreator{}, fn, nil)
 	if _, err := svc.Process(context.Background(), "u1", "b1", "pro",
 		bucket.ProcessBucketRequest{ProcessingResult: bucket.ResultTrash}); err != nil {
 		t.Fatalf("count error leaked into mutation: %v", err)
@@ -128,7 +128,7 @@ func TestInboxZero_DeleteErrorReturned(t *testing.T) {
 		delete:           func(context.Context, string, string) error { return errors.New("not found") },
 		countUnprocessed: func(context.Context, string) (int, error) { return 0, nil },
 	}
-	svc := bucket.NewService(repo, &mockTaskCreator{}, fn)
+	svc := bucket.NewService(repo, &mockTaskCreator{}, fn, nil)
 	if err := svc.Delete(context.Background(), "u1", "b1", "pro"); err == nil {
 		t.Fatal("expected delete error to propagate")
 	}

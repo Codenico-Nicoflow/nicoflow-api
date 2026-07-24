@@ -21,10 +21,26 @@ type SubtaskService interface {
 	Delete(ctx context.Context, userID, taskID, id string) error
 }
 
-type subtaskService struct{ repo SubtaskRepository }
+type subtaskService struct {
+	repo        SubtaskRepository
+	broadcaster Broadcaster // nil disables emission
+}
 
-// NewSubtaskService creates a new SubtaskService.
-func NewSubtaskService(repo SubtaskRepository) SubtaskService { return &subtaskService{repo: repo} }
+// NewSubtaskService creates a new SubtaskService. broadcaster may be nil; when
+// wired, every subtask mutation emits task.updated on the parent (subtasks have
+// no events of their own — the client refetches the parent task).
+func NewSubtaskService(repo SubtaskRepository, broadcaster Broadcaster) SubtaskService {
+	return &subtaskService{repo: repo, broadcaster: broadcaster}
+}
+
+// emitParentUpdated fires task.updated for the parent after a successful subtask
+// mutation. Ref payload: the client invalidates and refetches, never patches.
+func (s *subtaskService) emitParentUpdated(userID, taskID string) {
+	if s.broadcaster == nil {
+		return
+	}
+	s.broadcaster.Broadcast(userID, Event{Type: EventUpdated, Payload: Ref{ID: taskID}})
+}
 
 func (s *subtaskService) requireTask(ctx context.Context, userID, taskID string) error {
 	owned, err := s.repo.TaskOwned(ctx, userID, taskID)
@@ -84,6 +100,7 @@ func (s *subtaskService) Create(ctx context.Context, userID, taskID string, req 
 	if err != nil {
 		return SubtaskView{}, err
 	}
+	s.emitParentUpdated(userID, taskID)
 	return SubtaskToView(created), nil
 }
 
@@ -101,9 +118,14 @@ func (s *subtaskService) Update(ctx context.Context, userID, taskID, id string, 
 	if err != nil {
 		return SubtaskView{}, err
 	}
+	s.emitParentUpdated(userID, taskID)
 	return SubtaskToView(updated), nil
 }
 
 func (s *subtaskService) Delete(ctx context.Context, userID, taskID, id string) error {
-	return s.repo.Delete(ctx, userID, taskID, id)
+	if err := s.repo.Delete(ctx, userID, taskID, id); err != nil {
+		return err
+	}
+	s.emitParentUpdated(userID, taskID)
+	return nil
 }

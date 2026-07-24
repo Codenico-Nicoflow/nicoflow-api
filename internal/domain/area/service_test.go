@@ -50,12 +50,15 @@ func (m *mockAreaRepo) Reorder(ctx context.Context, userID string, items []area.
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-func appErr(err error) *apperror.AppError {
+// requireAppErr fails the test unless err is an AppError, so callers always get
+// a non-nil result (also keeps staticcheck's nil-deref analysis trivially happy).
+func requireAppErr(t *testing.T, err error) *apperror.AppError {
+	t.Helper()
 	var ae *apperror.AppError
-	if errors.As(err, &ae) {
-		return ae
+	if !errors.As(err, &ae) {
+		t.Fatalf("expected AppError, got %v", err)
 	}
-	return nil
+	return ae
 }
 
 // ── Create tests ─────────────────────────────────────────────────────────────
@@ -173,14 +176,11 @@ func TestAreaService_Create(t *testing.T) {
 					return tt.createArea, nil
 				},
 			}
-			svc := area.NewService(repo)
+			svc := area.NewService(repo, nil)
 			view, err := svc.Create(context.Background(), "user1", tt.plan, tt.req)
 
 			if tt.wantCode != "" {
-				ae := appErr(err)
-				if ae == nil {
-					t.Fatalf("expected AppError with code %q, got nil error", tt.wantCode)
-				}
+				ae := requireAppErr(t, err)
 				if ae.Code != tt.wantCode {
 					t.Errorf("code: got %q, want %q", ae.Code, tt.wantCode)
 				}
@@ -246,14 +246,11 @@ func TestAreaService_Update(t *testing.T) {
 					return tt.repoArea, tt.repoErr
 				},
 			}
-			svc := area.NewService(repo)
+			svc := area.NewService(repo, nil)
 			_, err := svc.Update(context.Background(), "user1", "id1", tt.req)
 
 			if tt.wantCode != "" {
-				ae := appErr(err)
-				if ae == nil {
-					t.Fatalf("expected AppError %q, got nil", tt.wantCode)
-				}
+				ae := requireAppErr(t, err)
 				if ae.Code != tt.wantCode {
 					t.Errorf("code: got %q, want %q", ae.Code, tt.wantCode)
 				}
@@ -303,14 +300,11 @@ func TestAreaService_Reorder(t *testing.T) {
 					return tt.repoResult, tt.repoErr
 				},
 			}
-			svc := area.NewService(repo)
+			svc := area.NewService(repo, nil)
 			n, err := svc.Reorder(context.Background(), "user1", tt.req)
 
 			if tt.wantCode != "" {
-				ae := appErr(err)
-				if ae == nil {
-					t.Fatalf("expected AppError %q, got nil", tt.wantCode)
-				}
+				ae := requireAppErr(t, err)
 				if ae.Code != tt.wantCode {
 					t.Errorf("code: got %q, want %q", ae.Code, tt.wantCode)
 				}
