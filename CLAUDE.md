@@ -285,11 +285,12 @@ Check via `COUNT(*)` before insert. Plan is read from `ctx` Claims — no DB cal
 | `SMTP_DSN`             | No       | SMTP DSN for password-reset email, e.g. `smtp://user:pass@smtp.mailtrap.io:587` |
 | `TEST_DATABASE_URL`    | No       | DB connection string for integration tests                                  |
 | `LS_WEBHOOK_SECRET`    | No       | HMAC-SHA256 secret for Lemon Squeezy webhook                                |
-| `AWS_REGION`           | No       | S3 region                                                                   |
-| `AWS_ACCESS_KEY_ID`    | No       | IAM key for S3                                                              |
-| `AWS_SECRET_ACCESS_KEY`| No       | IAM secret for S3                                                           |
-| `S3_BUCKET_NAME`       | No       | S3 bucket name (`nicoflow-attachments`)                                     |
-| `AWS_ENDPOINT`         | No       | Override S3 endpoint to point at local MinIO (`http://localhost:9000`)      |
+| `AWS_REGION`           | No*      | S3 region. *One of the four S3 vars — all four must be set to enable file attachments; any unset ⇒ feature disabled (`/attachments*` → typed `503`), never a silent no-op. |
+| `AWS_ACCESS_KEY_ID`    | No*      | IAM key for S3 (see above)                                                  |
+| `AWS_SECRET_ACCESS_KEY`| No*      | IAM secret for S3 (see above)                                              |
+| `S3_BUCKET_NAME`       | No*      | S3 bucket name (`nicoflow-attachments`) (see above)                         |
+| `AWS_ENDPOINT`         | No       | Override S3 endpoint to point at local MinIO (`http://localhost:9000`); when set, the client uses path-style addressing |
+| `TEST_S3_ENDPOINT`     | No       | MinIO endpoint for the storage integration tests (unset ⇒ those tests skip). Optional `TEST_S3_ACCESS_KEY` / `TEST_S3_SECRET_KEY` / `TEST_S3_BUCKET` / `TEST_S3_REGION` override the defaults. |
 
 Docker-compose-only vars (`POSTGRES_*`, `MINIO_*`) are **not** read by the API binary.
 

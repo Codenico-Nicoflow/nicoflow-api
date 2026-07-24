@@ -25,9 +25,13 @@ type Config struct {
 	LSWebhookSecret string
 	// CronSecret guards the internal job endpoints (POST /internal/jobs/*). Callers
 	// must send it as X-Internal-Token. Unset ⇒ the endpoints return 503 (disabled).
-	CronSecret        string
-	AWSAccessKeyID    string
-	AWSSecretKey      string
+	CronSecret     string
+	AWSAccessKeyID string
+	AWSSecretKey   string
+	AWSRegion      string
+	// AWSEndpoint overrides the S3 endpoint (e.g. http://localhost:9000 for MinIO).
+	// Empty ⇒ real AWS S3. When set, the client uses path-style addressing.
+	AWSEndpoint       string
 	S3Bucket          string
 	CORSOrigins       string
 	TrustedProxyCIDRs string
@@ -90,6 +94,8 @@ func Load() Config {
 		CronSecret:               os.Getenv("CRON_SECRET"),
 		AWSAccessKeyID:           os.Getenv("AWS_ACCESS_KEY_ID"),
 		AWSSecretKey:             os.Getenv("AWS_SECRET_ACCESS_KEY"),
+		AWSRegion:                os.Getenv("AWS_REGION"),
+		AWSEndpoint:              os.Getenv("AWS_ENDPOINT"),
 		S3Bucket:                 os.Getenv("S3_BUCKET_NAME"),
 		CORSOrigins:              os.Getenv("CORS_ORIGINS"),
 		TrustedProxyCIDRs:        os.Getenv("TRUSTED_PROXY"),
