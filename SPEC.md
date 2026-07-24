@@ -1466,78 +1466,87 @@ downgraded user must still be able to unsubscribe).
 
 ---
 
-### 3.12 File Attachments (S3)
+### 3.12 File Attachments (S3) — E-024
 
-Attachments follow a two-step presigned-URL pattern — the client uploads directly to S3.
+Attachments use a **two-step presigned-POST** pattern: the client uploads bytes **directly to S3** (never through the API), then confirms. The owner is a **polymorphic-flat `{ownerType, ownerId}`** pair (only `task` today; notes later share the same table) — endpoints live under `/attachments`, not nested under the owner. Confirm **re-reads the object via HeadObject** and never trusts client-claimed size/type. `s3Key` is a server-internal detail and is **never** returned.
 
-#### POST /v1/tasks/:taskId/attachments
+**`AttachmentView`** (the shared response shape):
 
-Initiate an attachment upload. Returns a presigned S3 PUT URL.
+```json
+{ "id": "…", "ownerType": "task", "ownerId": "…", "fileName": "report.pdf", "fileSize": 204800, "mimeType": "application/pdf", "createdAt": "…" }
+```
 
-- **Auth required:** Yes
-- **Plan limit:** Free = 5 attachments/task · Pro = 20 attachments/task · 25 MB per file (both plans)
+**Gate order (writes):** `plan (Pro) → config (503 if storage unconfigured) → ownership → quota`. Reads and delete are **not** plan-gated (a downgraded user can still fetch and clean up).
+
+**Config gate:** if the storage backend is unconfigured, every `/attachments*` endpoint returns `503 SERVICE_UNAVAILABLE` — never a silent no-op.
+
+**Allowlist:** explicit MIME set (jpeg, png, gif, webp, pdf, plain, csv, zip, doc/docx, xls/xlsx). **No SVG, no globs.** Max **20 MB / file**, **20 files / owner**, **100 MB total / user**.
+
+---
+
+#### POST /v1/attachments/upload-url
+
+Mint a presigned S3 **POST** policy for a new upload. **Pro-gated.** Ownership-checked. Cheap claimed-size/type pre-check (real enforcement is the S3 POST policy + the HeadObject re-read at confirm).
+
+- **Auth required:** Yes · **Plan:** Pro only
 
 **Request body**
 
 ```json
-{ "filename": "screenshot.png", "mimeType": "image/png", "fileSize": 204800 }
+{ "ownerType": "task", "ownerId": "01J…", "fileName": "report.pdf", "mimeType": "application/pdf", "fileSize": 204800 }
 ```
 
-**Response — 201 Created**
+**Response — 200 OK** — POST the file to `url` with the returned `fields`, then confirm with `s3Key`.
 
 ```json
-{
-  "uploadUrl": "https://s3.amazonaws.com/nicoflow-uploads/...?X-Amz-Signature=...",
-  "attachmentId": "att_abc123"
-}
+{ "url": "https://…s3…/nicoflow-attachments", "fields": { "key": "attachments/…", "policy": "…", "x-amz-signature": "…" }, "s3Key": "attachments/{userId}/task/{ownerId}/{uuid}" }
 ```
-
-The client performs `PUT <uploadUrl>` with the file bytes and `Content-Type` header. After upload completes, the attachment becomes visible via the GET endpoint.
 
 ---
 
-#### GET /v1/tasks/:taskId/attachments
+#### POST /v1/attachments
 
-List all attachments for a task.
+Confirm an uploaded object. Body is `{ s3Key, fileName }` — **only** the key is trusted; `HeadObject` re-reads the real size/type. Disallowed type or > 20 MB → object deleted + `422 INVALID_INPUT` (no row). Over quota → object deleted + `403` (see below). **Pro-gated.** Broadcasts `attachment.created`.
+
+- **Auth required:** Yes · **Plan:** Pro only
+
+**Request body**
+
+```json
+{ "s3Key": "attachments/{userId}/task/{ownerId}/{uuid}", "fileName": "report.pdf" }
+```
+
+**Response — 201 Created** — an `AttachmentView`.
+
+---
+
+#### GET /v1/attachments?ownerType=&ownerId=
+
+List a single owner's attachments. **Not** plan-gated. Ownership-checked (foreign owner → `404`, no existence leak).
+
+- **Auth required:** Yes
+
+**Response — 200 OK** — `[AttachmentView]`.
+
+---
+
+#### GET /v1/attachments/:id/download-url
+
+Presigned S3 **GET** URL with forced-download disposition (`Content-Disposition: attachment`, never inline). **Not** plan-gated; ownership by `user_id`.
 
 - **Auth required:** Yes
 
 **Response — 200 OK**
 
 ```json
-[
-  {
-    "id": "att_abc123",
-    "taskId": "01J...",
-    "filename": "screenshot.png",
-    "mimeType": "image/png",
-    "fileSize": 204800,
-    "createdAt": "..."
-  }
-]
-```
-
----
-
-#### GET /v1/attachments/:id/download
-
-Get a presigned S3 download URL (valid for 15 minutes).
-
-- **Auth required:** Yes
-
-**Response — 200 OK**
-
-```json
-{
-  "downloadUrl": "https://s3.amazonaws.com/nicoflow-uploads/...?X-Amz-Signature=..."
-}
+{ "url": "https://…s3…/…?X-Amz-Signature=…" }
 ```
 
 ---
 
 #### DELETE /v1/attachments/:id
 
-Delete an attachment. The S3 object is also removed.
+Delete an attachment: DB row first, then the S3 object (idempotent). **Not** plan-gated. Broadcasts `attachment.deleted` (`{ id, ownerType, ownerId }`).
 
 - **Auth required:** Yes
 
@@ -1690,7 +1699,8 @@ These are the exact constants defined in `internal/apperror/errors.go` of the Go
 | `UNAUTHORIZED`            | 401         | No valid token provided, or credentials are incorrect                             |
 | `EMAIL_NOT_VERIFIED`      | 403         | Credentials valid but email unverified (login gate; `REQUIRE_EMAIL_VERIFICATION`) |
 | `FORBIDDEN`               | 403         | Authenticated but not permitted to access the resource                            |
-| `PLAN_LIMIT_EXCEEDED`     | 403         | Action blocked by the user's plan (areas/projects/AI quota)                       |
+| `PLAN_LIMIT_EXCEEDED`     | 403         | Action blocked by the user's plan (areas/projects/AI quota; attachments: Free write, or > 20 files/owner) |
+| `STORAGE_LIMIT_EXCEEDED`  | 403         | Attachment upload would exceed the 100 MB per-user storage cap (used/limit in message) |
 | `PERMISSION_DENIED`       | 403         | Resource belongs to another user                                                  |
 | `RESOURCE_NOT_FOUND`      | 404         | Generic — resource does not exist or is not visible to the requesting user        |
 | `TASK_NOT_FOUND`          | 404         | Specific task resource not found                                                  |

@@ -132,9 +132,7 @@ func (s *service) Confirm(ctx context.Context, userID, plan string, req ConfirmR
 		return AttachmentView{}, s.quotaError(ctx, userID, head.ContentLength)
 	}
 
-	if s.bcast != nil {
-		s.bcast.Broadcast(userID, Event{Type: EventCreated, Payload: toView(row)})
-	}
+	s.emit(userID, Event{Type: EventCreated, Payload: toView(row)})
 	return toView(row), nil
 }
 
@@ -182,9 +180,7 @@ func (s *service) Delete(ctx context.Context, userID, id string) error {
 	if s.store.Enabled() {
 		s.cleanup(ctx, a.S3Key)
 	}
-	if s.bcast != nil {
-		s.bcast.Broadcast(userID, Event{Type: EventDeleted, Payload: toView(a)})
-	}
+	s.emit(userID, Event{Type: EventDeleted, Payload: DeletedPayload{ID: a.ID, OwnerType: a.OwnerType, OwnerID: a.OwnerID}})
 	return nil
 }
 
@@ -210,6 +206,21 @@ func (s *service) quotaError(ctx context.Context, userID string, incoming int64)
 	}
 	return apperror.New(http.StatusForbidden, apperror.ErrPlanLimitExceeded,
 		fmt.Sprintf("attachment limit reached (max %d per item)", MaxFilesPerOwner))
+}
+
+// emit fires a real-time event fire-and-forget: a nil broadcaster is a no-op and
+// a panicking one is recovered, so a broken transport can never fail the mutation
+// that already committed.
+func (s *service) emit(userID string, ev Event) {
+	if s.bcast == nil {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error().Interface("panic", r).Str("event", ev.Type).Msg("attachment: broadcast panicked — dropped")
+		}
+	}()
+	s.bcast.Broadcast(userID, ev)
 }
 
 // cleanup best-effort deletes an orphaned S3 object; a failure is logged, not
