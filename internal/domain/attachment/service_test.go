@@ -273,6 +273,42 @@ func TestDelete_OpenOnFreePlan_EmitsEvent(t *testing.T) {
 	if len(bc.events) != 1 || bc.events[0].Type != EventDeleted {
 		t.Fatalf("want attachment.deleted event, got %+v", bc.events)
 	}
+	got, ok := bc.events[0].Payload.(DeletedPayload)
+	if !ok || got.ID != "a1" {
+		t.Fatalf("deleted payload = %+v, want DeletedPayload{ID:a1,...}", bc.events[0].Payload)
+	}
+}
+
+// panicBroadcaster models a broken transport: every broadcast panics.
+type panicBroadcaster struct{}
+
+func (panicBroadcaster) Broadcast(string, Event) { panic("hub down") }
+
+func TestConfirm_BroadcastPanicDoesNotFailMutation(t *testing.T) {
+	store := &fakeStore{enabled: true, head: storage.HeadResult{ContentType: "application/pdf", ContentLength: 1024}}
+	repo := &fakeRepo{inserted: true}
+	svc := NewService(repo, store, fakeOwners{}, panicBroadcaster{})
+
+	view, err := svc.Confirm(context.Background(), userID, planPro, ConfirmRequest{S3Key: okKey, FileName: "f.pdf"})
+	if err != nil {
+		t.Fatalf("broadcast panic must not fail confirm, got %v", err)
+	}
+	if view.FileSize != 1024 {
+		t.Fatalf("view not returned after broadcast panic: %+v", view)
+	}
+}
+
+func TestDelete_BroadcastPanicDoesNotFailMutation(t *testing.T) {
+	store := &fakeStore{enabled: true}
+	repo := &fakeRepo{getResult: Attachment{ID: "a1", UserID: userID, S3Key: okKey}}
+	svc := NewService(repo, store, fakeOwners{}, panicBroadcaster{})
+
+	if err := svc.Delete(context.Background(), userID, "a1"); err != nil {
+		t.Fatalf("broadcast panic must not fail delete, got %v", err)
+	}
+	if len(store.deleted) != 1 {
+		t.Fatalf("delete side effects must still run, got %v", store.deleted)
+	}
 }
 
 func TestDelete_NotFoundPropagates(t *testing.T) {

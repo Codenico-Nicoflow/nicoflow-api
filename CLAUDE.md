@@ -203,7 +203,7 @@ Client IP is resolved through `TRUSTED_PROXY` / `TrustedProxyCIDRs`. Exceeded �
 | Areas        | 3         | Unlimited | `PLAN_LIMIT_EXCEEDED` |
 | Projects     | 5 total   | Unlimited | `PLAN_LIMIT_EXCEEDED` |
 | AI requests  | 10/month  | Unlimited | `AI_LIMIT_REACHED`    |
-| File uploads | 5/task    | 20/task   | `PLAN_LIMIT_EXCEEDED` |
+| Attachments  | ❌ (Pro-only write) | 20/owner · 100 MB/user | `PLAN_LIMIT_EXCEEDED` · `STORAGE_LIMIT_EXCEEDED` |
 | NLP parse    | ❌        | ✅        | `PLAN_LIMIT_EXCEEDED` |
 
 Check via `COUNT(*)` before insert. Plan is read from `ctx` Claims — no DB call. Downgrade is graceful (excess resources read-only, never deleted). Canonical numbers: `SPEC.md` §5.

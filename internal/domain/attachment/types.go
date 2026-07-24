@@ -68,6 +68,14 @@ func toView(a Attachment) AttachmentView {
 	}
 }
 
+// DeletedPayload is the attachment.deleted event body — just enough for a client
+// to drop the row and invalidate the owner's list, never stale file metadata.
+type DeletedPayload struct {
+	ID        string `json:"id"`
+	OwnerType string `json:"ownerType"`
+	OwnerID   string `json:"ownerId"`
+}
+
 // UploadURLRequest is the body for POST /attachments/upload-url.
 type UploadURLRequest struct {
 	OwnerType   string `json:"ownerType"`
