@@ -26,11 +26,11 @@ func newMinIOClient(t *testing.T) *Client {
 		t.Skip("TEST_S3_ENDPOINT not set — skipping MinIO integration test")
 	}
 	cfg := config.Config{
-		AWSRegion:      envOr("TEST_S3_REGION", "us-east-1"),
-		AWSAccessKeyID: envOr("TEST_S3_ACCESS_KEY", "minioadmin"),
-		AWSSecretKey:   envOr("TEST_S3_SECRET_KEY", "minioadmin"),
-		S3Bucket:       envOr("TEST_S3_BUCKET", "nicoflow-attachments-test"),
-		AWSEndpoint:    endpoint,
+		StorageRegion:      envOr("TEST_S3_REGION", "us-east-1"),
+		StorageAccessKeyID: envOr("TEST_S3_ACCESS_KEY", "minioadmin"),
+		StorageSecretKey:   envOr("TEST_S3_SECRET_KEY", "minioadmin"),
+		StorageBucket:      envOr("TEST_S3_BUCKET", "nicoflow-attachments-test"),
+		StorageEndpoint:    endpoint,
 	}
 	c, err := New(context.Background(), cfg)
 	if err != nil {
@@ -40,7 +40,7 @@ func newMinIOClient(t *testing.T) *Client {
 		t.Fatal("client should be enabled with full config")
 	}
 	// Best-effort create the bucket (ignore "already exists").
-	_, _ = c.api.CreateBucket(context.Background(), &s3.CreateBucketInput{Bucket: aws.String(cfg.S3Bucket)})
+	_, _ = c.api.CreateBucket(context.Background(), &s3.CreateBucketInput{Bucket: aws.String(cfg.StorageBucket)})
 	return c
 }
 

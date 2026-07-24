@@ -27,7 +27,7 @@ func fixedClient() *Client {
 
 func TestNew_ConfigGate(t *testing.T) {
 	full := config.Config{
-		AWSRegion: "us-east-1", AWSAccessKeyID: "k", AWSSecretKey: "s", S3Bucket: "b",
+		StorageRegion: "us-east-1", StorageAccessKeyID: "k", StorageSecretKey: "s", StorageBucket: "b",
 	}
 	tests := []struct {
 		name        string
@@ -35,10 +35,10 @@ func TestNew_ConfigGate(t *testing.T) {
 		wantEnabled bool
 	}{
 		{"all set → enabled", func(*config.Config) {}, true},
-		{"no region", func(c *config.Config) { c.AWSRegion = "" }, false},
-		{"no access key", func(c *config.Config) { c.AWSAccessKeyID = "" }, false},
-		{"no secret", func(c *config.Config) { c.AWSSecretKey = "" }, false},
-		{"no bucket", func(c *config.Config) { c.S3Bucket = "" }, false},
+		{"no region", func(c *config.Config) { c.StorageRegion = "" }, false},
+		{"no access key", func(c *config.Config) { c.StorageAccessKeyID = "" }, false},
+		{"no secret", func(c *config.Config) { c.StorageSecretKey = "" }, false},
+		{"no bucket", func(c *config.Config) { c.StorageBucket = "" }, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

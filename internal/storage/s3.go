@@ -1,8 +1,10 @@
-// Package storage provides the S3 client and presigned URL generation for file
-// attachments (E-024). It runs against real AWS S3 in prod and MinIO locally.
+// Package storage provides the object-storage client and presigned URL
+// generation for file attachments (E-024). The backend is S3-compatible:
+// Cloudflare R2 in staging/prod and MinIO locally — the same client speaks to
+// both (and to raw AWS S3) via aws-sdk-go-v2.
 //
-// The feature is config-gated: if any of the four S3 env vars is unset the
-// constructor returns a disabled client whose operations report
+// The feature is config-gated: if any of the four STORAGE_* env vars is unset
+// the constructor returns a disabled client whose operations report
 // ErrStorageDisabled. Handlers translate that into a typed 503 — a silent
 // no-op is never acceptable here, because a swallowed upload is data loss.
 package storage
@@ -24,9 +26,9 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/config"
 )
 
-// ErrStorageDisabled is returned by every operation when the S3 feature is not
-// configured. Callers map it to a 503 SERVICE_UNAVAILABLE.
-var ErrStorageDisabled = errors.New("storage: file attachments feature is disabled (S3 not configured)")
+// ErrStorageDisabled is returned by every operation when the storage feature is
+// not configured. Callers map it to a 503 SERVICE_UNAVAILABLE.
+var ErrStorageDisabled = errors.New("storage: file attachments feature is disabled (storage not configured)")
 
 // maxUploadBytes caps an upload at 20 MB — enforced by the S3 POST policy, not
 // just the API, so the bytes never reach us.
@@ -45,25 +47,26 @@ type Client struct {
 	region      string
 	accessKeyID string
 	secretKey   string
-	// endpoint is the raw S3 endpoint override (MinIO) or "" for real AWS.
+	// endpoint is the storage endpoint override (R2 or MinIO) or "" for real AWS S3.
 	endpoint string
 	// now is injected so tests can pin the signing clock; defaults to time.Now.
 	now func() time.Time
 }
 
-// New builds the S3 client from config. When any of AWS_REGION, AWS_ACCESS_KEY_ID,
-// AWS_SECRET_ACCESS_KEY, or S3_BUCKET_NAME is empty the feature is disabled and a
-// disabled client is returned (nil error) — the caller decides the 503 at the
-// request boundary, so boot never fails just because storage isn't set up.
+// New builds the storage client from config. When any of STORAGE_REGION,
+// STORAGE_ACCESS_KEY_ID, STORAGE_SECRET_ACCESS_KEY, or STORAGE_BUCKET is empty
+// the feature is disabled and a disabled client is returned (nil error) — the
+// caller decides the 503 at the request boundary, so boot never fails just
+// because storage isn't set up.
 func New(ctx context.Context, cfg config.Config) (*Client, error) {
-	if cfg.AWSRegion == "" || cfg.AWSAccessKeyID == "" || cfg.AWSSecretKey == "" || cfg.S3Bucket == "" {
+	if cfg.StorageRegion == "" || cfg.StorageAccessKeyID == "" || cfg.StorageSecretKey == "" || cfg.StorageBucket == "" {
 		return &Client{}, nil
 	}
 
 	awsConfig, err := awscfg.LoadDefaultConfig(ctx,
-		awscfg.WithRegion(cfg.AWSRegion),
+		awscfg.WithRegion(cfg.StorageRegion),
 		awscfg.WithCredentialsProvider(
-			credentials.NewStaticCredentialsProvider(cfg.AWSAccessKeyID, cfg.AWSSecretKey, ""),
+			credentials.NewStaticCredentialsProvider(cfg.StorageAccessKeyID, cfg.StorageSecretKey, ""),
 		),
 	)
 	if err != nil {
@@ -73,8 +76,8 @@ func New(ctx context.Context, cfg config.Config) (*Client, error) {
 	api := s3.NewFromConfig(awsConfig, func(o *s3.Options) {
 		// MinIO (and any non-AWS S3) needs an explicit endpoint + path-style
 		// addressing, since virtual-host buckets require AWS DNS.
-		if cfg.AWSEndpoint != "" {
-			o.BaseEndpoint = aws.String(cfg.AWSEndpoint)
+		if cfg.StorageEndpoint != "" {
+			o.BaseEndpoint = aws.String(cfg.StorageEndpoint)
 			o.UsePathStyle = true
 		}
 	})
@@ -82,11 +85,11 @@ func New(ctx context.Context, cfg config.Config) (*Client, error) {
 	return &Client{
 		api:         api,
 		presign:     s3.NewPresignClient(api),
-		bucket:      cfg.S3Bucket,
-		region:      cfg.AWSRegion,
-		accessKeyID: cfg.AWSAccessKeyID,
-		secretKey:   cfg.AWSSecretKey,
-		endpoint:    cfg.AWSEndpoint,
+		bucket:      cfg.StorageBucket,
+		region:      cfg.StorageRegion,
+		accessKeyID: cfg.StorageAccessKeyID,
+		secretKey:   cfg.StorageSecretKey,
+		endpoint:    cfg.StorageEndpoint,
 		now:         time.Now,
 	}, nil
 }
