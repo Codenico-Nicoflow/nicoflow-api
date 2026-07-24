@@ -116,7 +116,7 @@ func TestService_MinIO_FullFlow(t *testing.T) {
 	ownerID := uuid.NewString()
 	ctx := context.Background()
 
-	svc := attachment.NewService(attachment.NewRepository(pool), store, stubOwners{}, nil)
+	svc := attachment.NewService(attachment.NewRepository(pool), store, stubOwners{}, nil, nil)
 
 	up, err := svc.UploadURL(ctx, userID, "pro", attachment.UploadURLRequest{
 		OwnerType: "task", OwnerID: ownerID, FileName: "report.pdf", MimeType: "application/pdf", ClaimedSize: 12,
@@ -161,7 +161,7 @@ func TestService_MinIO_ForeignKeyConfirmRejected(t *testing.T) {
 	userID := seedProUser(t, pool)
 	ctx := context.Background()
 
-	svc := attachment.NewService(attachment.NewRepository(pool), store, stubOwners{}, nil)
+	svc := attachment.NewService(attachment.NewRepository(pool), store, stubOwners{}, nil, nil)
 
 	up, err := svc.UploadURL(ctx, userID, "pro", attachment.UploadURLRequest{
 		OwnerType: "task", OwnerID: uuid.NewString(), FileName: "x.pdf", MimeType: "application/pdf", ClaimedSize: 3,

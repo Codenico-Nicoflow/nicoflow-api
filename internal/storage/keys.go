@@ -23,6 +23,12 @@ func UserKeyPrefix(userID string) string {
 	return keyPrefix + "/" + userID + "/"
 }
 
+// KeyPrefix is the root prefix under which every attachment object lives. The GC
+// sweep lists this prefix to reconcile the object store against the DB.
+func KeyPrefix() string {
+	return keyPrefix + "/"
+}
+
 // sanitizeFilename strips path separators, control characters, and quotes so the
 // value is safe to embed in a Content-Disposition header. It never returns
 // empty — a fully-stripped name falls back to "download".

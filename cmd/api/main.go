@@ -145,13 +145,23 @@ func main() {
 	}
 
 	// Attachment domain (E-024 / NIC-1643). Owner ownership dispatches to the task
-	// service via the adapter below; storageClient is the object-store port.
+	// service via the adapter below; the GC sweep (NIC-1651) checks owner existence
+	// system-wide via taskOwnerExistence over the task repo; storageClient is the
+	// object-store port.
 	attachmentSvc := attachment.NewService(
 		attachment.NewRepository(pool),
 		storageClient,
 		taskOwnerVerifier{tasks: taskSvc},
+		taskOwnerExistence{tasks: taskRepo},
 		ws.NewAttachmentBroadcaster(wsHub),
 	)
+
+	// Wire the attachment cleaner back into the task service so deleting a task
+	// best-effort reaps its attachments (NIC-1651). Post-construction because the
+	// two services reference each other — the attachment service already depends on
+	// the task service via the owner verifier, so this closes the loop acyclically
+	// (concretes meet only here in wiring).
+	taskSvc = taskSvc.WithCleaner(attachmentSvc)
 
 	// Sweep jobs — hourly, invoked by Render Cron Jobs via /internal/jobs/*.
 	jobsRepo := jobs.NewRepository(pool)
@@ -172,7 +182,7 @@ func main() {
 		Search:       search.NewHandler(searchSvc),
 		Attachment:   attachment.NewHandler(attachmentSvc),
 		Notification: notification.NewHandler(notificationSvc),
-		Jobs:         jobs.NewHandler(dueDateNotifier, overdueNotifier, dayStartNotifier, inboxNotifier, summaryNotifier),
+		Jobs:         jobs.NewHandler(dueDateNotifier, overdueNotifier, dayStartNotifier, inboxNotifier, summaryNotifier, attachmentGCAdapter{svc: attachmentSvc}),
 		WS:           ws.NewHandler(wsHub, cfg.JWTSecret, cfg.CORSOrigins),
 	}
 
@@ -224,4 +234,33 @@ func (v taskOwnerVerifier) VerifyOwner(ctx context.Context, userID, ownerType, o
 		return err
 	}
 	return nil
+}
+
+// taskOwnerExistence adapts the task repo to attachment.OwnerExistence for the GC
+// sweep — a system-wide (no user scope) existence check. An unknown owner type is
+// reported non-existent so its stale rows get reaped.
+type taskOwnerExistence struct {
+	tasks task.Repository
+}
+
+func (e taskOwnerExistence) OwnerExists(ctx context.Context, ownerType, ownerID string) (bool, error) {
+	if ownerType != attachment.OwnerTypeTask {
+		return false, nil
+	}
+	return e.tasks.ExistsByID(ctx, ownerID)
+}
+
+// attachmentGCAdapter adapts the attachment service to jobs.AttachmentGC,
+// translating the domain summary into the jobs-facing one so neither package
+// imports the other.
+type attachmentGCAdapter struct {
+	svc attachment.Service
+}
+
+func (a attachmentGCAdapter) RunGC(ctx context.Context) (jobs.GCSummary, error) {
+	sum, err := a.svc.RunGC(ctx)
+	if err != nil {
+		return jobs.GCSummary{}, err
+	}
+	return jobs.GCSummary{ObjectsDeleted: sum.ObjectsDeleted, RowsDeleted: sum.RowsDeleted}, nil
 }

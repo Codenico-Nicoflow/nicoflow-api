@@ -36,6 +36,9 @@ type Repository interface {
 	// ListActiveInboxByUser returns the user's active+inbox tasks across ALL
 	// projects — the candidate set for Focus and Time-Spread.
 	ListActiveInboxByUser(ctx context.Context, userID string) ([]Task, error)
+	// ExistsByID reports whether a task exists, system-wide (no user scope). Used
+	// by the attachment GC sweep to detect dead owners; not for user requests.
+	ExistsByID(ctx context.Context, id string) (bool, error)
 }
 
 type pgRepo struct{ db *pgxpool.Pool }
@@ -236,6 +239,18 @@ func (r *pgRepo) Delete(ctx context.Context, userID, id string) error {
 		return apperror.New(http.StatusNotFound, apperror.ErrTaskNotFound, "task not found")
 	}
 	return nil
+}
+
+func (r *pgRepo) ExistsByID(ctx context.Context, id string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM tasks WHERE id = @id)`,
+		pgx.NamedArgs{"id": id},
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("task.ExistsByID: %w", err)
+	}
+	return exists, nil
 }
 
 func (r *pgRepo) ProjectOwned(ctx context.Context, userID, projectID string) (bool, error) {

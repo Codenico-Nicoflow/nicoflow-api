@@ -134,6 +134,66 @@ func (r *pgRepo) ListByUser(ctx context.Context, userID string) ([]Attachment, e
 	return collect(rows, "attachment.ListByUser")
 }
 
+// AllKeys returns the s3_key of every row across all users. GC-only: it diffs
+// the object store against this set, so it must not be user-scoped.
+func (r *pgRepo) AllKeys(ctx context.Context) (map[string]struct{}, error) {
+	rows, err := r.db.Query(ctx, `SELECT s3_key FROM file_attachments`)
+	if err != nil {
+		return nil, fmt.Errorf("attachment.AllKeys: %w", err)
+	}
+	defer rows.Close()
+	keys := make(map[string]struct{})
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, fmt.Errorf("attachment.AllKeys scan: %w", err)
+		}
+		keys[key] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("attachment.AllKeys rows: %w", err)
+	}
+	return keys, nil
+}
+
+// ListAllOwners returns the distinct owner pairs across all users. GC-only: the
+// sweep checks each for existence, so it must span every user's rows.
+func (r *pgRepo) ListAllOwners(ctx context.Context) ([]Owner, error) {
+	rows, err := r.db.Query(ctx, `SELECT DISTINCT owner_type, owner_id FROM file_attachments`)
+	if err != nil {
+		return nil, fmt.Errorf("attachment.ListAllOwners: %w", err)
+	}
+	defer rows.Close()
+	var out []Owner
+	for rows.Next() {
+		var o Owner
+		if err := rows.Scan(&o.OwnerType, &o.OwnerID); err != nil {
+			return nil, fmt.Errorf("attachment.ListAllOwners scan: %w", err)
+		}
+		out = append(out, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("attachment.ListAllOwners rows: %w", err)
+	}
+	return out, nil
+}
+
+// DeleteByOwner removes every row for one owner across all users, returning the
+// deleted rows so the GC sweep can reclaim their S3 objects. GC-only (dead-owner
+// reap); the user-scoped variant is DeleteAllForOwner.
+func (r *pgRepo) DeleteByOwner(ctx context.Context, ownerType, ownerID string) ([]Attachment, error) {
+	rows, err := r.db.Query(ctx, `
+		DELETE FROM file_attachments
+		WHERE owner_type = $1 AND owner_id = $2
+		RETURNING`+selectCols,
+		ownerType, ownerID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("attachment.DeleteByOwner: %w", err)
+	}
+	return collect(rows, "attachment.DeleteByOwner")
+}
+
 func collect(rows pgx.Rows, op string) ([]Attachment, error) {
 	defer rows.Close()
 	var out []Attachment

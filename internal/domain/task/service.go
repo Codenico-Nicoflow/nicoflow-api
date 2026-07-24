@@ -53,13 +53,25 @@ type Service interface {
 	ReorderOne(ctx context.Context, userID, id string, displayOrder int) (TaskView, error)
 	Focus(ctx context.Context, userID string, p FocusParams) (ListTasksResponse, error)
 	TimeSpread(ctx context.Context, userID string, loc *time.Location) (TimeSpreadResponse, error)
+	// WithCleaner injects the attachment cleaner invoked best-effort on delete
+	// and returns the service for chaining. Wired once in main.go.
+	WithCleaner(c AttachmentCleaner) Service
 }
 
 type service struct {
 	repo        Repository
-	now         func() time.Time // injectable clock — Focus/Time-Spread read time only through this
-	notif       notifier         // best-effort notification emitter; nil disables emission
-	broadcaster Broadcaster      // real-time WS emitter; nil disables emission
+	now         func() time.Time  // injectable clock — Focus/Time-Spread read time only through this
+	notif       notifier          // best-effort notification emitter; nil disables emission
+	broadcaster Broadcaster       // real-time WS emitter; nil disables emission
+	cleaner     AttachmentCleaner // best-effort attachment cleanup on delete; nil disables
+}
+
+// WithCleaner injects the attachment cleaner used on task delete. Kept as a
+// post-construction option so the many NewService callers/tests need no change;
+// wired once in main.go, where the attachment service concrete is available.
+func (s *service) WithCleaner(c AttachmentCleaner) Service {
+	s.cleaner = c
+	return s
 }
 
 // NewService creates a new task service with a real clock. notif may be nil
@@ -224,6 +236,9 @@ func (s *service) Delete(ctx context.Context, userID, id string) error {
 	if err := s.repo.Delete(ctx, userID, id); err != nil {
 		return err
 	}
+	// Best-effort: a cleanup failure is logged but never fails the delete — the
+	// task is already gone and the GC sweep reaps any leftover attachments.
+	s.cleanAttachments(ctx, userID, id)
 	s.emit(userID, Event{Type: EventDeleted, Payload: Ref{ID: id}})
 	return nil
 }

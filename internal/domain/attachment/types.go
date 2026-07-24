@@ -117,6 +117,7 @@ type Storage interface {
 	PresignDownload(ctx context.Context, key, filename string) (string, error)
 	Head(ctx context.Context, key string) (storage.HeadResult, error)
 	Delete(ctx context.Context, key string) error
+	List(ctx context.Context, prefix string) ([]string, error)
 }
 
 // Broadcaster receives a domain Event for real-time fan-out. Fire-and-forget:
@@ -141,6 +142,25 @@ type Service interface {
 	ListByOwner(ctx context.Context, userID, ownerType, ownerID string) ([]AttachmentView, error)
 	DownloadURL(ctx context.Context, userID, id string) (string, error)
 	Delete(ctx context.Context, userID, id string) error
+
+	// DeleteAllForOwner removes every attachment for an owner and best-effort
+	// deletes their S3 objects. The task-delete flow calls it via the
+	// task.AttachmentCleaner seam; a failed S3 delete never fails the call —
+	// the GC sweep reconciles anything left behind.
+	DeleteAllForOwner(ctx context.Context, userID, ownerType, ownerID string) error
+
+	// RunGC reconciles the object store against the DB: it deletes objects with
+	// no matching row (never-confirmed uploads) and rows whose owner has vanished
+	// (plus their objects). Best-effort per object; returns a summary of what was
+	// reaped. Storage-disabled ⇒ no-op summary.
+	RunGC(ctx context.Context) (GCSummary, error)
+}
+
+// GCSummary is the attachment-gc sweep result — server-side log only, never
+// user-facing.
+type GCSummary struct {
+	ObjectsDeleted int `json:"objectsDeleted"`
+	RowsDeleted    int `json:"rowsDeleted"`
 }
 
 // Quota limits enforced by the guarded insert (SPEC §5 / NIC-1638).
@@ -197,4 +217,34 @@ type Repository interface {
 	// ListByUser returns all of a user's attachments — the GC sweep (BE-4)
 	// reconciles these rows against the object store.
 	ListByUser(ctx context.Context, userID string) ([]Attachment, error)
+
+	// AllKeys returns the s3_key of every attachment row, across all users. The
+	// GC sweep diffs the object store against this set to find never-confirmed
+	// uploads (objects with no row). System-level: not user-scoped by design.
+	AllKeys(ctx context.Context) (map[string]struct{}, error)
+
+	// ListAllOwners returns the distinct (ownerType, ownerID) pairs referenced by
+	// attachment rows, across all users. The GC sweep checks each against the
+	// owner store to find dead-owner rows. System-level: not user-scoped.
+	ListAllOwners(ctx context.Context) ([]Owner, error)
+
+	// DeleteByOwner removes every attachment row for one owner, across all users,
+	// returning the deleted rows so the GC sweep can reclaim their S3 objects.
+	// System-level (dead-owner reap); the user-scoped path is DeleteAllForOwner.
+	DeleteByOwner(ctx context.Context, ownerType, ownerID string) ([]Attachment, error)
+}
+
+// Owner is a polymorphic owner reference — the (type, id) pair the GC sweep
+// checks for existence.
+type Owner struct {
+	OwnerType string
+	OwnerID   string
+}
+
+// OwnerExistence reports whether a polymorphic owner still exists, system-wide
+// (no user scope). The GC sweep uses it to find rows whose owner has vanished.
+// Defined here (consumer package); the task domain supplies an adapter. An
+// unknown owner type is treated as non-existent so its rows are reaped.
+type OwnerExistence interface {
+	OwnerExists(ctx context.Context, ownerType, ownerID string) (bool, error)
 }

@@ -23,21 +23,25 @@ const planPro = "pro"
 const maxUploadBytes int64 = 20 << 20
 
 type service struct {
-	repo   Repository
-	store  Storage
-	owners OwnerVerifier
-	bcast  Broadcaster
-	newKey func(userID, ownerType, ownerID string) string
+	repo     Repository
+	store    Storage
+	owners   OwnerVerifier
+	ownerExt OwnerExistence // system-level owner existence; GC-only
+	bcast    Broadcaster
+	newKey   func(userID, ownerType, ownerID string) string
 }
 
 // NewService wires the attachment service. bcast may be nil (no-op real-time).
-func NewService(repo Repository, store Storage, owners OwnerVerifier, bcast Broadcaster) Service {
+// ownerExt drives the GC dead-owner reap; it may be nil, which disables that
+// half of the sweep (orphan-object reap still runs).
+func NewService(repo Repository, store Storage, owners OwnerVerifier, ownerExt OwnerExistence, bcast Broadcaster) Service {
 	return &service{
-		repo:   repo,
-		store:  store,
-		owners: owners,
-		bcast:  bcast,
-		newKey: storage.NewObjectKey,
+		repo:     repo,
+		store:    store,
+		owners:   owners,
+		ownerExt: ownerExt,
+		bcast:    bcast,
+		newKey:   storage.NewObjectKey,
 	}
 }
 
@@ -224,11 +228,14 @@ func (s *service) emit(userID string, ev Event) {
 }
 
 // cleanup best-effort deletes an orphaned S3 object; a failure is logged, not
-// surfaced, since the GC sweep reconciles anything left behind.
-func (s *service) cleanup(ctx context.Context, key string) {
+// surfaced, since the GC sweep reconciles anything left behind. Reports whether
+// the delete succeeded so the GC sweep can count what it actually reaped.
+func (s *service) cleanup(ctx context.Context, key string) bool {
 	if err := s.store.Delete(ctx, key); err != nil {
 		log.Error().Err(err).Str("s3_key", key).Msg("attachment: failed to delete orphaned object")
+		return false
 	}
+	return true
 }
 
 func errStorageDisabled() *apperror.AppError {

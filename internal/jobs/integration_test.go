@@ -21,6 +21,15 @@ import (
 
 const cronSecret = "test-cron-secret"
 
+// stubGC is a no-op AttachmentGC — the reconcile logic is covered by the
+// attachment package's own tests; here we only assert the endpoint is wired and
+// token-guarded like the notification sweeps.
+type stubGC struct{}
+
+func (stubGC) RunGC(context.Context) (jobs.GCSummary, error) {
+	return jobs.GCSummary{ObjectsDeleted: 0, RowsDeleted: 0}, nil
+}
+
 func clean(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	queries := []string{
@@ -80,6 +89,7 @@ func newServer(t *testing.T, pool *pgxpool.Pool) *httptest.Server {
 		jobs.NewDayStartNotifier(repo, notifSvc),
 		jobs.NewInboxNotifier(repo, notifSvc),
 		jobs.NewSummaryNotifier(repo, notifSvc),
+		stubGC{},
 	)
 
 	r := chi.NewRouter()
@@ -89,6 +99,7 @@ func newServer(t *testing.T, pool *pgxpool.Pool) *httptest.Server {
 	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/day-start", h.DayStart)
 	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/inbox", h.Inbox)
 	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/summary", h.Summary)
+	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/attachment-gc", h.AttachmentGC)
 
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
@@ -129,6 +140,14 @@ func TestEndpoint_Auth(t *testing.T) {
 	if resp := post(t, srv.URL+"/internal/jobs/due-notify", cronSecret); resp.StatusCode != http.StatusOK {
 		t.Fatalf("valid token → %d, want 200", resp.StatusCode)
 	}
+
+	// attachment-gc is guarded the same way: missing token → 401, valid → 200.
+	if resp := post(t, srv.URL+"/internal/jobs/attachment-gc", ""); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("attachment-gc missing token → %d, want 401", resp.StatusCode)
+	}
+	if resp := post(t, srv.URL+"/internal/jobs/attachment-gc", cronSecret); resp.StatusCode != http.StatusOK {
+		t.Fatalf("attachment-gc valid token → %d, want 200", resp.StatusCode)
+	}
 }
 
 // secretless server → 503.
@@ -142,6 +161,7 @@ func TestEndpoint_DisabledWhenSecretUnset(t *testing.T) {
 		jobs.NewDayStartNotifier(repo, notifSvc),
 		jobs.NewInboxNotifier(repo, notifSvc),
 		jobs.NewSummaryNotifier(repo, notifSvc),
+		stubGC{},
 	)
 	r := chi.NewRouter()
 	r.With(mw.InternalToken("")).Post("/internal/jobs/due-notify", h.DueNotify)

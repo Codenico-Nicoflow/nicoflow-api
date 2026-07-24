@@ -177,6 +177,32 @@ func (c *Client) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
+// List returns every object key under prefix, paging through the store until
+// exhausted. Used by the GC sweep to reconcile the object store against the DB;
+// a prefix that matches nothing yields an empty slice, never an error.
+func (c *Client) List(ctx context.Context, prefix string) ([]string, error) {
+	if !c.Enabled() {
+		return nil, ErrStorageDisabled
+	}
+	var keys []string
+	p := s3.NewListObjectsV2Paginator(c.api, &s3.ListObjectsV2Input{
+		Bucket: aws.String(c.bucket),
+		Prefix: aws.String(prefix),
+	})
+	for p.HasMorePages() {
+		page, err := p.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("storage: list objects: %w", err)
+		}
+		for _, obj := range page.Contents {
+			if obj.Key != nil {
+				keys = append(keys, *obj.Key)
+			}
+		}
+	}
+	return keys, nil
+}
+
 // bucketURL is the POST target for browser uploads: path-style for MinIO/custom
 // endpoints, virtual-host style for real AWS S3.
 func (c *Client) bucketURL() string {
