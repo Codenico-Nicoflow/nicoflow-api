@@ -6,6 +6,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/nicoflow/nicoflow-api/internal/domain/area"
+	"github.com/nicoflow/nicoflow-api/internal/domain/attachment"
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
@@ -36,10 +37,12 @@ var wireTypes = map[string]EventType{
 	area.EventDeleted:       EventAreaDeleted,
 	// bucket.EventTaskCreated shares task.EventCreated's key ("task.created") —
 	// the entry above covers the bucket process→task emit too.
-	bucket.EventCreated:    EventBucketCreated,
-	bucket.EventProcessed:  EventBucketProcessed,
-	bucket.EventDeleted:    EventBucketDeleted,
-	"notification.created": EventNotificationCreated,
+	bucket.EventCreated:     EventBucketCreated,
+	bucket.EventProcessed:   EventBucketProcessed,
+	bucket.EventDeleted:     EventBucketDeleted,
+	attachment.EventCreated: EventAttachmentCreated,
+	attachment.EventDeleted: EventAttachmentDeleted,
+	"notification.created":  EventNotificationCreated,
 }
 
 // broadcast resolves the wire type and pushes the envelope. Shared by every
@@ -127,4 +130,18 @@ func NewNotificationBroadcaster(hub *Hub) *NotificationBroadcaster {
 
 func (b *NotificationBroadcaster) Broadcast(userID string, event notification.Event) {
 	broadcast(b.hub, b.now, userID, event.Type, event.Payload)
+}
+
+// AttachmentBroadcaster adapts the Hub to attachment.Broadcaster.
+type AttachmentBroadcaster struct {
+	hub *Hub
+	now func() time.Time
+}
+
+func NewAttachmentBroadcaster(hub *Hub) *AttachmentBroadcaster {
+	return &AttachmentBroadcaster{hub: hub, now: time.Now}
+}
+
+func (b *AttachmentBroadcaster) Broadcast(userID string, ev attachment.Event) {
+	broadcast(b.hub, b.now, userID, ev.Type, ev.Payload)
 }

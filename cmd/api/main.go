@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"os"
 	"os/signal"
@@ -12,10 +13,12 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
+	"github.com/nicoflow/nicoflow-api/internal/apperror"
 	"github.com/nicoflow/nicoflow-api/internal/config"
 	"github.com/nicoflow/nicoflow-api/internal/db"
 	"github.com/nicoflow/nicoflow-api/internal/domain/ai"
 	"github.com/nicoflow/nicoflow-api/internal/domain/area"
+	"github.com/nicoflow/nicoflow-api/internal/domain/attachment"
 	"github.com/nicoflow/nicoflow-api/internal/domain/auth"
 	"github.com/nicoflow/nicoflow-api/internal/domain/billing"
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
@@ -140,7 +143,15 @@ func main() {
 	} else {
 		log.Warn().Msg("file attachments: object storage disabled (unset STORAGE_* env) — /attachments returns 503")
 	}
-	_ = storageClient // wired into the attachment domain in NIC-1643
+
+	// Attachment domain (E-024 / NIC-1643). Owner ownership dispatches to the task
+	// service via the adapter below; storageClient is the object-store port.
+	attachmentSvc := attachment.NewService(
+		attachment.NewRepository(pool),
+		storageClient,
+		taskOwnerVerifier{tasks: taskSvc},
+		ws.NewAttachmentBroadcaster(wsHub),
+	)
 
 	// Sweep jobs — hourly, invoked by Render Cron Jobs via /internal/jobs/*.
 	jobsRepo := jobs.NewRepository(pool)
@@ -159,6 +170,7 @@ func main() {
 		AI:           ai.NewHandler(nil),
 		Billing:      billing.NewHandler(nil),
 		Search:       search.NewHandler(searchSvc),
+		Attachment:   attachment.NewHandler(attachmentSvc),
 		Notification: notification.NewHandler(notificationSvc),
 		Jobs:         jobs.NewHandler(dueDateNotifier, overdueNotifier, dayStartNotifier, inboxNotifier, summaryNotifier),
 		WS:           ws.NewHandler(wsHub, cfg.JWTSecret, cfg.CORSOrigins),
@@ -191,4 +203,25 @@ func main() {
 		log.Error().Err(err).Msg("graceful shutdown timed out")
 	}
 	log.Info().Msg("server shut down cleanly")
+}
+
+// taskOwnerVerifier adapts the task service to attachment.OwnerVerifier. It
+// resolves ownership by attempting a user-scoped task lookup and normalizes any
+// not-found (task-scoped or otherwise) into RESOURCE_NOT_FOUND so a foreign or
+// missing owner never leaks its existence (AC6).
+type taskOwnerVerifier struct {
+	tasks task.Service
+}
+
+func (v taskOwnerVerifier) VerifyOwner(ctx context.Context, userID, ownerType, ownerID string) error {
+	if ownerType != attachment.OwnerTypeTask {
+		return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "unknown owner type")
+	}
+	if _, err := v.tasks.Get(ctx, userID, ownerID); err != nil {
+		if ae, ok := errors.AsType[*apperror.AppError](err); ok && ae.Status == http.StatusNotFound {
+			return apperror.New(http.StatusNotFound, apperror.ErrResourceNotFound, "resource not found")
+		}
+		return err
+	}
+	return nil
 }

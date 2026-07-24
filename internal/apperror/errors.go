@@ -23,6 +23,7 @@ const (
 	ErrEmailNotVerified      = "EMAIL_NOT_VERIFIED"
 	ErrForbidden             = "FORBIDDEN"
 	ErrPlanLimitExceeded     = "PLAN_LIMIT_EXCEEDED"
+	ErrStorageLimitExceeded  = "STORAGE_LIMIT_EXCEEDED"
 	ErrPermissionDenied      = "PERMISSION_DENIED"
 	ErrResourceNotFound      = "RESOURCE_NOT_FOUND"
 	ErrTaskNotFound          = "TASK_NOT_FOUND"

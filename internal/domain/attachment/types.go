@@ -7,6 +7,8 @@ package attachment
 import (
 	"context"
 	"time"
+
+	"github.com/nicoflow/nicoflow-api/internal/storage"
 )
 
 // Owner types. Kept as a small closed set so the polymorphic owner column can't
@@ -14,6 +16,124 @@ import (
 const (
 	OwnerTypeTask = "task"
 )
+
+// Domain event types emitted on mutation. Equal to the wire names by convention;
+// the ws adapter maps them through an explicit table (never a cast).
+const (
+	EventCreated = "attachment.created"
+	EventDeleted = "attachment.deleted"
+)
+
+// allowedMimeTypes is the explicit upload allowlist — no globs, no SVG (an SVG
+// can carry script and would execute in the user's origin if ever rendered
+// inline). A type outside this set is rejected at both upload-url and confirm.
+var allowedMimeTypes = map[string]struct{}{
+	"image/jpeg":         {},
+	"image/png":          {},
+	"image/gif":          {},
+	"image/webp":         {},
+	"application/pdf":    {},
+	"text/plain":         {},
+	"text/csv":           {},
+	"application/zip":    {},
+	"application/msword": {},
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document": {},
+	"application/vnd.ms-excel": {},
+	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {},
+}
+
+// isAllowedMime reports whether a MIME type may be uploaded/stored.
+func isAllowedMime(mimeType string) bool {
+	_, ok := allowedMimeTypes[mimeType]
+	return ok
+}
+
+// AttachmentView is the API-facing shape. s3Key is deliberately omitted — the
+// object key never leaves the server (it encodes the owner tree and is only used
+// to mint presigned URLs).
+type AttachmentView struct {
+	ID        string    `json:"id"`
+	OwnerType string    `json:"ownerType"`
+	OwnerID   string    `json:"ownerId"`
+	FileName  string    `json:"fileName"`
+	FileSize  int64     `json:"fileSize"`
+	MimeType  string    `json:"mimeType"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+func toView(a Attachment) AttachmentView {
+	return AttachmentView{
+		ID: a.ID, OwnerType: a.OwnerType, OwnerID: a.OwnerID,
+		FileName: a.FileName, FileSize: a.FileSize, MimeType: a.MimeType, CreatedAt: a.CreatedAt,
+	}
+}
+
+// UploadURLRequest is the body for POST /attachments/upload-url.
+type UploadURLRequest struct {
+	OwnerType   string `json:"ownerType"`
+	OwnerID     string `json:"ownerId"`
+	FileName    string `json:"fileName"`
+	MimeType    string `json:"mimeType"`
+	ClaimedSize int64  `json:"fileSize"`
+}
+
+// UploadURLResponse returns the presigned POST plus the s3Key the client must
+// echo back to confirm. s3Key here is a one-time upload target, not a stored
+// secret — the client needs it to call confirm.
+type UploadURLResponse struct {
+	URL    string            `json:"url"`
+	Fields map[string]string `json:"fields"`
+	S3Key  string            `json:"s3Key"`
+}
+
+// ConfirmRequest is the body for POST /attachments. Only the s3Key is trusted
+// from the client; size and type are re-read from S3 via HeadObject.
+type ConfirmRequest struct {
+	S3Key    string `json:"s3Key"`
+	FileName string `json:"fileName"`
+}
+
+// OwnerVerifier asserts that the caller owns the polymorphic owner referenced by
+// an attachment. Defined in this (consumer) package; the task domain supplies an
+// adapter. Unknown owner type → INVALID_INPUT; not owned / missing →
+// RESOURCE_NOT_FOUND (never an existence leak).
+type OwnerVerifier interface {
+	VerifyOwner(ctx context.Context, userID, ownerType, ownerID string) error
+}
+
+// Storage is the object-store port the service needs. Satisfied by
+// *storage.Client. Narrowed to just the operations used here.
+type Storage interface {
+	Enabled() bool
+	PresignUpload(key, contentType string) (storage.PostPolicy, error)
+	PresignDownload(ctx context.Context, key, filename string) (string, error)
+	Head(ctx context.Context, key string) (storage.HeadResult, error)
+	Delete(ctx context.Context, key string) error
+}
+
+// Broadcaster receives a domain Event for real-time fan-out. Fire-and-forget:
+// implementations must never block or fail the mutation. A nil Broadcaster is a
+// valid no-op seam.
+type Broadcaster interface {
+	Broadcast(userID string, ev Event)
+}
+
+// Event is the domain-level real-time event. The ws adapter maps Type onto the
+// wire EventType.
+type Event struct {
+	Type    string
+	Payload any
+}
+
+// Service is the attachment domain's business-logic contract consumed by the
+// handler.
+type Service interface {
+	UploadURL(ctx context.Context, userID, plan string, req UploadURLRequest) (UploadURLResponse, error)
+	Confirm(ctx context.Context, userID, plan string, req ConfirmRequest) (AttachmentView, error)
+	ListByOwner(ctx context.Context, userID, ownerType, ownerID string) ([]AttachmentView, error)
+	DownloadURL(ctx context.Context, userID, id string) (string, error)
+	Delete(ctx context.Context, userID, id string) error
+}
 
 // Quota limits enforced by the guarded insert (SPEC §5 / NIC-1638).
 //
