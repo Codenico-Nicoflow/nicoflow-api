@@ -89,28 +89,29 @@ Dependency direction: Handler → Service interface → Repository interface. In
 - Never modify a deployed migration — always add a new numbered `.up.sql` / `.down.sql` pair.
 - `display_order` / `sort_order` use `INT DEFAULT 0`. Sparse ordering is intentional.
 
-### Migrations (001–034 applied)
+### Migrations (001–036 applied)
 
 ```
-001 create_users                     018 users_email_partial_unique
-002 create_refresh_tokens            019 enrich_areas_projects
-003 create_areas                     020 email_verification
-004 create_projects                  021 users_username_partial_unique
-005 create_tasks                     022 drop_folder_icon_check
-006 create_subtasks                  023 users_add_language
-007 create_user_plans                024 projects_area_cascade
-008 create_webhook_events            025 tasks_energy_aware
-009 create_ai_sessions               026 tasks_drop_due_date
-010 create_ai_messages               027 projects_area_required
-011 create_ai_usage_monthly          028 create_bucket
-012 users_soft_delete                029 search_vectors
-013 folder_icons_project             030 search_vectors_simple
-014 alter_users_add_profile_fields   031 create_notifications
-015 create_password_reset_tokens     032 notification_preferences
-016 create_biometric_credentials     033 create_push_subscriptions
-017 users_login_lockout              034 notification_prefs_families
+001 create_users                     019 enrich_areas_projects
+002 create_refresh_tokens            020 email_verification
+003 create_areas                     021 users_username_partial_unique
+004 create_projects                  022 drop_folder_icon_check
+005 create_tasks                     023 users_add_language
+006 create_subtasks                  024 projects_area_cascade
+007 create_user_plans                025 tasks_energy_aware
+008 create_webhook_events            026 tasks_drop_due_date
+009 create_ai_sessions               027 projects_area_required
+010 create_ai_messages               028 create_bucket
+011 create_ai_usage_monthly          029 search_vectors
+012 users_soft_delete                030 search_vectors_simple
+013 folder_icons_project             031 create_notifications
+014 alter_users_add_profile_fields   032 notification_preferences
+015 create_password_reset_tokens     033 create_push_subscriptions
+016 create_biometric_credentials     034 notification_prefs_families
+017 users_login_lockout              035 notification_prefs_reminder_hours
+018 users_email_partial_unique       036 create_file_attachments
 ```
-(031–034 are the notification stack: notifications table → preferences → Web Push subscriptions → per-family toggles.)
+(031–035 are the notification stack: notifications table → preferences → Web Push subscriptions → per-family toggles → reminder-hours. 036 is the E-024 file-attachments table: polymorphic owner `{type,id}` (no FK), `user_id` cascade, unique `s3_key`; quota enforced by the repo's atomic guarded insert — NIC-1638.)
 
 > **027 `projects_area_required`** makes `projects.area_id NOT NULL` — a project must always belong to an area (matches the `Area › Project › Task` hierarchy and 024's cascade). Area-less projects are deleted by the migration. Create/Update source `area_id` from a **user-scoped `SELECT`** so a project can only live in an area the caller owns; a foreign/missing area → `AREA_NOT_FOUND`.
 
