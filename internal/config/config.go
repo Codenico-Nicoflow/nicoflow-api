@@ -25,10 +25,18 @@ type Config struct {
 	LSWebhookSecret string
 	// CronSecret guards the internal job endpoints (POST /internal/jobs/*). Callers
 	// must send it as X-Internal-Token. Unset ⇒ the endpoints return 503 (disabled).
-	CronSecret        string
-	AWSAccessKeyID    string
-	AWSSecretKey      string
-	S3Bucket          string
+	CronSecret string
+	// Storage* configure the S3-compatible object store for file attachments.
+	// The backend is Cloudflare R2 (staging/prod) or MinIO (local) — both speak
+	// the S3 API — so the vars are vendor-neutral, not AWS-specific.
+	StorageAccessKeyID string
+	StorageSecretKey   string
+	// StorageRegion is "auto" for R2, a real region for AWS S3, anything for MinIO.
+	StorageRegion string
+	// StorageEndpoint overrides the S3 endpoint (R2 or MinIO URL). Empty ⇒ real
+	// AWS S3. When set, the client uses path-style addressing.
+	StorageEndpoint   string
+	StorageBucket     string
 	CORSOrigins       string
 	TrustedProxyCIDRs string
 	// RateLimitBypassToken lets the E2E suite opt out of rate limiting: a request
@@ -88,9 +96,11 @@ func Load() Config {
 		CookieCrossSite:          parseBool(os.Getenv("COOKIE_CROSS_SITE"), false),
 		LSWebhookSecret:          os.Getenv("LS_WEBHOOK_SECRET"),
 		CronSecret:               os.Getenv("CRON_SECRET"),
-		AWSAccessKeyID:           os.Getenv("AWS_ACCESS_KEY_ID"),
-		AWSSecretKey:             os.Getenv("AWS_SECRET_ACCESS_KEY"),
-		S3Bucket:                 os.Getenv("S3_BUCKET_NAME"),
+		StorageAccessKeyID:       os.Getenv("STORAGE_ACCESS_KEY_ID"),
+		StorageSecretKey:         os.Getenv("STORAGE_SECRET_ACCESS_KEY"),
+		StorageRegion:            os.Getenv("STORAGE_REGION"),
+		StorageEndpoint:          os.Getenv("STORAGE_ENDPOINT"),
+		StorageBucket:            os.Getenv("STORAGE_BUCKET"),
 		CORSOrigins:              os.Getenv("CORS_ORIGINS"),
 		TrustedProxyCIDRs:        os.Getenv("TRUSTED_PROXY"),
 		RateLimitBypassToken:     os.Getenv("RATE_LIMIT_BYPASS_TOKEN"),

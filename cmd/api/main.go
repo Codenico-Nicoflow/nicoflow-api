@@ -25,6 +25,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/task"
 	"github.com/nicoflow/nicoflow-api/internal/handler"
 	"github.com/nicoflow/nicoflow-api/internal/jobs"
+	"github.com/nicoflow/nicoflow-api/internal/storage"
 	"github.com/nicoflow/nicoflow-api/internal/ws"
 	"github.com/nicoflow/nicoflow-api/pkg/pushutil"
 
@@ -125,6 +126,21 @@ func main() {
 	// Bucket (inbox) — process turns an item into a task via the task service;
 	// notificationSvc drives the Pro inbox_zero notification (best-effort).
 	bucketSvc := bucket.NewService(bucket.NewRepository(pool), taskSvc, notificationSvc, ws.NewBucketBroadcaster(wsHub))
+
+	// Object storage for file attachments (E-024). S3-compatible: MinIO locally,
+	// Cloudflare R2 in staging/prod. Disabled (typed 503 at the request boundary)
+	// when the STORAGE_* env vars are unset, so local/dev boots without a store.
+	// The attachment domain (later stories) consumes it.
+	storageClient, err := storage.New(ctx, cfg)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to init storage client")
+	}
+	if storageClient.Enabled() {
+		log.Info().Msg("file attachments: object storage enabled")
+	} else {
+		log.Warn().Msg("file attachments: object storage disabled (unset STORAGE_* env) — /attachments returns 503")
+	}
+	_ = storageClient // wired into the attachment domain in NIC-1643
 
 	// Sweep jobs — hourly, invoked by Render Cron Jobs via /internal/jobs/*.
 	jobsRepo := jobs.NewRepository(pool)
