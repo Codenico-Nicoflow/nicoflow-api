@@ -40,15 +40,22 @@ const (
 	ErrIdempotencyConflict   = "IDEMPOTENCY_CONFLICT"
 	ErrRateLimited           = "RATE_LIMITED"
 	ErrAILimitReached        = "AI_LIMIT_REACHED"
-	ErrInvalidProjectId      = "INVALID_PROJECT_ID"
-	ErrInvalidStatus         = "INVALID_STATUS"
-	ErrInvalidDate           = "INVALID_DATE"
-	ErrInvalidPriority       = "INVALID_PRIORITY"
-	ErrInvalidAIContext      = "INVALID_AI_CONTEXT"
-	ErrInvalidEmail          = "INVALID_EMAIL"
-	ErrWeakPassword          = "WEAK_PASSWORD"
-	ErrRequired              = "REQUIRED"
-	ErrDatabaseError         = "DATABASE_ERROR"
-	ErrInternalServerError   = "INTERNAL_SERVER_ERROR"
-	ErrServiceUnavailable    = "SERVICE_UNAVAILABLE"
+	// AI foundation (E-026 / NIC-1681):
+	// AI_UNAVAILABLE (503) — feature disabled (no key), provider 429·529, or first-token timeout.
+	// AI_PROVIDER_ERROR (502) — provider 400·401: our fault, logged loud with request_id.
+	// AI_STREAM_ACTIVE (409) — a stream is already in flight for the session.
+	ErrAIUnavailable       = "AI_UNAVAILABLE"
+	ErrAIProviderError     = "AI_PROVIDER_ERROR"
+	ErrAIStreamActive      = "AI_STREAM_ACTIVE"
+	ErrInvalidProjectId    = "INVALID_PROJECT_ID"
+	ErrInvalidStatus       = "INVALID_STATUS"
+	ErrInvalidDate         = "INVALID_DATE"
+	ErrInvalidPriority     = "INVALID_PRIORITY"
+	ErrInvalidAIContext    = "INVALID_AI_CONTEXT"
+	ErrInvalidEmail        = "INVALID_EMAIL"
+	ErrWeakPassword        = "WEAK_PASSWORD"
+	ErrRequired            = "REQUIRED"
+	ErrDatabaseError       = "DATABASE_ERROR"
+	ErrInternalServerError = "INTERNAL_SERVER_ERROR"
+	ErrServiceUnavailable  = "SERVICE_UNAVAILABLE"
 )
