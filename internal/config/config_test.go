@@ -6,7 +6,7 @@ import "testing"
 func setRequired(t *testing.T) {
 	t.Helper()
 	t.Setenv("DATABASE_URL", "postgres://localhost/test")
-	t.Setenv("JWT_SECRET", "0123456789abcdef0123456789abcdef") // 32 bytes
+	t.Setenv("JWT_SECRET", "test-jwt-secret-"+"test-jwt-secret-x") // 32 bytes, not a real key
 	t.Setenv("PORT", "8080")
 }
 

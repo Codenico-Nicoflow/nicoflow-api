@@ -110,7 +110,7 @@ func newProjectServer(t *testing.T) testEnv {
 		Project: project.NewHandler(project.NewService(project.NewRepository(pool), nil)),
 		Task:    task.NewHandler(taskSvc, task.NewSubtaskService(task.NewSubtaskRepository(pool), nil)),
 		Bucket:  bucket.NewHandler(bucket.NewService(bucket.NewRepository(pool), taskSvc, nil, nil)),
-		AI:      ai.NewHandler(ai.NewService(ai.NewRepository(pool))),
+		AI:      ai.NewHandler(ai.NewService(ai.NewRepository(pool), nil, "")),
 		Billing: billing.NewHandler(billing.NewService(billing.NewRepository(pool))),
 	}
 
