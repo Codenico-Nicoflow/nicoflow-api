@@ -1,9 +1,12 @@
 package ai
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog/log"
@@ -94,8 +97,116 @@ func (h *Handler) Usage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListMessages(w http.ResponseWriter, r *http.Request) { notImplemented(w, r) }
-func (h *Handler) SendMessage(w http.ResponseWriter, r *http.Request)  { notImplemented(w, r) }
 func (h *Handler) ParseNLP(w http.ResponseWriter, r *http.Request)     { notImplemented(w, r) }
+
+// wholeStreamCeiling caps the entire completion; a runaway stream is cut here.
+const wholeStreamCeiling = 90 * time.Second
+
+// SendMessage streams a Claude response as SSE over the POST body. Pre-stream
+// failures return a normal JSON error envelope with the right status; once the
+// first token flushes the status is committed and terminal outcomes (done/error)
+// ride the event stream instead.
+func (h *Handler) SendMessage(w http.ResponseWriter, r *http.Request) {
+	userID := mw.UserIDFromCtx(r.Context())
+	plan := mw.PlanFromCtx(r.Context())
+	sessionID := chi.URLParam(r, "id")
+
+	var req SendMessageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respond.Error(w, http.StatusBadRequest, apperror.ErrInvalidInput, "invalid request body")
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		respond.Error(w, http.StatusInternalServerError, apperror.ErrInternalServerError, "streaming unsupported")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), wholeStreamCeiling)
+	defer cancel()
+
+	sink := &sseSink{w: w, flusher: flusher}
+	messageID, err := h.svc.SendMessage(ctx, userID, plan, sessionID, req, sink)
+
+	if !sink.committed {
+		// Nothing streamed: the HTTP status is still ours to set.
+		if err != nil {
+			writeAppError(w, r, err)
+			return
+		}
+		// A no-token success is unexpected but must still terminate the stream.
+		sink.commit()
+		sink.writeDone(messageID, h.usage(r.Context(), userID, plan))
+		return
+	}
+
+	// Stream already committed: terminate over SSE, never a second HTTP status.
+	if err != nil {
+		log.Warn().Err(err).Str("request_id", mw.GetRequestID(r.Context())).Msg("ai stream error after commit")
+		sink.writeError(StreamErrorCode(err))
+		return
+	}
+	sink.writeDone(messageID, h.usage(r.Context(), userID, plan))
+}
+
+// usage reads fresh quota state for the done event; a read failure yields a zero
+// UsageView rather than failing an already-delivered stream.
+func (h *Handler) usage(ctx context.Context, userID, plan string) UsageView {
+	view, err := h.svc.Usage(ctx, userID, plan)
+	if err != nil {
+		return UsageView{}
+	}
+	return view
+}
+
+// sseSink is the handler-side StreamSink: it writes text/event-stream frames and
+// flushes each one. The first Delta commits the SSE headers + 200 status.
+type sseSink struct {
+	w         http.ResponseWriter
+	flusher   http.Flusher
+	committed bool
+}
+
+func (s *sseSink) Delta(text string) error {
+	if !s.committed {
+		s.commit()
+	}
+	if err := s.writeEvent(deltaEvent{Type: "delta", Text: text}); err != nil {
+		return err
+	}
+	s.flusher.Flush()
+	return nil
+}
+
+func (s *sseSink) commit() {
+	h := s.w.Header()
+	h.Set("Content-Type", "text/event-stream")
+	h.Set("Cache-Control", "no-store")
+	h.Set("X-Accel-Buffering", "no")
+	s.w.WriteHeader(http.StatusOK)
+	s.committed = true
+}
+
+func (s *sseSink) writeDone(messageID string, usage UsageView) {
+	_ = s.writeEvent(doneEvent{Type: "done", MessageID: messageID, Usage: usage})
+	s.flusher.Flush()
+}
+
+func (s *sseSink) writeError(code string) {
+	_ = s.writeEvent(errorEvent{Type: "error", Code: code})
+	s.flusher.Flush()
+}
+
+// writeEvent marshals one SSE `data:` frame. Content is never logged.
+func (s *sseSink) writeEvent(payload any) error {
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(s.w, "data: %s\n\n", b)
+	return err
+}
 
 func writeAppError(w http.ResponseWriter, r *http.Request, err error) {
 	var ae *apperror.AppError

@@ -60,16 +60,29 @@ func (c *Client) Stream(ctx context.Context, req ai.ChatRequest) (ai.Stream, err
 		Messages:  toSDKMessages(req.Messages),
 	}
 	if req.System != "" {
-		params.System = []sdk.TextBlockParam{{Text: req.System}}
+		sys := sdk.TextBlockParam{Text: req.System}
+		if req.CacheSystem {
+			sys.CacheControl = ephemeral()
+		}
+		params.System = []sdk.TextBlockParam{sys}
 	}
 
 	return &stream{raw: c.api.Messages.NewStreaming(ctx, params)}, nil
 }
 
+// ephemeral is the 5-minute cache-control breakpoint marker.
+func ephemeral() sdk.CacheControlEphemeralParam {
+	return sdk.CacheControlEphemeralParam{}
+}
+
 func toSDKMessages(msgs []ai.Message) []sdk.MessageParam {
 	out := make([]sdk.MessageParam, 0, len(msgs))
 	for _, m := range msgs {
-		block := sdk.NewTextBlock(m.Text)
+		text := sdk.TextBlockParam{Text: m.Text}
+		if m.CacheBreakpoint {
+			text.CacheControl = ephemeral()
+		}
+		block := sdk.ContentBlockParamUnion{OfText: &text}
 		if m.Role == ai.RoleAssistant {
 			out = append(out, sdk.NewAssistantMessage(block))
 			continue

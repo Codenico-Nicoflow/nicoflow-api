@@ -206,7 +206,9 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 			r.Get("/ai/sessions/{id}", h.AI.GetSession)
 			r.Delete("/ai/sessions/{id}", h.AI.DeleteSession)
 			r.Get("/ai/sessions/{id}/messages", h.AI.ListMessages)
-			r.Post("/ai/sessions/{id}/messages", h.AI.SendMessage)
+			// Send is the metered streaming endpoint — stricter per-user bucket on
+			// top of the global user limiter (burst 10, 10/min).
+			r.With(mw.RateLimitUser(10, 10)).Post("/ai/sessions/{id}/messages", h.AI.SendMessage)
 
 			// NLP smart scheduling (Pro only — PlanEnforcer added in E-028)
 			r.Post("/nlp/parse", h.AI.ParseNLP)

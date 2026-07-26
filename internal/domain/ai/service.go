@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +18,11 @@ const (
 	FreeLifetimeLimit = 5
 	// ProMonthlyLimit is the per-calendar-month message allowance for Pro.
 	ProMonthlyLimit = 500
+
+	// maxContentLen is the trimmed user-message ceiling (INVALID_INPUT above it).
+	maxContentLen = 2000
+	// maxResponseTokens caps a single completion.
+	maxResponseTokens = 1024
 )
 
 // Service defines the AI assistant business logic interface.
@@ -31,23 +37,69 @@ type Service interface {
 	// reservation only when fn failed before any token streamed. Over quota →
 	// 429 AI_LIMIT_REACHED and fn never runs.
 	RunWithQuota(ctx context.Context, userID, plan string, fn QuotaFunc) error
+	// SendMessage runs the full send pipeline: ownership → single-stream guard →
+	// quota reserve → persist user msg (+ first-turn title) → stream Claude to
+	// sink → persist assistant msg → bump updated_at → WS ai.session.updated.
+	// Returns the persisted assistant message id for the done event. Pre-stream
+	// failures surface as an *apperror.AppError so the handler can still set an
+	// HTTP status; once tokens flow the sink owns the terminal event.
+	SendMessage(ctx context.Context, userID, plan, sessionID string, req SendMessageRequest, sink StreamSink) (string, error)
 }
+
+// StreamSink is the handler-owned transport the service relays a completion
+// through. Delta commits the HTTP status (text/event-stream) on first call and
+// is where "streamed" becomes true; the service never imports net/http.
+type StreamSink interface {
+	// Delta writes one text chunk and flushes. The first call transitions the
+	// response to a committed SSE stream.
+	Delta(text string) error
+}
+
+// Broadcaster emits a real-time event to a user's live connections. The ws
+// adapter implements it; a nil Broadcaster (tests / disabled) is a no-op.
+type Broadcaster interface {
+	Broadcast(userID string, ev Event)
+}
+
+// Event is the domain-level real-time event the ws layer maps to a wire type.
+type Event struct {
+	Type    string
+	Payload any
+}
+
+// EventSessionUpdated fires after a session gains an assistant reply.
+const EventSessionUpdated = "ai.session.updated"
 
 // QuotaFunc is the metered unit of work. streamed reports whether at least
 // one token reached the client — a streamed failure keeps the charge.
 type QuotaFunc func(ctx context.Context) (streamed bool, err error)
 
 type service struct {
-	repo   Repository
-	client Client
-	model  string
+	repo        Repository
+	client      Client
+	model       string
+	broadcaster Broadcaster
+	now         func() time.Time
+
+	// active guards one in-flight stream per session (single-stream guard). A
+	// second concurrent stream on the same session → 409 AI_STREAM_ACTIVE.
+	mu     sync.Mutex
+	active map[string]struct{}
 }
 
 // NewService creates a new AI service. client is the streaming provider seam
 // (nil-safe: a disabled client is fine); model is the config-resolved Claude
-// model ID — never hardcoded at the call site.
-func NewService(repo Repository, client Client, model string) Service {
-	return &service{repo: repo, client: client, model: model}
+// model ID — never hardcoded at the call site; broadcaster is the real-time seam
+// (nil ⇒ no-op, mirrors the other domains).
+func NewService(repo Repository, client Client, model string, broadcaster Broadcaster) Service {
+	return &service{
+		repo:        repo,
+		client:      client,
+		model:       model,
+		broadcaster: broadcaster,
+		now:         time.Now,
+		active:      make(map[string]struct{}),
+	}
 }
 
 func (s *service) CreateSession(ctx context.Context, userID string, req CreateSessionRequest) (SessionView, error) {

@@ -5,6 +5,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 
+	"github.com/nicoflow/nicoflow-api/internal/domain/ai"
 	"github.com/nicoflow/nicoflow-api/internal/domain/area"
 	"github.com/nicoflow/nicoflow-api/internal/domain/attachment"
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
@@ -42,6 +43,7 @@ var wireTypes = map[string]EventType{
 	bucket.EventDeleted:     EventBucketDeleted,
 	attachment.EventCreated: EventAttachmentCreated,
 	attachment.EventDeleted: EventAttachmentDeleted,
+	ai.EventSessionUpdated:  EventAISessionUpdated,
 	"notification.created":  EventNotificationCreated,
 }
 
@@ -143,5 +145,19 @@ func NewAttachmentBroadcaster(hub *Hub) *AttachmentBroadcaster {
 }
 
 func (b *AttachmentBroadcaster) Broadcast(userID string, ev attachment.Event) {
+	broadcast(b.hub, b.now, userID, ev.Type, ev.Payload)
+}
+
+// AIBroadcaster adapts the Hub to ai.Broadcaster.
+type AIBroadcaster struct {
+	hub *Hub
+	now func() time.Time
+}
+
+func NewAIBroadcaster(hub *Hub) *AIBroadcaster {
+	return &AIBroadcaster{hub: hub, now: time.Now}
+}
+
+func (b *AIBroadcaster) Broadcast(userID string, ev ai.Event) {
 	broadcast(b.hub, b.now, userID, ev.Type, ev.Payload)
 }

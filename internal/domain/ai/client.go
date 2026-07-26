@@ -11,19 +11,24 @@ const (
 	RoleAssistant Role = "assistant"
 )
 
-// Message is one turn of a conversation sent to the model.
+// Message is one turn of a conversation sent to the model. CacheBreakpoint marks
+// this block as the last cache-control breakpoint (ephemeral) — set on the final
+// history message so the prefix up to it is reused across turns.
 type Message struct {
-	Role Role
-	Text string
+	Role            Role
+	Text            string
+	CacheBreakpoint bool
 }
 
 // ChatRequest is a provider-agnostic streaming chat call. Model is resolved by
-// the service from config (never hardcoded); System is optional.
+// the service from config (never hardcoded); System is optional. CacheSystem
+// marks the system block as an ephemeral cache breakpoint.
 type ChatRequest struct {
-	Model     string
-	System    string
-	Messages  []Message
-	MaxTokens int
+	Model       string
+	System      string
+	CacheSystem bool
+	Messages    []Message
+	MaxTokens   int
 }
 
 // Usage is the token accounting for a completed stream.

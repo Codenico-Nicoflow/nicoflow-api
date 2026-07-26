@@ -59,6 +59,38 @@ type CreateSessionRequest struct {
 	Title string `json:"title"`
 }
 
+// SendMessageRequest is the POST /ai/sessions/:id/messages body. Content is
+// trimmed then length-validated (1..2000) before any provider call.
+type SendMessageRequest struct {
+	Content string `json:"content"`
+}
+
+// PromptContext is the volatile, per-user tail of the system prompt.
+type PromptContext struct {
+	Language  string
+	OpenTasks int
+}
+
+// SSE event payloads streamed over the response body (type-discriminated).
+type (
+	// deltaEvent carries one text delta.
+	deltaEvent struct {
+		Type string `json:"type"` // "delta"
+		Text string `json:"text"`
+	}
+	// doneEvent terminates a successful stream with the persisted id + usage.
+	doneEvent struct {
+		Type      string    `json:"type"` // "done"
+		MessageID string    `json:"messageId"`
+		Usage     UsageView `json:"usage"`
+	}
+	// errorEvent terminates a mid-stream failure (HTTP status already committed).
+	errorEvent struct {
+		Type string `json:"type"` // "error"
+		Code string `json:"code"`
+	}
+)
+
 func sessionToView(s Session) SessionView {
 	return SessionView{
 		ID:        s.ID,
