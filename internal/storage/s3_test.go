@@ -2,28 +2,11 @@ package storage
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/nicoflow/nicoflow-api/internal/config"
 )
-
-// fixedClient returns an enabled client with a pinned clock so signatures and
-// policy expiry are deterministic. It builds no real AWS client (nil api) —
-// enough for the pure policy/key/signing paths, which never call S3.
-func fixedClient() *Client {
-	return &Client{
-		bucket:      "nicoflow-attachments",
-		region:      "us-east-1",
-		accessKeyID: "AKIAEXAMPLE",
-		secretKey:   "secretExampleKey",
-		endpoint:    "http://localhost:9000",
-		now:         func() time.Time { return time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC) },
-	}
-}
 
 func TestNew_ConfigGate(t *testing.T) {
 	full := config.Config{
@@ -71,68 +54,31 @@ func TestDisabledClient_OperationsReturnErrStorageDisabled(t *testing.T) {
 	}
 }
 
-func TestPresignUpload_PolicyConditions(t *testing.T) {
-	// fixedClient has a nil api (Enabled()==false), so test the policy builder
-	// directly — it's a pure function of config + inputs, no S3 call.
-	c := fixedClient()
-	pp, err := c.buildPostPolicy("attachments/u1/task/t1/abc", "image/png", maxUploadBytes)
+// PresignUpload on an enabled client returns a presigned PUT URL that pins
+// Content-Type in the required headers. The live round-trip is covered by the
+// integration suite; this asserts the shape without hitting a store.
+func TestPresignUpload_ReturnsPutURLWithContentType(t *testing.T) {
+	c, err := New(context.Background(), config.Config{
+		StorageRegion: "us-east-1", StorageAccessKeyID: "AKIAEXAMPLE", StorageSecretKey: "secretExampleKey",
+		StorageBucket: "nicoflow-attachments", StorageEndpoint: "http://localhost:9000",
+	})
 	if err != nil {
-		t.Fatalf("buildPostPolicy: %v", err)
+		t.Fatalf("New: %v", err)
 	}
-
-	// Required form fields are present.
-	for _, f := range []string{"key", "Content-Type", "x-amz-algorithm", "x-amz-credential", "x-amz-date", "policy", "x-amz-signature"} {
-		if _, ok := pp.Fields[f]; !ok {
-			t.Errorf("missing form field %q", f)
-		}
-	}
-	if pp.Fields["Content-Type"] != "image/png" {
-		t.Errorf("Content-Type field = %q, want image/png", pp.Fields["Content-Type"])
-	}
-	if pp.Fields["x-amz-algorithm"] != "AWS4-HMAC-SHA256" {
-		t.Errorf("algorithm = %q", pp.Fields["x-amz-algorithm"])
-	}
-	if want := "http://localhost:9000/nicoflow-attachments"; pp.URL != want {
-		t.Errorf("URL = %q, want %q", pp.URL, want)
-	}
-
-	// Decode the policy and assert the conditions S3 will enforce.
-	raw, err := base64.StdEncoding.DecodeString(pp.Fields["policy"])
+	up, err := c.PresignUpload("attachments/u1/task/t1/abc", "image/png")
 	if err != nil {
-		t.Fatalf("decode policy: %v", err)
+		t.Fatalf("PresignUpload: %v", err)
 	}
-	var doc struct {
-		Conditions []json.RawMessage `json:"conditions"`
+	if up.URL == "" {
+		t.Error("PresignUpload URL is empty")
 	}
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("unmarshal policy: %v", err)
+	if got := up.Headers["Content-Type"]; got != "image/png" {
+		t.Errorf("Content-Type header = %q, want image/png", got)
 	}
-	blob := string(raw)
-	if !strings.Contains(blob, `"content-length-range"`) {
-		t.Error("policy missing content-length-range condition")
+	if !strings.Contains(up.URL, "attachments/u1/task/t1/abc") {
+		t.Errorf("URL %q does not reference the object key", up.URL)
 	}
-	if !strings.Contains(blob, "20971520") { // 20 MiB
-		t.Errorf("policy missing 20MB max in content-length-range: %s", blob)
-	}
-	if !strings.Contains(blob, `"Content-Type":"image/png"`) {
-		t.Errorf("policy missing exact Content-Type condition: %s", blob)
-	}
-	if !strings.Contains(blob, `"key":"attachments/u1/task/t1/abc"`) {
-		t.Errorf("policy missing exact key condition: %s", blob)
-	}
-}
-
-func TestSignPolicy_Deterministic(t *testing.T) {
-	c := fixedClient()
-	sig1 := c.signPolicy("dGVzdA==", "20260724")
-	sig2 := c.signPolicy("dGVzdA==", "20260724")
-	if sig1 != sig2 {
-		t.Fatal("signPolicy not deterministic for same input")
-	}
-	if len(sig1) != 64 { // hex-encoded SHA-256
-		t.Errorf("signature length = %d, want 64 hex chars", len(sig1))
-	}
-	if c.signPolicy("dGVzdA==", "20260725") == sig1 {
-		t.Error("signature must differ when the signing date differs")
+	if !strings.Contains(up.URL, "X-Amz-Signature") {
+		t.Errorf("URL %q is not a presigned (SigV4) URL", up.URL)
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"mime/multipart"
 	"net/http"
 	"os"
 	"testing"
@@ -74,40 +73,28 @@ func seedProUser(t *testing.T, pool *pgxpool.Pool) string {
 	return id
 }
 
-// uploadObject POSTs bytes to the presigned form so the object really exists in
-// MinIO before confirm re-heads it.
+// uploadObject PUTs bytes to the presigned URL (with the signed headers) so the
+// object really exists in the store before confirm re-heads it.
 func uploadObject(t *testing.T, resp attachment.UploadURLResponse, body []byte) {
 	t.Helper()
-	var buf bytes.Buffer
-	w := multipart.NewWriter(&buf)
-	for k, v := range resp.Fields {
-		if err := w.WriteField(k, v); err != nil {
-			t.Fatalf("write field: %v", err)
-		}
-	}
-	fw, err := w.CreateFormFile("file", "upload.bin")
+	req, err := http.NewRequest(http.MethodPut, resp.URL, bytes.NewReader(body))
 	if err != nil {
-		t.Fatalf("form file: %v", err)
+		t.Fatalf("new request: %v", err)
 	}
-	if _, err := fw.Write(body); err != nil {
-		t.Fatalf("write body: %v", err)
+	for k, v := range resp.Headers {
+		req.Header.Set(k, v)
 	}
-	if err := w.Close(); err != nil {
-		t.Fatalf("close: %v", err)
-	}
-	req, _ := http.NewRequest(http.MethodPost, resp.URL, &buf)
-	req.Header.Set("Content-Type", w.FormDataContentType())
 	r, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("POST: %v", err)
+		t.Fatalf("PUT: %v", err)
 	}
 	defer func() { _ = r.Body.Close() }()
 	if r.StatusCode < 200 || r.StatusCode >= 300 {
-		t.Fatalf("upload POST status = %d, want 2xx", r.StatusCode)
+		t.Fatalf("upload PUT status = %d, want 2xx", r.StatusCode)
 	}
 }
 
-// Full happy path against real MinIO + Postgres: upload-url → S3 POST → confirm
+// Full happy path against the real store + Postgres: upload-url → S3 PUT → confirm
 // (HeadObject re-validate) → list → download-url → delete.
 func TestService_MinIO_FullFlow(t *testing.T) {
 	store := newMinIOStore(t)

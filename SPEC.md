@@ -1468,7 +1468,9 @@ downgraded user must still be able to unsubscribe).
 
 ### 3.12 File Attachments (S3) — E-024
 
-Attachments use a **two-step presigned-POST** pattern: the client uploads bytes **directly to S3** (never through the API), then confirms. The owner is a **polymorphic-flat `{ownerType, ownerId}`** pair (only `task` today; notes later share the same table) — endpoints live under `/attachments`, not nested under the owner. Confirm **re-reads the object via HeadObject** and never trusts client-claimed size/type. `s3Key` is a server-internal detail and is **never** returned.
+Attachments use a **two-step presigned-PUT** pattern: the client uploads bytes **directly to object storage** (never through the API), then confirms. The owner is a **polymorphic-flat `{ownerType, ownerId}`** pair (only `task` today; notes later share the same table) — endpoints live under `/attachments`, not nested under the owner. Confirm **re-reads the object via HeadObject** and never trusts client-claimed size/type — this is the sole enforcement boundary for size and MIME. `s3Key` is a server-internal detail and is **never** returned.
+
+> **Upload leg is PUT, not POST.** The original design used a presigned **POST policy** (which can pin size + type at the store). The NIC-1679 spike found **Cloudflare R2 returns `501 Not Implemented` for POST-policy form uploads**, so uploads use a **presigned PUT** instead: the client PUTs the raw file body to `url` with the `headers` returned (Content-Type). On R2 neither size nor type is enforceable at the upload leg — both are re-validated from the stored object at confirm via HeadObject.
 
 **`AttachmentView`** (the shared response shape):
 
@@ -1486,7 +1488,7 @@ Attachments use a **two-step presigned-POST** pattern: the client uploads bytes 
 
 #### POST /v1/attachments/upload-url
 
-Mint a presigned S3 **POST** policy for a new upload. **Pro-gated.** Ownership-checked. Cheap claimed-size/type pre-check (real enforcement is the S3 POST policy + the HeadObject re-read at confirm).
+Mint a presigned **PUT** URL for a new upload. **Pro-gated.** Ownership-checked. Cheap claimed-size/type pre-check (real enforcement is the HeadObject re-read at confirm — see the PUT note above).
 
 - **Auth required:** Yes · **Plan:** Pro only
 
@@ -1496,10 +1498,10 @@ Mint a presigned S3 **POST** policy for a new upload. **Pro-gated.** Ownership-c
 { "ownerType": "task", "ownerId": "01J…", "fileName": "report.pdf", "mimeType": "application/pdf", "fileSize": 204800 }
 ```
 
-**Response — 200 OK** — POST the file to `url` with the returned `fields`, then confirm with `s3Key`.
+**Response — 200 OK** — **PUT** the raw file bytes to `url` with the returned `headers` (Content-Type), then confirm with `s3Key`.
 
 ```json
-{ "url": "https://…s3…/nicoflow-attachments", "fields": { "key": "attachments/…", "policy": "…", "x-amz-signature": "…" }, "s3Key": "attachments/{userId}/task/{ownerId}/{uuid}" }
+{ "url": "https://…r2.cloudflarestorage.com/nicoflow-attachments/attachments/…?X-Amz-Signature=…", "headers": { "Content-Type": "application/pdf" }, "s3Key": "attachments/{userId}/task/{ownerId}/{uuid}" }
 ```
 
 ---

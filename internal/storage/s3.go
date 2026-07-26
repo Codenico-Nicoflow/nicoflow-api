@@ -14,7 +14,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -30,27 +29,19 @@ import (
 // not configured. Callers map it to a 503 SERVICE_UNAVAILABLE.
 var ErrStorageDisabled = errors.New("storage: file attachments feature is disabled (storage not configured)")
 
-// maxUploadBytes caps an upload at 20 MB — enforced by the S3 POST policy, not
-// just the API, so the bytes never reach us.
-const maxUploadBytes int64 = 20 << 20
-
 // downloadTTL is how long a presigned GET (download) URL stays valid.
 const downloadTTL = time.Hour
+
+// uploadTTL is how long a presigned PUT (upload) URL stays valid.
+const uploadTTL = 15 * time.Minute
 
 // Client wraps S3 for presigned uploads/downloads and object head/delete.
 // A zero-value / disabled Client (Enabled()==false) is safe to hold; its
 // operations all return ErrStorageDisabled.
 type Client struct {
-	api         *s3.Client
-	presign     *s3.PresignClient
-	bucket      string
-	region      string
-	accessKeyID string
-	secretKey   string
-	// endpoint is the storage endpoint override (R2 or MinIO) or "" for real AWS S3.
-	endpoint string
-	// now is injected so tests can pin the signing clock; defaults to time.Now.
-	now func() time.Time
+	api     *s3.Client
+	presign *s3.PresignClient
+	bucket  string
 }
 
 // New builds the storage client from config. When any of STORAGE_REGION,
@@ -83,28 +74,46 @@ func New(ctx context.Context, cfg config.Config) (*Client, error) {
 	})
 
 	return &Client{
-		api:         api,
-		presign:     s3.NewPresignClient(api),
-		bucket:      cfg.StorageBucket,
-		region:      cfg.StorageRegion,
-		accessKeyID: cfg.StorageAccessKeyID,
-		secretKey:   cfg.StorageSecretKey,
-		endpoint:    cfg.StorageEndpoint,
-		now:         time.Now,
+		api:     api,
+		presign: s3.NewPresignClient(api),
+		bucket:  cfg.StorageBucket,
 	}, nil
 }
 
 // Enabled reports whether the storage feature is configured.
 func (c *Client) Enabled() bool { return c.api != nil }
 
-// PresignUpload returns a presigned POST policy the browser posts a file to.
-// contentType must already be validated against the MIME allowlist by the
-// caller; S3 pins it exactly. maxBytes defaults to 20 MB.
-func (c *Client) PresignUpload(key, contentType string) (PostPolicy, error) {
+// PresignedUpload is the browser-upload target: a presigned PUT URL and the
+// request headers the client should send with the raw file body. The client
+// sends Content-Type so the stored object records the right type; this is NOT
+// the enforcement boundary — R2 doesn't sign the header into the URL, so a
+// mismatch is stored, not rejected. Both type AND size are re-validated from the
+// stored object at confirm via HeadObject (see attachment.Confirm).
+type PresignedUpload struct {
+	URL     string            `json:"url"`
+	Headers map[string]string `json:"headers"`
+}
+
+// PresignUpload returns a presigned PUT the browser sends the raw file to.
+// contentType is passed so the stored object records it; the caller must have
+// already validated it against the MIME allowlist. A presigned POST policy was
+// tried first (it can pin size + type) but Cloudflare R2 returns 501 for
+// POST-policy form uploads (NIC-1679 spike), so PUT is the portable path.
+// Neither size nor type is enforceable at the R2 upload leg — both move to the
+// confirm HeadObject re-read, which is the real security boundary.
+func (c *Client) PresignUpload(key, contentType string) (PresignedUpload, error) {
 	if !c.Enabled() {
-		return PostPolicy{}, ErrStorageDisabled
+		return PresignedUpload{}, ErrStorageDisabled
 	}
-	return c.buildPostPolicy(key, contentType, maxUploadBytes)
+	req, err := c.presign.PresignPutObject(context.Background(), &s3.PutObjectInput{
+		Bucket:      aws.String(c.bucket),
+		Key:         aws.String(key),
+		ContentType: aws.String(contentType),
+	}, s3.WithPresignExpires(uploadTTL))
+	if err != nil {
+		return PresignedUpload{}, fmt.Errorf("storage: presign upload: %w", err)
+	}
+	return PresignedUpload{URL: req.URL, Headers: map[string]string{"Content-Type": contentType}}, nil
 }
 
 // PresignDownload returns a presigned GET URL that forces a download with the
@@ -201,13 +210,4 @@ func (c *Client) List(ctx context.Context, prefix string) ([]string, error) {
 		}
 	}
 	return keys, nil
-}
-
-// bucketURL is the POST target for browser uploads: path-style for MinIO/custom
-// endpoints, virtual-host style for real AWS S3.
-func (c *Client) bucketURL() string {
-	if c.endpoint != "" {
-		return strings.TrimRight(c.endpoint, "/") + "/" + c.bucket
-	}
-	return fmt.Sprintf("https://%s.s3.%s.amazonaws.com", c.bucket, c.region)
 }

@@ -61,8 +61,8 @@ type gcStore struct {
 }
 
 func (s *gcStore) Enabled() bool { return s.enabled }
-func (s *gcStore) PresignUpload(string, string) (storage.PostPolicy, error) {
-	return storage.PostPolicy{}, nil
+func (s *gcStore) PresignUpload(string, string) (storage.PresignedUpload, error) {
+	return storage.PresignedUpload{}, nil
 }
 func (s *gcStore) PresignDownload(context.Context, string, string) (string, error) {
 	return "", nil

@@ -293,7 +293,9 @@ Check via `COUNT(*)` before insert. Plan is read from `ctx` Claims — no DB cal
 | `STORAGE_ENDPOINT`       | No       | Object-store endpoint: R2 (`https://<acct>.r2.cloudflarestorage.com`) or MinIO (`http://localhost:9000`). When set, the client uses path-style addressing. Empty ⇒ real AWS S3. |
 | `TEST_S3_ENDPOINT`       | No       | MinIO endpoint for the storage integration tests (unset ⇒ those tests skip). Optional `TEST_S3_ACCESS_KEY` / `TEST_S3_SECRET_KEY` / `TEST_S3_BUCKET` / `TEST_S3_REGION` override the defaults. |
 
-> **Storage backend:** local/CI = MinIO, staging/prod = **Cloudflare R2** (S3-compatible, zero egress). The client is vendor-neutral S3 (`aws-sdk-go-v2`); the backend is chosen purely by these env vars. See E-024 PRD for the R2 POST-policy compat caveat.
+> **Storage backend:** local/CI = MinIO, staging/prod = **Cloudflare R2** (S3-compatible, zero egress). The client is vendor-neutral S3 (`aws-sdk-go-v2`); the backend is chosen purely by these env vars.
+>
+> **Upload = presigned PUT (not POST policy).** The NIC-1679 spike verified R2 against the storage integration suite: R2 returns **`501 Not Implemented` for POST-policy form uploads**, so `PresignUpload` uses a **presigned PUT** (`PresignPutObject`). `upload-url` returns `{ url, headers, s3Key }` (was `{ url, fields, s3Key }`); the client PUTs the raw body with the `Content-Type` header. R2 does not sign Content-Type into the URL, so **neither size nor type is enforced at the upload leg** — both are re-validated from the stored object at **confirm via HeadObject**, which is the security boundary. Verified end-to-end against real R2 (`TestService_MinIO_FullFlow` + storage suite, `TEST_S3_ENDPOINT`=R2, `TEST_S3_REGION=auto`).
 
 Docker-compose-only vars (`POSTGRES_*`, `MINIO_*`) are **not** read by the API binary.
 
