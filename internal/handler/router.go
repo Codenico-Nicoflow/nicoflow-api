@@ -197,6 +197,9 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(mw.AIKillSwitch(cfg.AnthropicAPIKey != ""))
 
+			// AI usage (quota state) — static route before parameterised.
+			r.Get("/ai/usage", h.AI.Usage)
+
 			// AI sessions + messages
 			r.Get("/ai/sessions", h.AI.ListSessions)
 			r.Post("/ai/sessions", h.AI.CreateSession)
