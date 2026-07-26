@@ -5,6 +5,7 @@ package ai_test
 import (
 	"context"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -258,5 +259,232 @@ func TestRepo_Usage(t *testing.T) {
 	}
 	if empty != 0 {
 		t.Fatalf("UsageForMonth empty = %d, want 0", empty)
+	}
+}
+
+// ── Reserve / Refund ──────────────────────────────────────────────────────────
+
+func requireLimitReached(t *testing.T, err error) {
+	t.Helper()
+	ae := requireAppErrInt(t, err)
+	if ae.Code != apperror.ErrAILimitReached || ae.Status != http.StatusTooManyRequests {
+		t.Fatalf("got %s/%d, want AI_LIMIT_REACHED/429", ae.Code, ae.Status)
+	}
+}
+
+func usageCount(t *testing.T, pool *pgxpool.Pool, userID string) int {
+	t.Helper()
+	var n int
+	err := pool.QueryRow(context.Background(),
+		`SELECT COALESCE(SUM(request_count), 0) FROM ai_usage_monthly WHERE user_id = $1`,
+		userID,
+	).Scan(&n)
+	if err != nil {
+		t.Fatalf("usageCount: %v", err)
+	}
+	return n
+}
+
+func TestRepo_ReserveMonthly(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	cleanAITestData(t, pool)
+	t.Cleanup(func() { cleanAITestData(t, pool) })
+
+	repo := ai.NewRepository(pool)
+	ctx := context.Background()
+	userID := seedUser(t, pool, "pro")
+	month := time.Now().UTC().Format("2006-01") + "-01"
+
+	// First reserve inserts the month row at 1.
+	id, err := repo.ReserveMonthly(ctx, userID, month, 3)
+	if err != nil {
+		t.Fatalf("ReserveMonthly first: %v", err)
+	}
+	if id == "" {
+		t.Fatal("expected usage row id")
+	}
+
+	// Increment to the limit, then the guard must reject.
+	for i := 0; i < 2; i++ {
+		if _, err := repo.ReserveMonthly(ctx, userID, month, 3); err != nil {
+			t.Fatalf("ReserveMonthly %d: %v", i+2, err)
+		}
+	}
+	_, err = repo.ReserveMonthly(ctx, userID, month, 3)
+	requireLimitReached(t, err)
+	if n := usageCount(t, pool, userID); n != 3 {
+		t.Fatalf("count after exhausted reserve = %d, want 3", n)
+	}
+
+	// A previous month's spend never blocks the current month.
+	seedUsage(t, pool, userID, "2000-02-01", 3)
+	if _, err := repo.ReserveMonthly(ctx, userID, month, 4); err != nil {
+		t.Fatalf("prior months must not count toward the monthly guard: %v", err)
+	}
+}
+
+func TestRepo_ReserveLifetime(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	cleanAITestData(t, pool)
+	t.Cleanup(func() { cleanAITestData(t, pool) })
+
+	repo := ai.NewRepository(pool)
+	ctx := context.Background()
+	month := time.Now().UTC().Format("2006-01") + "-01"
+
+	t.Run("increments up to the lifetime sum", func(t *testing.T) {
+		userID := seedUser(t, pool, "free")
+		for i := 0; i < 5; i++ {
+			if _, err := repo.ReserveLifetime(ctx, userID, month, 5); err != nil {
+				t.Fatalf("ReserveLifetime %d: %v", i+1, err)
+			}
+		}
+		_, err := repo.ReserveLifetime(ctx, userID, month, 5)
+		requireLimitReached(t, err)
+		if n := usageCount(t, pool, userID); n != 5 {
+			t.Fatalf("count = %d, want 5", n)
+		}
+	})
+
+	t.Run("prior-month spend blocks a fresh month row", func(t *testing.T) {
+		userID := seedUser(t, pool, "free")
+		seedUsage(t, pool, userID, "2000-03-01", 5)
+
+		// No current-month row exists — the INSERT path must honour the
+		// lifetime sum too, not just the conflict path.
+		_, err := repo.ReserveLifetime(ctx, userID, month, 5)
+		requireLimitReached(t, err)
+		if n := usageCount(t, pool, userID); n != 5 {
+			t.Fatalf("count = %d, want 5 (fresh-month insert leaked past the guard)", n)
+		}
+	})
+
+	t.Run("partial prior-month spend still reserves", func(t *testing.T) {
+		userID := seedUser(t, pool, "free")
+		seedUsage(t, pool, userID, "2000-03-01", 4)
+
+		if _, err := repo.ReserveLifetime(ctx, userID, month, 5); err != nil {
+			t.Fatalf("ReserveLifetime with 4/5 lifetime used: %v", err)
+		}
+		if n := usageCount(t, pool, userID); n != 5 {
+			t.Fatalf("count = %d, want 5", n)
+		}
+	})
+}
+
+func TestRepo_RefundUsage(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	cleanAITestData(t, pool)
+	t.Cleanup(func() { cleanAITestData(t, pool) })
+
+	repo := ai.NewRepository(pool)
+	ctx := context.Background()
+	userID := seedUser(t, pool, "pro")
+	month := time.Now().UTC().Format("2006-01") + "-01"
+
+	id, err := repo.ReserveMonthly(ctx, userID, month, 500)
+	if err != nil {
+		t.Fatalf("ReserveMonthly: %v", err)
+	}
+
+	if err := repo.RefundUsage(ctx, id); err != nil {
+		t.Fatalf("RefundUsage: %v", err)
+	}
+	if n := usageCount(t, pool, userID); n != 0 {
+		t.Fatalf("count after refund = %d, want 0", n)
+	}
+
+	// A second refund on the same row must not go negative.
+	if err := repo.RefundUsage(ctx, id); err != nil {
+		t.Fatalf("RefundUsage twice: %v", err)
+	}
+	if n := usageCount(t, pool, userID); n != 0 {
+		t.Fatalf("count after double refund = %d, want 0 (never negative)", n)
+	}
+
+	// Refund frees a slot the guard then accepts again.
+	if _, err := repo.ReserveMonthly(ctx, userID, month, 1); err != nil {
+		t.Fatalf("reserve after refund: %v", err)
+	}
+	_, err = repo.ReserveMonthly(ctx, userID, month, 1)
+	requireLimitReached(t, err)
+}
+
+// ── Concurrency — a parallel burst can never exceed the limit ─────────────────
+
+func runBurst(t *testing.T, workers int, reserve func() error) (successes, limited int) {
+	t.Helper()
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- reserve()
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		switch {
+		case err == nil:
+			successes++
+		default:
+			ae, ok := err.(*apperror.AppError)
+			if !ok || ae.Code != apperror.ErrAILimitReached {
+				t.Errorf("unexpected burst error: %v", err)
+				continue
+			}
+			limited++
+		}
+	}
+	return successes, limited
+}
+
+func TestRepo_ReserveMonthly_ConcurrentBurst(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	cleanAITestData(t, pool)
+	t.Cleanup(func() { cleanAITestData(t, pool) })
+
+	repo := ai.NewRepository(pool)
+	userID := seedUser(t, pool, "pro")
+	month := time.Now().UTC().Format("2006-01") + "-01"
+	const limit, workers = 5, 20
+
+	successes, limited := runBurst(t, workers, func() error {
+		_, err := repo.ReserveMonthly(context.Background(), userID, month, limit)
+		return err
+	})
+
+	if successes != limit || limited != workers-limit {
+		t.Fatalf("burst: %d successes / %d limited, want %d / %d", successes, limited, limit, workers-limit)
+	}
+	if n := usageCount(t, pool, userID); n != limit {
+		t.Fatalf("count after burst = %d, want %d (limit exceeded under concurrency)", n, limit)
+	}
+}
+
+func TestRepo_ReserveLifetime_ConcurrentBurst_NewUser(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	cleanAITestData(t, pool)
+	t.Cleanup(func() { cleanAITestData(t, pool) })
+
+	repo := ai.NewRepository(pool)
+	// Brand-new user: no usage rows exist, so there is no row lock to
+	// serialize on — the hardest case for the lifetime guard.
+	userID := seedUser(t, pool, "free")
+	month := time.Now().UTC().Format("2006-01") + "-01"
+	const limit, workers = 5, 20
+
+	successes, limited := runBurst(t, workers, func() error {
+		_, err := repo.ReserveLifetime(context.Background(), userID, month, limit)
+		return err
+	})
+
+	if successes != limit || limited != workers-limit {
+		t.Fatalf("burst: %d successes / %d limited, want %d / %d", successes, limited, limit, workers-limit)
+	}
+	if n := usageCount(t, pool, userID); n != limit {
+		t.Fatalf("count after burst = %d, want %d (limit exceeded under concurrency)", n, limit)
 	}
 }
