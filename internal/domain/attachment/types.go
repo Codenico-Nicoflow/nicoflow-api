@@ -85,13 +85,15 @@ type UploadURLRequest struct {
 	ClaimedSize int64  `json:"fileSize"`
 }
 
-// UploadURLResponse returns the presigned POST plus the s3Key the client must
-// echo back to confirm. s3Key here is a one-time upload target, not a stored
-// secret — the client needs it to call confirm.
+// UploadURLResponse returns the presigned PUT URL, the headers the client must
+// send with the raw file body (Content-Type is signed in), and the s3Key the
+// client echoes back to confirm. s3Key is a one-time upload target, not a stored
+// secret. (Was a POST-policy { url, fields }; R2 doesn't support POST policy —
+// NIC-1679 — so uploads are presigned PUT.)
 type UploadURLResponse struct {
-	URL    string            `json:"url"`
-	Fields map[string]string `json:"fields"`
-	S3Key  string            `json:"s3Key"`
+	URL     string            `json:"url"`
+	Headers map[string]string `json:"headers"`
+	S3Key   string            `json:"s3Key"`
 }
 
 // ConfirmRequest is the body for POST /attachments. Only the s3Key is trusted
@@ -113,7 +115,7 @@ type OwnerVerifier interface {
 // *storage.Client. Narrowed to just the operations used here.
 type Storage interface {
 	Enabled() bool
-	PresignUpload(key, contentType string) (storage.PostPolicy, error)
+	PresignUpload(key, contentType string) (storage.PresignedUpload, error)
 	PresignDownload(ctx context.Context, key, filename string) (string, error)
 	Head(ctx context.Context, key string) (storage.HeadResult, error)
 	Delete(ctx context.Context, key string) error

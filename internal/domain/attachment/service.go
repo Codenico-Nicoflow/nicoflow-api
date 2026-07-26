@@ -70,11 +70,11 @@ func (s *service) UploadURL(ctx context.Context, userID, plan string, req Upload
 	}
 
 	key := s.newKey(userID, req.OwnerType, req.OwnerID)
-	policy, err := s.store.PresignUpload(key, req.MimeType)
+	upload, err := s.store.PresignUpload(key, req.MimeType)
 	if err != nil {
 		return UploadURLResponse{}, fmt.Errorf("attachment.UploadURL presign: %w", err)
 	}
-	return UploadURLResponse{URL: policy.URL, Fields: policy.Fields, S3Key: key}, nil
+	return UploadURLResponse{URL: upload.URL, Headers: upload.Headers, S3Key: key}, nil
 }
 
 // Confirm registers an uploaded object. It never trusts client-claimed metadata:

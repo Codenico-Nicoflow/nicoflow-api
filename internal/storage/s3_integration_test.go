@@ -5,7 +5,6 @@ package storage
 import (
 	"bytes"
 	"context"
-	"mime/multipart"
 	"net/http"
 	"os"
 	"testing"
@@ -16,14 +15,15 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/config"
 )
 
-// newMinIOClient builds a real client against MinIO. It skips the test unless
-// TEST_S3_ENDPOINT is set (CI without a MinIO service just skips these), and
-// ensures the bucket exists first.
-func newMinIOClient(t *testing.T) *Client {
+// newStoreClient builds a real client against the configured S3-compatible store
+// (MinIO locally, Cloudflare R2 in the NIC-1679 spike). It skips unless
+// TEST_S3_ENDPOINT is set, and ensures the bucket exists first. Point it at R2
+// with TEST_S3_ENDPOINT=https://<acct>.r2.cloudflarestorage.com + TEST_S3_REGION=auto.
+func newStoreClient(t *testing.T) *Client {
 	t.Helper()
 	endpoint := os.Getenv("TEST_S3_ENDPOINT")
 	if endpoint == "" {
-		t.Skip("TEST_S3_ENDPOINT not set — skipping MinIO integration test")
+		t.Skip("TEST_S3_ENDPOINT not set — skipping storage integration test")
 	}
 	cfg := config.Config{
 		StorageRegion:      envOr("TEST_S3_REGION", "us-east-1"),
@@ -51,52 +51,37 @@ func envOr(k, fallback string) string {
 	return fallback
 }
 
-// postFile builds the multipart form from a PostPolicy (fields first, file
-// last) and POSTs it to the presigned URL, returning the HTTP status.
-func postFile(t *testing.T, pp PostPolicy, body []byte) int {
+// putFile PUTs the raw body to a presigned upload with the given Content-Type
+// header, returning the HTTP status. Passing a contentType different from the one
+// signed into the URL lets a test verify the store rejects the mismatch.
+func putFile(t *testing.T, up PresignedUpload, contentType string, body []byte) int {
 	t.Helper()
-	var buf bytes.Buffer
-	w := multipart.NewWriter(&buf)
-	for k, v := range pp.Fields {
-		if err := w.WriteField(k, v); err != nil {
-			t.Fatalf("write field %s: %v", k, err)
-		}
-	}
-	fw, err := w.CreateFormFile("file", "upload.bin")
-	if err != nil {
-		t.Fatalf("create form file: %v", err)
-	}
-	if _, err := fw.Write(body); err != nil {
-		t.Fatalf("write file: %v", err)
-	}
-	if err := w.Close(); err != nil {
-		t.Fatalf("close writer: %v", err)
-	}
-	req, err := http.NewRequest(http.MethodPost, pp.URL, &buf)
+	req, err := http.NewRequest(http.MethodPut, up.URL, bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	req.Header.Set("Content-Type", w.FormDataContentType())
+	req.Header.Set("Content-Type", contentType)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("POST: %v", err)
+		t.Fatalf("PUT: %v", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	return resp.StatusCode
 }
 
-func TestMinIO_SignUploadHeadDelete(t *testing.T) {
-	c := newMinIOClient(t)
+func TestStore_SignUploadHeadDelete(t *testing.T) {
+	c := newStoreClient(t)
 	ctx := context.Background()
 	key := NewObjectKey("u-int", "task", "t-int")
 	png := []byte("\x89PNG\r\n\x1a\nfake-image-bytes")
 
-	pp, err := c.PresignUpload(key, "image/png")
+	up, err := c.PresignUpload(key, "image/png")
 	if err != nil {
 		t.Fatalf("PresignUpload: %v", err)
 	}
-	if status := postFile(t, pp, png); status < 200 || status >= 300 {
-		t.Fatalf("valid upload POST status = %d, want 2xx", status)
+	// Send exactly the signed Content-Type.
+	if status := putFile(t, up, up.Headers["Content-Type"], png); status < 200 || status >= 300 {
+		t.Fatalf("valid upload PUT status = %d, want 2xx", status)
 	}
 
 	head, err := c.Head(ctx, key)
@@ -119,29 +104,36 @@ func TestMinIO_SignUploadHeadDelete(t *testing.T) {
 	}
 }
 
-func TestMinIO_RejectsWrongContentType(t *testing.T) {
-	c := newMinIOClient(t)
+// Content-Type is NOT part of the enforcement boundary at upload time on a
+// presigned PUT: R2 accepts whatever Content-Type header the client sends (it
+// doesn't sign the header into the URL like strict S3 does), so a mismatch is
+// stored, not rejected. That's fine — the real guard is the confirm-time
+// HeadObject re-read (attachment.Confirm rejects a disallowed MIME then). This
+// test pins that contract: whatever type the client PUTs is what Head reads back,
+// so confirm sees the true stored type — never the type the client *claimed* at
+// upload-url. Size is likewise a confirm-time concern (PUT can't range-check).
+func TestStore_HeadReflectsUploadedContentType(t *testing.T) {
+	c := newStoreClient(t)
+	ctx := context.Background()
 	key := NewObjectKey("u-int", "task", "t-int")
-	pp, err := c.PresignUpload(key, "image/png")
-	if err != nil {
-		t.Fatalf("PresignUpload: %v", err)
-	}
-	// Tamper: swap the Content-Type field to something the policy didn't sign.
-	pp.Fields["Content-Type"] = "application/x-evil"
-	if status := postFile(t, pp, []byte("data")); status < 400 {
-		t.Fatalf("tampered Content-Type POST status = %d, want 4xx (S3 rejects)", status)
-	}
-}
 
-func TestMinIO_RejectsOversize(t *testing.T) {
-	c := newMinIOClient(t)
-	key := NewObjectKey("u-int", "task", "t-int")
-	pp, err := c.PresignUpload(key, "application/pdf")
+	// Sign for image/png but PUT with a different Content-Type.
+	up, err := c.PresignUpload(key, "image/png")
 	if err != nil {
 		t.Fatalf("PresignUpload: %v", err)
 	}
-	oversize := make([]byte, maxUploadBytes+1)
-	if status := postFile(t, pp, oversize); status < 400 {
-		t.Fatalf("oversize POST status = %d, want 4xx (S3 rejects via content-length-range)", status)
+	if status := putFile(t, up, "application/pdf", []byte("%PDF-1.4 data")); status < 200 || status >= 300 {
+		t.Fatalf("PUT status = %d, want 2xx", status)
+	}
+	defer func() { _ = c.Delete(ctx, key) }()
+
+	// Head reflects the ACTUAL uploaded type — confirm validates against this,
+	// not the client's upload-url claim.
+	head, err := c.Head(ctx, key)
+	if err != nil {
+		t.Fatalf("Head: %v", err)
+	}
+	if head.ContentType != "application/pdf" {
+		t.Errorf("Head ContentType = %q, want application/pdf (the uploaded type)", head.ContentType)
 	}
 }

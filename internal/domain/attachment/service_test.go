@@ -60,11 +60,11 @@ type fakeStore struct {
 }
 
 func (f *fakeStore) Enabled() bool { return f.enabled }
-func (f *fakeStore) PresignUpload(key, _ string) (storage.PostPolicy, error) {
+func (f *fakeStore) PresignUpload(_, contentType string) (storage.PresignedUpload, error) {
 	if f.presignErr != nil {
-		return storage.PostPolicy{}, f.presignErr
+		return storage.PresignedUpload{}, f.presignErr
 	}
-	return storage.PostPolicy{URL: "https://s3.test/bucket", Fields: map[string]string{"key": key}}, nil
+	return storage.PresignedUpload{URL: "https://s3.test/bucket/obj", Headers: map[string]string{"Content-Type": contentType}}, nil
 }
 func (f *fakeStore) PresignDownload(context.Context, string, string) (string, error) {
 	return "https://s3.test/download", nil
