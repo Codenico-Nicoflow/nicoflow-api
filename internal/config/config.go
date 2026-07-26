@@ -56,7 +56,16 @@ type Config struct {
 	VAPIDPublicKey  string
 	VAPIDPrivateKey string
 	VAPIDSubject    string
+	// AnthropicAPIKey enables the AI assistant (E-026). Unset ⇒ /v1/ai/* returns
+	// 503 AI_UNAVAILABLE (kill switch), never a silent no-op — mirrors storage.
+	AnthropicAPIKey string
+	// AIModel is the Claude model ID for the assistant. Never hardcode a model ID
+	// at the call site; it always comes from here (default claude-haiku-4-5).
+	AIModel string
 }
+
+// defaultAIModel is the Claude model used when AI_MODEL is unset.
+const defaultAIModel = "claude-haiku-4-5"
 
 func Load() Config {
 	databaseURL := os.Getenv("DATABASE_URL")
@@ -82,6 +91,11 @@ func Load() Config {
 	logLevel := os.Getenv("LOG_LEVEL")
 	if logLevel == "" {
 		logLevel = "info"
+	}
+
+	aiModel := os.Getenv("AI_MODEL")
+	if aiModel == "" {
+		aiModel = defaultAIModel
 	}
 
 	return Config{
@@ -114,6 +128,8 @@ func Load() Config {
 		VAPIDPublicKey:           os.Getenv("VAPID_PUBLIC_KEY"),
 		VAPIDPrivateKey:          os.Getenv("VAPID_PRIVATE_KEY"),
 		VAPIDSubject:             os.Getenv("VAPID_SUBJECT"),
+		AnthropicAPIKey:          os.Getenv("ANTHROPIC_API_KEY"),
+		AIModel:                  aiModel,
 	}
 }
 

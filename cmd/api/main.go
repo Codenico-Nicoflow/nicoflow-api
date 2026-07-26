@@ -13,6 +13,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
+	anthropicclient "github.com/nicoflow/nicoflow-api/internal/anthropic"
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
 	"github.com/nicoflow/nicoflow-api/internal/config"
 	"github.com/nicoflow/nicoflow-api/internal/db"
@@ -163,6 +164,18 @@ func main() {
 	// (concretes meet only here in wiring).
 	taskSvc = taskSvc.WithCleaner(attachmentSvc)
 
+	// AI assistant (E-026 / NIC-1681). Thin Anthropic streaming client behind the
+	// ai.Client interface; unset ANTHROPIC_API_KEY ⇒ disabled client + a 503 kill
+	// switch on /v1/ai/* (mirrors object storage). Model comes from config, never
+	// hardcoded.
+	aiClient := anthropicclient.New(cfg.AnthropicAPIKey)
+	if aiClient.Enabled() {
+		log.Info().Str("model", cfg.AIModel).Msg("ai assistant: enabled")
+	} else {
+		log.Warn().Msg("ai assistant: disabled (unset ANTHROPIC_API_KEY) — /v1/ai/* returns 503")
+	}
+	aiSvc := ai.NewService(ai.NewRepository(pool), aiClient, cfg.AIModel)
+
 	// Sweep jobs — hourly, invoked by Render Cron Jobs via /internal/jobs/*.
 	jobsRepo := jobs.NewRepository(pool)
 	dueDateNotifier := jobs.NewDueDateNotifier(jobsRepo, notificationSvc, cfg.SMTPDsn)
@@ -177,7 +190,7 @@ func main() {
 		Project:      project.NewHandler(projectSvc),
 		Task:         task.NewHandler(taskSvc, subtaskSvc),
 		Bucket:       bucket.NewHandler(bucketSvc),
-		AI:           ai.NewHandler(nil),
+		AI:           ai.NewHandler(aiSvc),
 		Billing:      billing.NewHandler(nil),
 		Search:       search.NewHandler(searchSvc),
 		Attachment:   attachment.NewHandler(attachmentSvc),

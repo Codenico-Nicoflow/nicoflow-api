@@ -192,16 +192,22 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		r.Get("/time-spread", h.Task.TimeSpread)
 		r.Get("/search", h.Search.Search)
 
-		// AI sessions + messages
-		r.Get("/ai/sessions", h.AI.ListSessions)
-		r.Post("/ai/sessions", h.AI.CreateSession)
-		r.Get("/ai/sessions/{id}", h.AI.GetSession)
-		r.Delete("/ai/sessions/{id}", h.AI.DeleteSession)
-		r.Get("/ai/sessions/{id}/messages", h.AI.ListMessages)
-		r.Post("/ai/sessions/{id}/messages", h.AI.SendMessage)
+		// AI routes — kill switch (NIC-1681): key unset ⇒ 503 AI_UNAVAILABLE
+		// before any handler logic, covering both /ai/* and /nlp/parse.
+		r.Group(func(r chi.Router) {
+			r.Use(mw.AIKillSwitch(cfg.AnthropicAPIKey != ""))
 
-		// NLP smart scheduling (Pro only — PlanEnforcer added in E-028)
-		r.Post("/nlp/parse", h.AI.ParseNLP)
+			// AI sessions + messages
+			r.Get("/ai/sessions", h.AI.ListSessions)
+			r.Post("/ai/sessions", h.AI.CreateSession)
+			r.Get("/ai/sessions/{id}", h.AI.GetSession)
+			r.Delete("/ai/sessions/{id}", h.AI.DeleteSession)
+			r.Get("/ai/sessions/{id}/messages", h.AI.ListMessages)
+			r.Post("/ai/sessions/{id}/messages", h.AI.SendMessage)
+
+			// NLP smart scheduling (Pro only — PlanEnforcer added in E-028)
+			r.Post("/nlp/parse", h.AI.ParseNLP)
+		})
 
 		// Billing
 		r.Get("/billing/plan", h.Billing.GetPlan)
