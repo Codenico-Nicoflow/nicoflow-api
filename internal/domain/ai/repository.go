@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -23,6 +24,15 @@ type Repository interface {
 	UsageSum(ctx context.Context, userID string) (int, error)
 	// UsageForMonth returns request_count for the given YYYY-MM-01 month (Pro).
 	UsageForMonth(ctx context.Context, userID, month string) (int, error)
+	// ReserveMonthly atomically takes one request from the user's month row,
+	// guarded so request_count never exceeds limit. Returns the usage row id;
+	// exhausted quota → 429 AI_LIMIT_REACHED.
+	ReserveMonthly(ctx context.Context, userID, month string, limit int) (string, error)
+	// ReserveLifetime atomically takes one request guarded by the lifetime
+	// SUM(request_count) across all the user's rows. Same return contract.
+	ReserveLifetime(ctx context.Context, userID, month string, limit int) (string, error)
+	// RefundUsage gives back one reserved request on the given usage row.
+	RefundUsage(ctx context.Context, usageID string) error
 }
 
 type pgRepo struct{ db *pgxpool.Pool }
@@ -132,6 +142,86 @@ func (r *pgRepo) UsageSum(ctx context.Context, userID string) (int, error) {
 		return 0, fmt.Errorf("ai.UsageSum: %w", err)
 	}
 	return used, nil
+}
+
+// errQuotaExhausted is the shared over-quota error. The guarded statement
+// returning 0 rows IS the check — never a pre-flight COUNT (TOCTOU race).
+func errQuotaExhausted() error {
+	return apperror.New(http.StatusTooManyRequests, apperror.ErrAILimitReached, "AI request limit reached")
+}
+
+func (r *pgRepo) ReserveMonthly(ctx context.Context, userID, month string, limit int) (string, error) {
+	// The conflict path locks the month row, so the guard is re-evaluated on
+	// the current value — concurrent bursts serialize and cannot exceed limit.
+	var id string
+	err := r.db.QueryRow(ctx, `
+		INSERT INTO ai_usage_monthly (id, user_id, month, request_count)
+		VALUES ($1, $2, $3::date, 1)
+		ON CONFLICT (user_id, month) DO UPDATE
+		  SET request_count = ai_usage_monthly.request_count + 1
+		  WHERE ai_usage_monthly.request_count < $4
+		RETURNING id`,
+		uuid.New().String(), userID, month, limit,
+	).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", errQuotaExhausted()
+	}
+	if err != nil {
+		return "", fmt.Errorf("ai.ReserveMonthly: %w", err)
+	}
+	return id, nil
+}
+
+func (r *pgRepo) ReserveLifetime(ctx context.Context, userID, month string, limit int) (string, error) {
+	// The lifetime guard is a SUM over rows the statement's row lock does not
+	// cover (other months, or no rows at all for a new user), so a per-user
+	// advisory lock serializes concurrent reserves before the guarded insert.
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("ai.ReserveLifetime begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx,
+		`SELECT pg_advisory_xact_lock(hashtextextended('ai_usage:' || $1, 0))`,
+		userID,
+	); err != nil {
+		return "", fmt.Errorf("ai.ReserveLifetime lock: %w", err)
+	}
+
+	var id string
+	err = tx.QueryRow(ctx, `
+		INSERT INTO ai_usage_monthly (id, user_id, month, request_count)
+		SELECT $1, $2, $3::date, 1
+		WHERE (SELECT COALESCE(SUM(request_count), 0) FROM ai_usage_monthly WHERE user_id = $2) < $4
+		ON CONFLICT (user_id, month) DO UPDATE
+		  SET request_count = ai_usage_monthly.request_count + 1
+		  WHERE (SELECT COALESCE(SUM(request_count), 0) FROM ai_usage_monthly WHERE user_id = $2) < $4
+		RETURNING id`,
+		uuid.New().String(), userID, month, limit,
+	).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", errQuotaExhausted()
+	}
+	if err != nil {
+		return "", fmt.Errorf("ai.ReserveLifetime: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("ai.ReserveLifetime commit: %w", err)
+	}
+	return id, nil
+}
+
+func (r *pgRepo) RefundUsage(ctx context.Context, usageID string) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE ai_usage_monthly SET request_count = request_count - 1
+		 WHERE id = $1 AND request_count > 0`,
+		usageID,
+	)
+	if err != nil {
+		return fmt.Errorf("ai.RefundUsage: %w", err)
+	}
+	return nil
 }
 
 func (r *pgRepo) UsageForMonth(ctx context.Context, userID, month string) (int, error) {

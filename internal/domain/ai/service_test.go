@@ -14,13 +14,16 @@ import (
 // ── mock repository ───────────────────────────────────────────────────────────
 
 type mockRepo struct {
-	createSession func(ctx context.Context, s ai.Session) (ai.Session, error)
-	listSessions  func(ctx context.Context, userID string) ([]ai.Session, error)
-	getSession    func(ctx context.Context, userID, id string) (*ai.Session, error)
-	listMessages  func(ctx context.Context, sessionID string) ([]ai.SessionMessage, error)
-	deleteSession func(ctx context.Context, userID, id string) error
-	usageSum      func(ctx context.Context, userID string) (int, error)
-	usageForMonth func(ctx context.Context, userID, month string) (int, error)
+	createSession   func(ctx context.Context, s ai.Session) (ai.Session, error)
+	listSessions    func(ctx context.Context, userID string) ([]ai.Session, error)
+	getSession      func(ctx context.Context, userID, id string) (*ai.Session, error)
+	listMessages    func(ctx context.Context, sessionID string) ([]ai.SessionMessage, error)
+	deleteSession   func(ctx context.Context, userID, id string) error
+	usageSum        func(ctx context.Context, userID string) (int, error)
+	usageForMonth   func(ctx context.Context, userID, month string) (int, error)
+	reserveMonthly  func(ctx context.Context, userID, month string, limit int) (string, error)
+	reserveLifetime func(ctx context.Context, userID, month string, limit int) (string, error)
+	refundUsage     func(ctx context.Context, usageID string) error
 }
 
 func (m *mockRepo) CreateSession(ctx context.Context, s ai.Session) (ai.Session, error) {
@@ -43,6 +46,15 @@ func (m *mockRepo) UsageSum(ctx context.Context, userID string) (int, error) {
 }
 func (m *mockRepo) UsageForMonth(ctx context.Context, userID, month string) (int, error) {
 	return m.usageForMonth(ctx, userID, month)
+}
+func (m *mockRepo) ReserveMonthly(ctx context.Context, userID, month string, limit int) (string, error) {
+	return m.reserveMonthly(ctx, userID, month, limit)
+}
+func (m *mockRepo) ReserveLifetime(ctx context.Context, userID, month string, limit int) (string, error) {
+	return m.reserveLifetime(ctx, userID, month, limit)
+}
+func (m *mockRepo) RefundUsage(ctx context.Context, usageID string) error {
+	return m.refundUsage(ctx, usageID)
 }
 
 func requireAppErr(t *testing.T, err error) *apperror.AppError {
@@ -216,5 +228,147 @@ func TestService_Usage(t *testing.T) {
 				t.Errorf("month = %v, want nil for free plan", *view.Month)
 			}
 		})
+	}
+}
+
+// ── RunWithQuota ──────────────────────────────────────────────────────────────
+
+func TestService_RunWithQuota_PlanRouting(t *testing.T) {
+	tests := []struct {
+		name      string
+		plan      string
+		wantLimit int
+	}{
+		{name: "free reserves lifetime", plan: "free", wantLimit: 5},
+		{name: "pro reserves current month", plan: "pro", wantLimit: 500},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotUser, gotMonth string
+			var gotLimit int
+			var lifetimeCalled, monthlyCalled bool
+			repo := &mockRepo{
+				reserveLifetime: func(_ context.Context, userID, month string, limit int) (string, error) {
+					lifetimeCalled, gotUser, gotMonth, gotLimit = true, userID, month, limit
+					return "usage_1", nil
+				},
+				reserveMonthly: func(_ context.Context, userID, month string, limit int) (string, error) {
+					monthlyCalled, gotUser, gotMonth, gotLimit = true, userID, month, limit
+					return "usage_1", nil
+				},
+			}
+			svc := ai.NewService(repo, nil, "")
+
+			err := svc.RunWithQuota(context.Background(), "usr_1", tc.plan, func(context.Context) (bool, error) {
+				return true, nil
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tc.plan == "free" && (!lifetimeCalled || monthlyCalled) {
+				t.Fatal("free plan must reserve lifetime, not monthly")
+			}
+			if tc.plan == "pro" && (!monthlyCalled || lifetimeCalled) {
+				t.Fatal("pro plan must reserve monthly, not lifetime")
+			}
+			if gotUser != "usr_1" {
+				t.Errorf("userID = %q, want usr_1", gotUser)
+			}
+			if gotLimit != tc.wantLimit {
+				t.Errorf("limit = %d, want %d", gotLimit, tc.wantLimit)
+			}
+			if want := time.Now().UTC().Format("2006-01") + "-01"; gotMonth != want {
+				t.Errorf("month = %q, want %q", gotMonth, want)
+			}
+		})
+	}
+}
+
+func TestService_RunWithQuota_Exhausted_FnNeverRuns(t *testing.T) {
+	limitErr := apperror.New(http.StatusTooManyRequests, apperror.ErrAILimitReached, "AI request limit reached")
+	repo := &mockRepo{
+		reserveLifetime: func(_ context.Context, _, _ string, _ int) (string, error) {
+			return "", limitErr
+		},
+	}
+	svc := ai.NewService(repo, nil, "")
+
+	fnCalled := false
+	err := svc.RunWithQuota(context.Background(), "usr_1", "free", func(context.Context) (bool, error) {
+		fnCalled = true
+		return false, nil
+	})
+	if fnCalled {
+		t.Fatal("fn must never run over quota — no provider call may be made")
+	}
+	ae := requireAppErr(t, err)
+	if ae.Code != apperror.ErrAILimitReached || ae.Status != http.StatusTooManyRequests {
+		t.Errorf("got %s/%d, want AI_LIMIT_REACHED/429", ae.Code, ae.Status)
+	}
+}
+
+func TestService_RunWithQuota_RefundMatrix(t *testing.T) {
+	fnErr := errors.New("provider exploded")
+	tests := []struct {
+		name       string
+		streamed   bool
+		fnErr      error
+		wantRefund bool
+	}{
+		{name: "success streamed → no refund", streamed: true, fnErr: nil, wantRefund: false},
+		{name: "success without stream → no refund", streamed: false, fnErr: nil, wantRefund: false},
+		{name: "failure before any token → refund", streamed: false, fnErr: fnErr, wantRefund: true},
+		{name: "mid-stream failure → no refund", streamed: true, fnErr: fnErr, wantRefund: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var refundedID string
+			refundCalled := false
+			repo := &mockRepo{
+				reserveMonthly: func(_ context.Context, _, _ string, _ int) (string, error) {
+					return "usage_9", nil
+				},
+				refundUsage: func(_ context.Context, usageID string) error {
+					refundCalled, refundedID = true, usageID
+					return nil
+				},
+			}
+			svc := ai.NewService(repo, nil, "")
+
+			err := svc.RunWithQuota(context.Background(), "usr_1", "pro", func(context.Context) (bool, error) {
+				return tc.streamed, tc.fnErr
+			})
+			if !errors.Is(err, tc.fnErr) && err != nil {
+				t.Fatalf("err = %v, want %v", err, tc.fnErr)
+			}
+			if tc.fnErr != nil && err == nil {
+				t.Fatal("fn error must surface to the caller")
+			}
+			if refundCalled != tc.wantRefund {
+				t.Fatalf("refund called = %v, want %v", refundCalled, tc.wantRefund)
+			}
+			if tc.wantRefund && refundedID != "usage_9" {
+				t.Errorf("refunded id = %q, want the reserved usage_9", refundedID)
+			}
+		})
+	}
+}
+
+func TestService_RunWithQuota_RefundFailure_KeepsOriginalError(t *testing.T) {
+	fnErr := errors.New("provider exploded")
+	refundErr := errors.New("refund broke")
+	repo := &mockRepo{
+		reserveMonthly: func(_ context.Context, _, _ string, _ int) (string, error) {
+			return "usage_9", nil
+		},
+		refundUsage: func(_ context.Context, _ string) error { return refundErr },
+	}
+	svc := ai.NewService(repo, nil, "")
+
+	err := svc.RunWithQuota(context.Background(), "usr_1", "pro", func(context.Context) (bool, error) {
+		return false, fnErr
+	})
+	if !errors.Is(err, fnErr) || !errors.Is(err, refundErr) {
+		t.Fatalf("err = %v, want both original and refund errors joined", err)
 	}
 }
