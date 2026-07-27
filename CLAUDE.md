@@ -202,7 +202,7 @@ Client IP is resolved through `TRUSTED_PROXY` / `TrustedProxyCIDRs`. Exceeded �
 | ------------ | --------- | --------- | --------------------- |
 | Areas        | 3         | Unlimited | `PLAN_LIMIT_EXCEEDED` |
 | Projects     | 5 total   | Unlimited | `PLAN_LIMIT_EXCEEDED` |
-| AI requests  | 10/month  | Unlimited | `AI_LIMIT_REACHED`    |
+| AI requests  | 5 lifetime | 500/month | `AI_LIMIT_REACHED`    |
 | Attachments  | ❌ (Pro-only write) | 20/owner · 100 MB/user | `PLAN_LIMIT_EXCEEDED` · `STORAGE_LIMIT_EXCEEDED` |
 | NLP parse    | ❌        | ✅        | `PLAN_LIMIT_EXCEEDED` |
 

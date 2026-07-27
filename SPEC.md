@@ -1157,7 +1157,8 @@ Parse a natural-language string and extract scheduling intent.
 Start a new AI assistant session.
 
 - **Auth required:** Yes
-- **Plan limit:** Free users have 10 AI requests/month total across all sessions
+- **Plan limit:** creating a session is free; the quota is metered per message
+  (Free = 5 lifetime, Pro = 500/month — see `POST …/messages` and `GET /v1/ai/usage`).
 
 **Request body**
 
@@ -1258,6 +1259,24 @@ Delete an AI session and all its messages.
 - **Auth required:** Yes
 
 **Response — 204 No Content**
+
+---
+
+#### GET /v1/ai/usage
+
+Read the caller's current AI quota state — powers the usage meter and the
+upgrade prompt.
+
+- **Auth required:** Yes
+
+**Response — 200 OK**
+
+```json
+{ "used": 3, "limit": 500, "scope": "month", "month": "2026-07" }
+```
+
+`scope` is `"lifetime"` for Free (`limit` = 5, `month` = `null`) and `"month"`
+for Pro (`limit` = 500, `month` = the current `YYYY-MM`).
 
 ---
 
@@ -1734,7 +1753,10 @@ These are the exact constants defined in `internal/apperror/errors.go` of the Go
 | `DUPLICATE_NAME`          | 409         | Area or project name already exists for this user                                 |
 | `IDEMPOTENCY_CONFLICT`    | 409         | Duplicate webhook event already processed                                         |
 | `RATE_LIMITED`            | 429         | Too many requests — back off and retry after `Retry-After` header                 |
-| `AI_LIMIT_REACHED`        | 403         | Free-tier AI monthly quota (10 requests) exhausted                                |
+| `AI_LIMIT_REACHED`        | 429         | AI quota exhausted (Free 5 lifetime · Pro 500/month)                              |
+| `AI_UNAVAILABLE`          | 503         | AI feature disabled (no key), provider 429/529, or first-token timeout            |
+| `AI_PROVIDER_ERROR`       | 502         | AI provider rejected the request (400/401) — our fault, logged with `request_id`  |
+| `AI_STREAM_ACTIVE`        | 409         | A response is already streaming for this session                                  |
 | `INVALID_PROJECT_ID`      | 400         | Project ID provided is not valid or does not belong to this user                  |
 | `INVALID_STATUS`          | 400         | Unrecognised status value for the resource type                                   |
 | `INVALID_DATE`            | 400         | Date string failed parsing or is out of acceptable range                          |
