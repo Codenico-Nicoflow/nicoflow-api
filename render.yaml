@@ -97,6 +97,16 @@ services:
         sync: false
       - key: VAPID_SUBJECT
         sync: false
+      # AI assistant (E-026). Unset ⇒ the kill switch returns 503 AI_UNAVAILABLE
+      # on every /v1/ai/* route (never a silent no-op), and the FE shows its
+      # feature-disabled banner. Billed per token on the Anthropic account, so a
+      # spend limit there is the real backstop — the app only caps request counts.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      # Model id. Omit to use the code default (claude-haiku-4-5); only set this
+      # to pin or change models deliberately — never hardcode one at a call site.
+      - key: AI_MODEL
+        sync: false
 
   # ── Notification sweeps (E-020 / E-025) ─────────────────────────────────────
   # One hourly cron hits the /internal/jobs/run-all endpoint, which runs all five
