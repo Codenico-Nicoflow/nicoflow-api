@@ -34,6 +34,17 @@ func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return hj.Hijack()
 }
 
+// Flush passes through so SSE streaming works behind this wrapper. Embedding the
+// interface alone hides http.Flusher, which made the AI send handler's assertion
+// fail with "streaming unsupported" — same class of bug as the Hijack case above.
+// A non-flushing writer is a no-op rather than an error: the handler's assertion
+// only needs to succeed, and buffered output still reaches the client at close.
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // Logger is a Chi-compatible middleware that emits one structured zerolog line
 // per request:
 //
