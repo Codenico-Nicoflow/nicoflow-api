@@ -174,7 +174,7 @@ func main() {
 	} else {
 		log.Warn().Msg("ai assistant: disabled (unset ANTHROPIC_API_KEY) — /v1/ai/* returns 503")
 	}
-	aiSvc := ai.NewService(ai.NewRepository(pool), aiClient, cfg.AIModel)
+	aiSvc := ai.NewService(ai.NewRepository(pool), aiClient, cfg.AIModel, ws.NewAIBroadcaster(wsHub))
 
 	// Sweep jobs — hourly, invoked by Render Cron Jobs via /internal/jobs/*.
 	jobsRepo := jobs.NewRepository(pool)

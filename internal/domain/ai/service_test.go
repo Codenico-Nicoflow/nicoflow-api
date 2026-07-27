@@ -24,6 +24,10 @@ type mockRepo struct {
 	reserveMonthly  func(ctx context.Context, userID, month string, limit int) (string, error)
 	reserveLifetime func(ctx context.Context, userID, month string, limit int) (string, error)
 	refundUsage     func(ctx context.Context, usageID string) error
+	appendUser      func(ctx context.Context, sessionID, msgID, content, title string) error
+	appendAssistant func(ctx context.Context, sessionID, msgID, content string) error
+	historyFor      func(ctx context.Context, sessionID string, limit int) ([]ai.SessionMessage, error)
+	promptContext   func(ctx context.Context, userID string) (ai.PromptContext, error)
 }
 
 func (m *mockRepo) CreateSession(ctx context.Context, s ai.Session) (ai.Session, error) {
@@ -56,6 +60,30 @@ func (m *mockRepo) ReserveLifetime(ctx context.Context, userID, month string, li
 func (m *mockRepo) RefundUsage(ctx context.Context, usageID string) error {
 	return m.refundUsage(ctx, usageID)
 }
+func (m *mockRepo) AppendUserMessage(ctx context.Context, sessionID, msgID, content, title string) error {
+	if m.appendUser == nil {
+		return nil
+	}
+	return m.appendUser(ctx, sessionID, msgID, content, title)
+}
+func (m *mockRepo) AppendAssistantMessage(ctx context.Context, sessionID, msgID, content string) error {
+	if m.appendAssistant == nil {
+		return nil
+	}
+	return m.appendAssistant(ctx, sessionID, msgID, content)
+}
+func (m *mockRepo) HistoryFor(ctx context.Context, sessionID string, limit int) ([]ai.SessionMessage, error) {
+	if m.historyFor == nil {
+		return nil, nil
+	}
+	return m.historyFor(ctx, sessionID, limit)
+}
+func (m *mockRepo) PromptContext(ctx context.Context, userID string) (ai.PromptContext, error) {
+	if m.promptContext == nil {
+		return ai.PromptContext{}, nil
+	}
+	return m.promptContext(ctx, userID)
+}
 
 func requireAppErr(t *testing.T, err error) *apperror.AppError {
 	t.Helper()
@@ -79,7 +107,7 @@ func TestService_CreateSession(t *testing.T) {
 			return s, nil
 		},
 	}
-	svc := ai.NewService(repo, nil, "")
+	svc := ai.NewService(repo, nil, "", nil)
 
 	view, err := svc.CreateSession(context.Background(), "usr_1", ai.CreateSessionRequest{Title: "  "})
 	if err != nil {
@@ -107,7 +135,7 @@ func TestService_ListSessions_PreservesOrder(t *testing.T) {
 			return []ai.Session{{ID: "b"}, {ID: "a"}, {ID: "c"}}, nil
 		},
 	}
-	svc := ai.NewService(repo, nil, "")
+	svc := ai.NewService(repo, nil, "", nil)
 
 	views, err := svc.ListSessions(context.Background(), "usr_1")
 	if err != nil {
@@ -136,7 +164,7 @@ func TestService_GetSession_WithMessages(t *testing.T) {
 			}, nil
 		},
 	}
-	svc := ai.NewService(repo, nil, "")
+	svc := ai.NewService(repo, nil, "", nil)
 
 	view, err := svc.GetSession(context.Background(), "usr_1", "sess_1")
 	if err != nil {
@@ -157,7 +185,7 @@ func TestService_GetSession_ForeignID_404(t *testing.T) {
 			return nil, notFound
 		},
 	}
-	svc := ai.NewService(repo, nil, "")
+	svc := ai.NewService(repo, nil, "", nil)
 
 	_, err := svc.GetSession(context.Background(), "usr_1", "foreign")
 	ae := requireAppErr(t, err)
@@ -174,7 +202,7 @@ func TestService_DeleteSession_ForeignID_404(t *testing.T) {
 			return apperror.New(http.StatusNotFound, apperror.ErrResourceNotFound, "session not found")
 		},
 	}
-	svc := ai.NewService(repo, nil, "")
+	svc := ai.NewService(repo, nil, "", nil)
 
 	err := svc.DeleteSession(context.Background(), "usr_1", "foreign")
 	ae := requireAppErr(t, err)
@@ -203,7 +231,7 @@ func TestService_Usage(t *testing.T) {
 				usageSum:      func(_ context.Context, _ string) (int, error) { return 3, nil },
 				usageForMonth: func(_ context.Context, _, _ string) (int, error) { return 7, nil },
 			}
-			svc := ai.NewService(repo, nil, "")
+			svc := ai.NewService(repo, nil, "", nil)
 
 			view, err := svc.Usage(context.Background(), "usr_1", tc.plan)
 			if err != nil {
@@ -257,7 +285,7 @@ func TestService_RunWithQuota_PlanRouting(t *testing.T) {
 					return "usage_1", nil
 				},
 			}
-			svc := ai.NewService(repo, nil, "")
+			svc := ai.NewService(repo, nil, "", nil)
 
 			err := svc.RunWithQuota(context.Background(), "usr_1", tc.plan, func(context.Context) (bool, error) {
 				return true, nil
@@ -291,7 +319,7 @@ func TestService_RunWithQuota_Exhausted_FnNeverRuns(t *testing.T) {
 			return "", limitErr
 		},
 	}
-	svc := ai.NewService(repo, nil, "")
+	svc := ai.NewService(repo, nil, "", nil)
 
 	fnCalled := false
 	err := svc.RunWithQuota(context.Background(), "usr_1", "free", func(context.Context) (bool, error) {
@@ -333,7 +361,7 @@ func TestService_RunWithQuota_RefundMatrix(t *testing.T) {
 					return nil
 				},
 			}
-			svc := ai.NewService(repo, nil, "")
+			svc := ai.NewService(repo, nil, "", nil)
 
 			err := svc.RunWithQuota(context.Background(), "usr_1", "pro", func(context.Context) (bool, error) {
 				return tc.streamed, tc.fnErr
@@ -363,7 +391,7 @@ func TestService_RunWithQuota_RefundFailure_KeepsOriginalError(t *testing.T) {
 		},
 		refundUsage: func(_ context.Context, _ string) error { return refundErr },
 	}
-	svc := ai.NewService(repo, nil, "")
+	svc := ai.NewService(repo, nil, "", nil)
 
 	err := svc.RunWithQuota(context.Background(), "usr_1", "pro", func(context.Context) (bool, error) {
 		return false, fnErr

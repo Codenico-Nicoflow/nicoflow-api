@@ -216,7 +216,7 @@ Check via `COUNT(*)` before insert. Plan is read from `ctx` Claims — no DB cal
 - Hub in-process (`internal/ws`, no Redis in v1). Single Render instance. `Hub.BroadcastToUser(userID, ws.Event)` marshals once + fans out to all of a user's connections; a full send buffer drops the slow client (never blocks the hub). `CloseAll` on graceful shutdown.
 - Auth: JWT from `?token=` query param (via `pkg/jwtutil`). Invalid/expired → upgrade then close `1008 Policy Violation`. `CheckOrigin` bound to `CORS_ORIGINS`.
 - Heartbeat: server pings every 30s; read deadline 60s (missed pong closes); write deadline 10s; inbound frames capped 512B (receive-only — discarded). Multi-connection per user.
-- Envelope `ws.Event{ Event, Payload, Timestamp }` — full payloads, no diffs. Event names in `events.go`: `task.created|updated|deleted|status_changed`, `project.*`, `area.*`, `bucket.processed`, `notification.created`.
+- Envelope `ws.Event{ Event, Payload, Timestamp }` — full payloads, no diffs. Event names in `events.go`: `task.created|updated|deleted|status_changed`, `project.*`, `area.*`, `bucket.processed`, `attachment.created|deleted`, `notification.created`, `ai.session.updated` (`{ id }` — emitted when an AI session gains an assistant reply, NIC-1684).
 - **Notification delivery:** `internal/ws/broadcaster.go` (`NotificationBroadcaster`) adapts the hub to `notification.Broadcaster` and is injected into `notification.NewService` in `main.go`. Every `Create` broadcasts `notification.created` (fire-and-forget — a broadcast never fails/blocks the insert). Adapter lives in `ws` (imports `notification`), never the reverse.
 
 ## Web Push (E-025 — Pro, NIC-1580)

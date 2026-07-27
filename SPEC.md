@@ -1200,37 +1200,54 @@ Retrieve a session with its full message history.
 
 #### POST /v1/ai/sessions/:id/messages
 
-Send a message to the AI assistant.
+Send a message to the AI assistant and stream Claude's reply back as **SSE over
+the POST response body** (not `EventSource` — that is GET-only and cannot carry a
+Bearer token). Rate-limited `RateLimitUser(10, 10)`.
 
 - **Auth required:** Yes
-- **Plan limit:** Counted against monthly AI request quota
+- **Plan limit:** reserves one AI request atomically before any provider call
+  (Free = 5 lifetime, Pro = 500/month). Over quota → `429 AI_LIMIT_REACHED`, no
+  Anthropic call.
 
-**Request body**
+**Request body** — `content`, 1..2000 chars after trim, else `422 INVALID_INPUT`.
 
 ```json
 { "content": "Help me break down the Q3 launch project into tasks" }
 ```
 
-**Response — 200 OK**
+**Response — 200 OK, `Content-Type: text/event-stream`** (also
+`Cache-Control: no-store`, `X-Accel-Buffering: no`). The status commits on the
+first token. Each frame is a `data:` line with a type-discriminated JSON payload:
 
-```json
-{
-  "message": {
-    "id": "msg_xyz",
-    "role": "assistant",
-    "content": "Sure, here are...",
-    "createdAt": "..."
-  },
-  "usage": {
-    "promptTokens": 420,
-    "completionTokens": 180,
-    "requestsThisMonth": 3,
-    "requestsLimit": 10
-  }
-}
+```
+data: {"type":"delta","text":"Sure, "}
+data: {"type":"delta","text":"here are..."}
+data: {"type":"done","messageId":"msg_xyz","usage":{"used":3,"limit":500,"scope":"month","month":"2026-07"}}
 ```
 
-**Errors:** `AI_LIMIT_REACHED` (403 — monthly quota exceeded), `RATE_LIMITED` (429)
+Exactly one terminal event ends every stream: `done` (success) **or**
+`{"type":"error","code":"AI_PROVIDER_ERROR"}` (mid-stream failure — the HTTP
+status is already committed, so the error rides the stream).
+
+**Pipeline (order is load-bearing):** feature check (503 `AI_UNAVAILABLE` if the
+key is unset) → session ownership (`404`) → single-stream guard (`409
+AI_STREAM_ACTIVE`) → quota reserve (`429`) → persist user message (+ first-turn
+title, first 50 chars word-boundary, same tx) → stream Claude → persist assistant
+message + bump `updated_at` + emit WS `ai.session.updated`.
+
+**Prompt cache:** static system prompt (persona + scope guard) with a volatile
+tail (today's date, user language, open-task count), marked ephemeral; history is
+budgeted newest-first (≤20 msgs, ~20 000 chars) with a cache breakpoint on the
+newest block.
+
+**Cancellation:** client abort cancels the Anthropic stream; the partial
+assistant text is persisted as a normal message and the quota charge is **kept**
+(a zero-token failure is the only case that refunds).
+
+**Errors:** `INVALID_INPUT` (422), `RESOURCE_NOT_FOUND` (404), `AI_STREAM_ACTIVE`
+(409), `AI_LIMIT_REACHED` (429 — quota), `AI_UNAVAILABLE` (503 — feature off,
+provider 429/529, or first-token timeout), `AI_PROVIDER_ERROR` (502 — provider
+400/401), `RATE_LIMITED` (429).
 
 ---
 

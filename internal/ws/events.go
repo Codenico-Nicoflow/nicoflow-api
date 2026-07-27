@@ -25,6 +25,9 @@ const (
 	// scaffold's "notification" to match the frontend event map (E-023) and the
 	// shape notification.Service already emits.
 	EventNotificationCreated EventType = "notification.created"
+	// EventAISessionUpdated fires when an AI session gains an assistant reply,
+	// carrying { id }. The client refetches the session on receipt.
+	EventAISessionUpdated EventType = "ai.session.updated"
 )
 
 // Event is the envelope for every server-pushed WebSocket message.

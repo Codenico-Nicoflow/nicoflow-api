@@ -33,6 +33,19 @@ type Repository interface {
 	ReserveLifetime(ctx context.Context, userID, month string, limit int) (string, error)
 	// RefundUsage gives back one reserved request on the given usage row.
 	RefundUsage(ctx context.Context, usageID string) error
+	// AppendUserMessage inserts a user turn. When it is the session's first
+	// message, it also sets the session title (word-boundary-truncated) in the
+	// same transaction. All within one tx so title and message are atomic.
+	AppendUserMessage(ctx context.Context, sessionID, msgID, content, title string) error
+	// AppendAssistantMessage inserts the assistant turn and bumps the session's
+	// updated_at, so a completed (or aborted-with-partial) stream is one write.
+	AppendAssistantMessage(ctx context.Context, sessionID, msgID, content string) error
+	// HistoryFor returns the session's messages, newest-first, capped at limit
+	// rows — the budget builder trims further by character count.
+	HistoryFor(ctx context.Context, sessionID string, limit int) ([]SessionMessage, error)
+	// PromptContext returns the volatile system-prompt inputs for a user: their
+	// language and open-task COUNT(*). One round-trip, row-isolated by user_id.
+	PromptContext(ctx context.Context, userID string) (PromptContext, error)
 }
 
 type pgRepo struct{ db *pgxpool.Pool }
@@ -222,6 +235,109 @@ func (r *pgRepo) RefundUsage(ctx context.Context, usageID string) error {
 		return fmt.Errorf("ai.RefundUsage: %w", err)
 	}
 	return nil
+}
+
+func (r *pgRepo) AppendUserMessage(ctx context.Context, sessionID, msgID, content, title string) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("ai.AppendUserMessage begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var count int
+	if err := tx.QueryRow(ctx,
+		`SELECT COUNT(*) FROM ai_messages WHERE session_id = $1`, sessionID,
+	).Scan(&count); err != nil {
+		return fmt.Errorf("ai.AppendUserMessage count: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO ai_messages (id, session_id, role, content, created_at)
+		 VALUES ($1, $2, 'user', $3, NOW())`,
+		msgID, sessionID, content,
+	); err != nil {
+		return fmt.Errorf("ai.AppendUserMessage insert: %w", err)
+	}
+
+	// First turn seeds the session title from the message.
+	if count == 0 && title != "" {
+		if _, err := tx.Exec(ctx,
+			`UPDATE ai_sessions SET title = $2, updated_at = NOW() WHERE id = $1`,
+			sessionID, title,
+		); err != nil {
+			return fmt.Errorf("ai.AppendUserMessage title: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("ai.AppendUserMessage commit: %w", err)
+	}
+	return nil
+}
+
+func (r *pgRepo) AppendAssistantMessage(ctx context.Context, sessionID, msgID, content string) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("ai.AppendAssistantMessage begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO ai_messages (id, session_id, role, content, created_at)
+		 VALUES ($1, $2, 'assistant', $3, NOW())`,
+		msgID, sessionID, content,
+	); err != nil {
+		return fmt.Errorf("ai.AppendAssistantMessage insert: %w", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE ai_sessions SET updated_at = NOW() WHERE id = $1`, sessionID,
+	); err != nil {
+		return fmt.Errorf("ai.AppendAssistantMessage touch: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("ai.AppendAssistantMessage commit: %w", err)
+	}
+	return nil
+}
+
+func (r *pgRepo) HistoryFor(ctx context.Context, sessionID string, limit int) ([]SessionMessage, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, session_id, role, content, created_at
+		FROM ai_messages
+		WHERE session_id = $1
+		ORDER BY created_at DESC, id DESC
+		LIMIT $2`,
+		sessionID, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("ai.HistoryFor query: %w", err)
+	}
+	defer rows.Close()
+
+	msgs := []SessionMessage{}
+	for rows.Next() {
+		var m SessionMessage
+		if err := rows.Scan(&m.ID, &m.SessionID, &m.Role, &m.Content, &m.CreatedAt); err != nil {
+			return nil, fmt.Errorf("ai.HistoryFor scan: %w", err)
+		}
+		msgs = append(msgs, m)
+	}
+	return msgs, rows.Err()
+}
+
+func (r *pgRepo) PromptContext(ctx context.Context, userID string) (PromptContext, error) {
+	var pc PromptContext
+	err := r.db.QueryRow(ctx, `
+		SELECT
+			COALESCE((SELECT language FROM users WHERE id = $1 AND deleted_at IS NULL), 'en'),
+			(SELECT COUNT(*) FROM tasks WHERE user_id = $1 AND status NOT IN ('done', 'cancelled'))`,
+		userID,
+	).Scan(&pc.Language, &pc.OpenTasks)
+	if err != nil {
+		return PromptContext{}, fmt.Errorf("ai.PromptContext: %w", err)
+	}
+	return pc, nil
 }
 
 func (r *pgRepo) UsageForMonth(ctx context.Context, userID, month string) (int, error) {

@@ -66,7 +66,7 @@ func TestClient_MockableStream(t *testing.T) {
 
 // service must accept the mock client (nil-safe, no real calls at construction).
 func TestNewService_AcceptsMockClient(t *testing.T) {
-	if NewService(nil, fakeClient{enabled: true}, "claude-haiku-4-5") == nil {
+	if NewService(nil, fakeClient{enabled: true}, "claude-haiku-4-5", nil) == nil {
 		t.Fatal("NewService returned nil")
 	}
 }
