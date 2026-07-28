@@ -49,3 +49,31 @@ func TestStatusRecorder_Hijack_UnsupportedUnderlying(t *testing.T) {
 		t.Fatal("expected an error when the underlying writer is not a Hijacker")
 	}
 }
+
+// TestStatusRecorder_Flush_PassesThrough guards the SSE path: the AI send handler
+// asserts http.Flusher and 500s with "streaming unsupported" when the assertion
+// fails, so the wrapper must expose Flush and forward it (regression fix).
+func TestStatusRecorder_Flush_PassesThrough(t *testing.T) {
+	base := httptest.NewRecorder()
+	rec := &statusRecorder{ResponseWriter: base, status: http.StatusOK}
+
+	f, ok := any(rec).(http.Flusher)
+	if !ok {
+		t.Fatal("statusRecorder does not implement http.Flusher — SSE streaming will fail")
+	}
+	f.Flush()
+	if !base.Flushed {
+		t.Error("Flush did not pass through to the underlying writer")
+	}
+}
+
+// nonFlushingWriter implements only http.ResponseWriter.
+type nonFlushingWriter struct{ http.ResponseWriter }
+
+// TestStatusRecorder_Flush_UnsupportedUnderlying is a no-op rather than a panic
+// when the underlying writer cannot flush — the handler only needs the assertion
+// to succeed; output still reaches the client when the response closes.
+func TestStatusRecorder_Flush_UnsupportedUnderlying(t *testing.T) {
+	rec := &statusRecorder{ResponseWriter: &nonFlushingWriter{httptest.NewRecorder()}, status: http.StatusOK}
+	rec.Flush()
+}
