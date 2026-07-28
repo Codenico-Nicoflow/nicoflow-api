@@ -71,6 +71,17 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, views)
 }
 
+// StorageUsage handles GET /attachments/usage — the caller's total stored bytes
+// against the cap. No plan gate: a downgraded user still needs to see it.
+func (h *Handler) StorageUsage(w http.ResponseWriter, r *http.Request) {
+	usage, err := h.svc.StorageUsage(r.Context(), mw.UserIDFromCtx(r.Context()))
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, usage)
+}
+
 // DownloadURL handles GET /attachments/{id}/download-url — presigned GET, no plan gate.
 func (h *Handler) DownloadURL(w http.ResponseWriter, r *http.Request) {
 	url, err := h.svc.DownloadURL(r.Context(), mw.UserIDFromCtx(r.Context()), chi.URLParam(r, "id"))

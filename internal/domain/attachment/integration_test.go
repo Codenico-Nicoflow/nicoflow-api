@@ -212,6 +212,39 @@ func TestRepo_CountCap(t *testing.T) {
 	}
 }
 
+// A retried confirm reuses the same s3_key. The UNIQUE constraint must surface
+// as the already-stored row, not a 500.
+func TestRepo_DuplicateS3KeyIsIdempotent(t *testing.T) {
+	r, pool := newRepo(t)
+	ctx := context.Background()
+	userID := seedUser(t, pool)
+	ownerID := uuid.NewString()
+
+	first := newAttachment(userID, ownerID, 128)
+	stored, ok, err := r.InsertGuarded(ctx, first)
+	if err != nil || !ok {
+		t.Fatalf("first insert: ok=%v err=%v", ok, err)
+	}
+
+	// Same key, fresh row id — what a client retry looks like.
+	retry := newAttachment(userID, ownerID, 128)
+	retry.S3Key = first.S3Key
+	got, ok, err := r.InsertGuarded(ctx, retry)
+	if err != nil {
+		t.Fatalf("retried insert errored instead of resolving: %v", err)
+	}
+	if !ok {
+		t.Fatalf("retried insert should report success")
+	}
+	if got.ID != stored.ID {
+		t.Fatalf("retry returned id %q, want the original %q", got.ID, stored.ID)
+	}
+	list, err := r.ListByOwner(ctx, userID, attachment.OwnerTypeTask, ownerID)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("retry must not duplicate the row: got %d err=%v", len(list), err)
+	}
+}
+
 // DeleteAllForOwner removes the owner's rows and returns them; a different owner
 // of the same user is untouched.
 func TestRepo_DeleteAllForOwner(t *testing.T) {
