@@ -32,6 +32,9 @@ func (r *gcRepo) ListByOwner(context.Context, string, string, string) ([]Attachm
 func (r *gcRepo) GetByID(context.Context, string, string) (Attachment, error) {
 	return Attachment{}, nil
 }
+func (r *gcRepo) GetByS3Key(context.Context, string, string) (Attachment, error) {
+	return Attachment{}, nil
+}
 func (r *gcRepo) Delete(context.Context, string, string) error           { return nil }
 func (r *gcRepo) SumBytesForUser(context.Context, string) (int64, error) { return 0, nil }
 func (r *gcRepo) ListByUser(context.Context, string) ([]Attachment, error) {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
@@ -50,10 +51,45 @@ func (r *pgRepo) InsertGuarded(ctx context.Context, a Attachment) (Attachment, b
 		// limit message to return and cleans up the orphaned S3 object.
 		return Attachment{}, false, nil
 	}
+	// s3_key is UNIQUE: a retried confirm (dropped response, double tap) races
+	// itself. Return the row the winner wrote so the retry reads as success
+	// instead of a 500.
+	if isUniqueViolation(err) {
+		existing, getErr := r.GetByS3Key(ctx, a.UserID, a.S3Key)
+		if getErr != nil {
+			return Attachment{}, false, getErr
+		}
+		return existing, true, nil
+	}
 	if err != nil {
 		return Attachment{}, false, fmt.Errorf("attachment.InsertGuarded: %w", err)
 	}
 	return out, true, nil
+}
+
+// pgUniqueViolation is postgres SQLSTATE 23505.
+const pgUniqueViolation = "23505"
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation
+}
+
+// GetByS3Key resolves an already-confirmed attachment by its object key, scoped
+// to the owning user.
+func (r *pgRepo) GetByS3Key(ctx context.Context, userID, s3Key string) (Attachment, error) {
+	var a Attachment
+	err := scan(
+		r.db.QueryRow(ctx, `SELECT`+selectCols+`FROM file_attachments WHERE user_id = $1 AND s3_key = $2`, userID, s3Key),
+		&a,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Attachment{}, apperror.New(http.StatusNotFound, apperror.ErrResourceNotFound, "attachment not found")
+	}
+	if err != nil {
+		return Attachment{}, fmt.Errorf("attachment.GetByS3Key: %w", err)
+	}
+	return a, nil
 }
 
 func (r *pgRepo) ListByOwner(ctx context.Context, userID, ownerType, ownerID string) ([]Attachment, error) {

@@ -37,6 +37,9 @@ func (f *fakeRepo) ListByOwner(context.Context, string, string, string) ([]Attac
 func (f *fakeRepo) GetByID(context.Context, string, string) (Attachment, error) {
 	return f.getResult, f.getErr
 }
+func (f *fakeRepo) GetByS3Key(context.Context, string, string) (Attachment, error) {
+	return f.getResult, f.getErr
+}
 func (f *fakeRepo) Delete(context.Context, string, string) error { return f.deleteErr }
 func (f *fakeRepo) SumBytesForUser(context.Context, string) (int64, error) {
 	return f.sumBytes, nil
@@ -334,11 +337,31 @@ func TestSanitizeName(t *testing.T) {
 		{"a/b\\c.png", "a_b_c.png"},
 		{"   ", "file"},
 		{"", "file"},
+		{"a\nb.pdf", "ab.pdf"},
+		{"a\tb.pdf", "ab.pdf"},
+		{"a\x00b.pdf", "ab.pdf"},
+		{"\n\t", "file"},
 	}
 	for _, tc := range tests {
 		if got := sanitizeName(tc.in); got != tc.want {
 			t.Errorf("sanitizeName(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestStorageUsage(t *testing.T) {
+	repo := &fakeRepo{sumBytes: 1234}
+	svc := NewService(repo, &fakeStore{enabled: true}, fakeOwners{}, nil, nil)
+
+	got, err := svc.StorageUsage(context.Background(), userID)
+	if err != nil {
+		t.Fatalf("StorageUsage: %v", err)
+	}
+	if got.UsedBytes != 1234 {
+		t.Errorf("UsedBytes = %d, want 1234", got.UsedBytes)
+	}
+	if got.LimitBytes != MaxBytesPerUser {
+		t.Errorf("LimitBytes = %d, want %d", got.LimitBytes, MaxBytesPerUser)
 	}
 }
 

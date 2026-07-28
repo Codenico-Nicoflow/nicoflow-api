@@ -68,6 +68,14 @@ func toView(a Attachment) AttachmentView {
 	}
 }
 
+// StorageUsageView is the user's total attachment footprint against the cap.
+// User-scoped on purpose: the byte cap spans every owner, so a client can't
+// derive it from any single owner's list.
+type StorageUsageView struct {
+	UsedBytes  int64 `json:"usedBytes"`
+	LimitBytes int64 `json:"limitBytes"`
+}
+
 // DeletedPayload is the attachment.deleted event body — just enough for a client
 // to drop the row and invalidate the owner's list, never stale file metadata.
 type DeletedPayload struct {
@@ -145,6 +153,10 @@ type Service interface {
 	DownloadURL(ctx context.Context, userID, id string) (string, error)
 	Delete(ctx context.Context, userID, id string) error
 
+	// StorageUsage reports the user's total stored bytes against the cap. Any
+	// plan may read it; the client uses it to warn before a hard 403.
+	StorageUsage(ctx context.Context, userID string) (StorageUsageView, error)
+
 	// DeleteAllForOwner removes every attachment for an owner and best-effort
 	// deletes their S3 objects. The task-delete flow calls it via the
 	// task.AttachmentCleaner seam; a failed S3 delete never fails the call —
@@ -204,6 +216,10 @@ type Repository interface {
 
 	// GetByID returns one attachment scoped to the user, or a not-found error.
 	GetByID(ctx context.Context, userID, id string) (Attachment, error)
+
+	// GetByS3Key resolves an attachment by object key, scoped to the user. Used
+	// to make a retried confirm idempotent when s3_key is already taken.
+	GetByS3Key(ctx context.Context, userID, s3Key string) (Attachment, error)
 
 	// Delete removes one attachment scoped to the user. Missing row → not-found.
 	Delete(ctx context.Context, userID, id string) error

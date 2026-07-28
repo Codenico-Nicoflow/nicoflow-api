@@ -174,6 +174,8 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		r.Post("/attachments/upload-url", h.Attachment.UploadURL)
 		r.Post("/attachments", h.Attachment.Confirm)
 		r.Get("/attachments", h.Attachment.List)
+		// Before /{id}/… so "usage" is never parsed as an attachment id.
+		r.Get("/attachments/usage", h.Attachment.StorageUsage)
 		r.Get("/attachments/{id}/download-url", h.Attachment.DownloadURL)
 		r.Delete("/attachments/{id}", h.Attachment.Delete)
 

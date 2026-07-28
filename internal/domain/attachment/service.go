@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
@@ -140,6 +141,14 @@ func (s *service) Confirm(ctx context.Context, userID, plan string, req ConfirmR
 	return toView(row), nil
 }
 
+func (s *service) StorageUsage(ctx context.Context, userID string) (StorageUsageView, error) {
+	used, err := s.repo.SumBytesForUser(ctx, userID)
+	if err != nil {
+		return StorageUsageView{}, err
+	}
+	return StorageUsageView{UsedBytes: used, LimitBytes: MaxBytesPerUser}, nil
+}
+
 func (s *service) ListByOwner(ctx context.Context, userID, ownerType, ownerID string) ([]AttachmentView, error) {
 	if err := s.verifyOwner(ctx, userID, ownerType, ownerID); err != nil {
 		return nil, err
@@ -258,6 +267,15 @@ func sanitizeName(name string) string {
 	name = strings.TrimSpace(name)
 	name = strings.ReplaceAll(name, "/", "_")
 	name = strings.ReplaceAll(name, "\\", "_")
+	// Drop C0/C1 controls (newlines, tabs, NUL): they survive the download
+	// header's RFC 5987 encoding but render as garbage anywhere the name is shown.
+	name = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, name)
+	name = strings.TrimSpace(name)
 	if name == "" {
 		return "file"
 	}
