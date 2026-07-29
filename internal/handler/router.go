@@ -17,6 +17,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
+	"github.com/nicoflow/nicoflow-api/internal/domain/recurrence"
 	"github.com/nicoflow/nicoflow-api/internal/domain/search"
 	"github.com/nicoflow/nicoflow-api/internal/domain/task"
 	"github.com/nicoflow/nicoflow-api/internal/jobs"
@@ -35,6 +36,7 @@ type Handlers struct {
 	Billing      *billing.Handler
 	Search       *search.Handler
 	Attachment   *attachment.Handler
+	Recurrence   *recurrence.Handler
 	Notification *notification.Handler
 	Jobs         *jobs.Handler
 	WS           *ws.Handler
@@ -178,6 +180,15 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		r.Get("/attachments/usage", h.Attachment.StorageUsage)
 		r.Get("/attachments/{id}/download-url", h.Attachment.DownloadURL)
 		r.Delete("/attachments/{id}", h.Attachment.Delete)
+
+		// Recurrence rules (E-050). Creation is nested under the project that owns
+		// the series; every other verb is flat on the rule id.
+		r.Post("/projects/{projectId}/recurrence-rules", h.Recurrence.Create)
+		r.Get("/recurrence-rules", h.Recurrence.List)
+		r.Get("/recurrence-rules/{id}", h.Recurrence.Get)
+		r.Patch("/recurrence-rules/{id}", h.Recurrence.Update)
+		r.Patch("/recurrence-rules/{id}/pause", h.Recurrence.Pause)
+		r.Delete("/recurrence-rules/{id}", h.Recurrence.Delete)
 
 		// Bucket (inbox)
 		r.Get("/bucket", h.Bucket.List)

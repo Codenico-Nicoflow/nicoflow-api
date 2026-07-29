@@ -28,6 +28,11 @@ const (
 	// EventAISessionUpdated fires when an AI session gains an assistant reply,
 	// carrying { id }. The client refetches the session on receipt.
 	EventAISessionUpdated EventType = "ai.session.updated"
+	// Recurrence rule events (E-050) carry a full RuleView; deleted carries { id }.
+	// FREE on every plan.
+	EventRecurrenceCreated EventType = "recurrence.created"
+	EventRecurrenceUpdated EventType = "recurrence.updated"
+	EventRecurrenceDeleted EventType = "recurrence.deleted"
 )
 
 // Event is the envelope for every server-pushed WebSocket message.

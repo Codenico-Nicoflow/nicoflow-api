@@ -1592,7 +1592,111 @@ Delete an attachment: DB row first, then the S3 object (idempotent). **Not** pla
 
 ---
 
-### 3.13 Billing & Subscriptions
+### 3.13 Recurrence Rules — E-050
+
+A recurrence rule is a **task template plus a schedule and a cursor**. The tasks it
+produces are ordinary task rows carrying `recurrenceRuleId` + `occurrenceDate`.
+Reads are open on every plan; **Free is capped at 3 rules** (`PLAN_LIMIT_EXCEEDED`).
+
+The schedule is a deliberate subset of RFC 5545 stored as **columns, not an RRULE
+string**, so the client can render a human summary without shipping a parser.
+There is **no time-of-day** — `scheduledFor` is a `YYYY-MM-DD` date and `due_date`
+was dropped in migration 026.
+
+**`RecurrenceRuleView`** — all IDs are strings; all dates are `YYYY-MM-DD`.
+
+```jsonc
+{
+  "id": "uuid", "projectId": "uuid",
+  "title": "Water the plants", "notes": null,
+  "priority": "medium", "energy": "medium", "estimatedMinutes": null,
+  "freq": "weekly",            // daily | weekly | monthly | yearly
+  "interval": 1,               // 1..366
+  "byWeekday": [1, 4],         // weekly only; 0=Sun..6=Sat; always an array, never null
+  "byMonthday": null,          // monthly only; 1..31, or -1 = last day of month
+  "startDate": "2026-03-02",
+  "endDate": null,             // null = runs forever
+  "nextOccurrence": "2026-03-09", // null = series exhausted
+  "paused": false,
+  "createdAt": "...", "updatedAt": "..."
+}
+```
+
+**Monthly overflow clamps.** "The 31st" yields the 30th in a 30-day month and the
+28th (29th in a leap year) in February — a monthly obligation never vanishes
+because the month is short.
+
+#### POST /v1/projects/:projectId/recurrence-rules
+
+Create a rule and **materialize instance #1 in the same transaction** — a rule can
+never exist without its first task. Broadcasts `recurrence.created`.
+
+- **Auth required:** Yes
+
+**Request** — `title`, `freq`, and `startDate` are required; `interval` defaults to `1`.
+
+**Response — 201 Created:** `RecurrenceRuleView`
+
+**Errors:** `PROJECT_NOT_FOUND` (404 — checked *before* the plan count, so a foreign
+project can't be used to probe the caller's rule count), `PLAN_LIMIT_EXCEEDED` (403 —
+4th rule on Free), `INVALID_RECURRENCE` (422), `INVALID_INPUT` (422), `INVALID_DATE` (422)
+
+#### GET /v1/recurrence-rules
+
+List the caller's rules, newest first. Optional `?projectId=` filter.
+
+- **Auth required:** Yes
+
+**Response — 200 OK:** `{ "items": RecurrenceRuleView[] }`
+
+#### GET /v1/recurrence-rules/:id
+
+**Response — 200 OK:** `RecurrenceRuleView` · **Errors:** `RECURRENCE_RULE_NOT_FOUND` (404)
+
+#### PATCH /v1/recurrence-rules/:id
+
+Edit the series. **Strict split, no third mode:** the edit changes the template for
+future instances; already-materialized rows are untouched **except the single live
+instance**, which is re-stamped (title/notes/priority/energy) and re-dated if the
+schedule moved. Re-stamping is unconditional — no per-field dirty tracking — so a
+manual rename of that instance can be overwritten. Editing an *instance*
+(`PATCH /tasks/:id`) never propagates back to the rule.
+
+A schedule change recomputes `nextOccurrence`. `endDate` accepts an explicit `null`
+to clear it, which revives an exhausted series. Broadcasts `recurrence.updated`.
+
+- **Auth required:** Yes
+
+**Response — 200 OK:** `RecurrenceRuleView`
+
+**Errors:** `RECURRENCE_RULE_NOT_FOUND` (404), `INVALID_RECURRENCE` (422), `INVALID_INPUT` (422), `INVALID_DATE` (422)
+
+#### PATCH /v1/recurrence-rules/:id/pause
+
+Body `{ "paused": true }`. A paused rule is excluded from the due scan. Broadcasts
+`recurrence.updated`.
+
+- **Auth required:** Yes
+
+**Response — 200 OK:** `RecurrenceRuleView` · **Errors:** `RECURRENCE_RULE_NOT_FOUND` (404)
+
+#### DELETE /v1/recurrence-rules/:id
+
+End the series. The **pending** (un-done) occurrence is deleted; **past occurrences
+are orphaned, not destroyed** (`ON DELETE SET NULL` on `tasks.recurrence_rule_id`) —
+they are the user's record of what they did. Broadcasts `recurrence.deleted`.
+
+- **Auth required:** Yes
+
+**Response — 204 No Content** · **Errors:** `RECURRENCE_RULE_NOT_FOUND` (404)
+
+**No skip endpoint.** Ignoring an occurrence yields `missed` (time ran out); an
+explicit "no" is `PATCH /tasks/:id/status` → `cancelled` (the user decided against
+it). The two are deliberately distinct — the streak calculation tells them apart.
+
+---
+
+### 3.14 Billing & Subscriptions
 
 #### GET /v1/billing/plan
 
@@ -1658,7 +1762,7 @@ Lemon Squeezy webhook receiver. Not called by the client — called by Lemon Squ
 
 ---
 
-### 3.14 Real-Time Sync (WebSocket)
+### 3.15 Real-Time Sync (WebSocket)
 
 #### GET /v1/ws
 
@@ -1706,6 +1810,9 @@ event fans out to all of them.
 | `area.updated`         | `IArea`           |
 | `area.deleted`         | `{ id }`          |
 | `bucket.processed`     | `{ id }`          |
+| `recurrence.created`   | `RecurrenceRuleView` (§3.13) |
+| `recurrence.updated`   | `RecurrenceRuleView` (§3.13) |
+| `recurrence.deleted`   | `{ id }`          |
 | `notification.created` | `INotification` (full `NotificationView`, §3.11) |
 
 The frontend maps `notification.created` to a tag-invalidation of the
@@ -1737,7 +1844,7 @@ These are the exact constants defined in `internal/apperror/errors.go` of the Go
 | `UNAUTHORIZED`            | 401         | No valid token provided, or credentials are incorrect                             |
 | `EMAIL_NOT_VERIFIED`      | 403         | Credentials valid but email unverified (login gate; `REQUIRE_EMAIL_VERIFICATION`) |
 | `FORBIDDEN`               | 403         | Authenticated but not permitted to access the resource                            |
-| `PLAN_LIMIT_EXCEEDED`     | 403         | Action blocked by the user's plan (areas/projects/AI quota; attachments: Free write, or > 20 files/owner) |
+| `PLAN_LIMIT_EXCEEDED`     | 403         | Action blocked by the user's plan (areas/projects/AI quota/recurrence rules; attachments: Free write, or > 20 files/owner) |
 | `STORAGE_LIMIT_EXCEEDED`  | 403         | Attachment upload would exceed the 100 MB per-user storage cap (used/limit in message) |
 | `PERMISSION_DENIED`       | 403         | Resource belongs to another user                                                  |
 | `RESOURCE_NOT_FOUND`      | 404         | Generic — resource does not exist or is not visible to the requesting user        |
@@ -1747,6 +1854,7 @@ These are the exact constants defined in `internal/apperror/errors.go` of the Go
 | `USER_NOT_FOUND`          | 404         | Specific user not found                                                           |
 | `SESSION_NOT_FOUND`       | 404         | AI session not found                                                              |
 | `MESSAGE_NOT_FOUND`       | 404         | AI message not found                                                              |
+| `RECURRENCE_RULE_NOT_FOUND` | 404       | Recurrence rule not found, or belongs to another user (no existence leak)         |
 | `CONFLICT`                | 409         | A resource with the same unique field already exists                              |
 | `EMAIL_ALREADY_EXISTS`    | 409         | Registration attempted with an email already in use                               |
 | `USERNAME_ALREADY_EXISTS` | 409         | Registration attempted with a username already taken                              |
@@ -1759,6 +1867,7 @@ These are the exact constants defined in `internal/apperror/errors.go` of the Go
 | `AI_STREAM_ACTIVE`        | 409         | A response is already streaming for this session                                  |
 | `INVALID_PROJECT_ID`      | 400         | Project ID provided is not valid or does not belong to this user                  |
 | `INVALID_STATUS`          | 400         | Unrecognised status value for the resource type                                   |
+| `INVALID_RECURRENCE`      | 422         | Malformed schedule: bad `freq`, `interval` outside 1..366, `byWeekday`/`byMonthday` out of range or set on the wrong `freq`, `endDate` before `startDate`, or a window containing no occurrence |
 | `INVALID_DATE`            | 400         | Date string failed parsing or is out of acceptable range                          |
 | `INVALID_PRIORITY`        | 400         | Unrecognised priority value                                                       |
 | `INVALID_AI_CONTEXT`      | 400         | AI request payload is structurally invalid                                        |
