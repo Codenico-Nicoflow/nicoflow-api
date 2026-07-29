@@ -89,7 +89,7 @@ Dependency direction: Handler → Service interface → Repository interface. In
 - Never modify a deployed migration — always add a new numbered `.up.sql` / `.down.sql` pair.
 - `display_order` / `sort_order` use `INT DEFAULT 0`. Sparse ordering is intentional.
 
-### Migrations (001–036 applied)
+### Migrations (001–038 applied)
 
 ```
 001 create_users                     019 enrich_areas_projects
@@ -111,8 +111,11 @@ Dependency direction: Handler → Service interface → Repository interface. In
 017 users_login_lockout              035 notification_prefs_reminder_hours
 018 users_email_partial_unique       036 create_file_attachments
                                      037 create_recurrence_rules
+                                     038 create_focus_sessions
 ```
 (031–035 are the notification stack: notifications table → preferences → Web Push subscriptions → per-family toggles → reminder-hours. 036 is the E-024 file-attachments table: polymorphic owner `{type,id}` (no FK), `user_id` cascade, unique `s3_key`; quota enforced by the repo's atomic guarded insert — NIC-1638.)
+
+> **038 `create_focus_sessions`** (E-049 / NIC-1709) is the time-on-task source of truth: one row per contiguous active run ("segment") — `id, user_id, task_id, started_at, ended_at (NULL while open), last_seen`. A task's total is **derived** as `SUM(ended_at - started_at)` over closed segments; there is deliberately no cached total on `tasks`. Every close stamps `ended_at = last_seen`, **never `NOW()`**, so an abandoned segment is credited with the time its heartbeats proved rather than the time until the sweep noticed. The one-open-per-user invariant is held by the `OpenAtomic` transaction (`SELECT … FOR UPDATE` → close prior → insert) with a partial-unique index `(user_id) WHERE ended_at IS NULL` as the safety net. `ListStaleOpen`/`CloseByID` are the only system-scope (non-user-filtered) methods — sweep-only.
 
 > **027 `projects_area_required`** makes `projects.area_id NOT NULL` — a project must always belong to an area (matches the `Area › Project › Task` hierarchy and 024's cascade). Area-less projects are deleted by the migration. Create/Update source `area_id` from a **user-scoped `SELECT`** so a project can only live in an area the caller owns; a foreign/missing area → `AREA_NOT_FOUND`.
 
