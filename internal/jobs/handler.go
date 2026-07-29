@@ -46,6 +46,21 @@ type RecurrenceResult struct {
 	SkippedBadZone   int `json:"skippedBadTimezone"`
 }
 
+// FocusStaleSweeper closes focus segments abandoned by a crashed or closed client
+// (E-049). Defined here (the consumer) so jobs never imports the focus domain;
+// the concrete is the focus service, injected at wire-up. Nil skips the step.
+type FocusStaleSweeper interface {
+	SweepStale(ctx context.Context, dryRun bool) (FocusSweepResult, error)
+}
+
+// FocusSweepResult mirrors focus.SweepBreakdown. Considered and Closed diverge
+// under dryRun, and when a segment's own client closed it mid-sweep.
+type FocusSweepResult struct {
+	Considered int  `json:"considered"`
+	Closed     int  `json:"closed"`
+	DryRun     bool `json:"dryRun"`
+}
+
 // Handler exposes the internal job endpoints. These sit outside the public /v1
 // contract and are guarded by the InternalToken middleware, not JWT.
 type Handler struct {
@@ -56,6 +71,7 @@ type Handler struct {
 	summaryNotifier  *SummaryNotifier
 	attachmentGC     AttachmentGC
 	recurrence       RecurrenceSweep
+	focusStale       FocusStaleSweeper
 }
 
 // NewHandler builds the jobs Handler. attachmentGC may be nil (attachment
@@ -77,6 +93,30 @@ func NewHandler(dueNotifier *DueDateNotifier, overdueNotifier *OverdueNotifier, 
 func (h *Handler) WithRecurrence(s RecurrenceSweep) *Handler {
 	h.recurrence = s
 	return h
+}
+
+// WithFocusStale injects the focus stale sweep and returns the handler for
+// chaining. Nil leaves the step out of run-all.
+func (h *Handler) WithFocusStale(s FocusStaleSweeper) *Handler {
+	h.focusStale = s
+	return h
+}
+
+// FocusStale runs one focus stale-sweep directly (ops/debug); the cron reaches it
+// through run-all. Idempotent — each close is conditioned on the row still being
+// open, so a re-run closes nothing twice.
+func (h *Handler) FocusStale(w http.ResponseWriter, r *http.Request) {
+	if h.focusStale == nil {
+		respond.JSON(w, http.StatusOK, FocusSweepResult{})
+		return
+	}
+	res, err := h.focusStale.SweepStale(r.Context(), r.URL.Query().Get("dryRun") == "true")
+	if err != nil {
+		log.Error().Err(err).Str("request_id", mw.GetRequestID(r.Context())).Msg("focus stale sweep failed")
+		respond.Error(w, http.StatusInternalServerError, apperror.ErrInternalServerError, "sweep failed")
+		return
+	}
+	respond.JSON(w, http.StatusOK, res)
 }
 
 // Recurrence runs one recurrence materialization sweep directly (ops/debug); the
@@ -172,6 +212,7 @@ type RunAllResult struct {
 	Sweeps       map[string]*SweepBreakdown `json:"sweeps"`
 	AttachmentGC *GCSummary                 `json:"attachmentGc,omitempty"`
 	Recurrence   *RecurrenceResult          `json:"recurrence,omitempty"`
+	FocusStale   *FocusSweepResult          `json:"focusStale,omitempty"`
 }
 
 // RunAll runs every sweep in sequence and returns a combined result. The single
@@ -215,6 +256,18 @@ func (h *Handler) RunAll(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result.Recurrence = rec
+	}
+
+	// Focus stale-sweep honours dryRun (it lists without closing). A nil sweeper is
+	// left out of the payload.
+	if h.focusStale != nil {
+		res, err := h.focusStale.SweepStale(r.Context(), dryRun)
+		if err != nil {
+			log.Error().Err(err).Str("request_id", mw.GetRequestID(r.Context())).Msg("focus stale sweep failed")
+			respond.Error(w, http.StatusInternalServerError, apperror.ErrInternalServerError, "sweep failed")
+			return
+		}
+		result.FocusStale = &res
 	}
 
 	// GC mutates the object store, so it's skipped under dryRun. A nil GC (feature

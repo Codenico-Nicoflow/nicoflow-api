@@ -17,6 +17,8 @@ type mockRepo struct {
 	closeOpenByUser func(ctx context.Context, userID string) (Session, bool, error)
 	touchLastSeen   func(ctx context.Context, userID, id string) (Session, bool, error)
 	touchCurrent    func(ctx context.Context, userID string) (Session, bool, error)
+	listStaleOpen   func(ctx context.Context, cutoff time.Time, limit int) ([]Session, error)
+	closeByID       func(ctx context.Context, id string) (Session, bool, error)
 }
 
 func (m *mockRepo) OpenAtomic(ctx context.Context, s Session) (Session, *Session, error) {
@@ -35,12 +37,16 @@ func (m *mockRepo) TouchCurrent(ctx context.Context, userID string) (Session, bo
 	return m.touchCurrent(ctx, userID)
 }
 
-// The sweep + read paths are not exercised by the service; they exist on the
-// interface for the jobs layer.
-func (m *mockRepo) ListStaleOpen(context.Context, time.Time, int) ([]Session, error) {
+func (m *mockRepo) ListStaleOpen(ctx context.Context, cutoff time.Time, limit int) ([]Session, error) {
+	if m.listStaleOpen != nil {
+		return m.listStaleOpen(ctx, cutoff, limit)
+	}
 	return nil, nil
 }
-func (m *mockRepo) CloseByID(context.Context, string) (Session, bool, error) {
+func (m *mockRepo) CloseByID(ctx context.Context, id string) (Session, bool, error) {
+	if m.closeByID != nil {
+		return m.closeByID(ctx, id)
+	}
 	return Session{}, false, nil
 }
 func (m *mockRepo) SumClosedSecondsByTask(context.Context, string, string) (int64, error) {
@@ -331,5 +337,194 @@ func TestService_Heartbeat(t *testing.T) {
 				t.Fatalf("heartbeat must not broadcast, got %v", rec.types())
 			}
 		})
+	}
+}
+
+// ── SweepStale ───────────────────────────────────────────────────────────────
+
+// fixedNow pins the clock so the cutoff is deterministic.
+var sweepNow = time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+
+// staleSession is an open segment last seen `ago` before the pinned now.
+func staleSession(id, userID string, ago time.Duration) Session {
+	seen := sweepNow.Add(-ago)
+	return Session{ID: id, UserID: userID, TaskID: testTaskID, StartedAt: seen.Add(-time.Hour), LastSeen: seen}
+}
+
+// AC1/AC2 — the cutoff is now-StaleThreshold, and every closed segment
+// broadcasts session_ended carrying its own closed view.
+func TestService_SweepStale_ClosesAndEmits(t *testing.T) {
+	stale := []Session{
+		staleSession("a", "user-a", 10*time.Minute),
+		staleSession("b", "user-b", 5*time.Minute),
+	}
+	var gotCutoff time.Time
+	var gotLimit int
+	var closedIDs []string
+
+	repo := &mockRepo{
+		listStaleOpen: func(_ context.Context, cutoff time.Time, limit int) ([]Session, error) {
+			gotCutoff, gotLimit = cutoff, limit
+			return stale, nil
+		},
+		closeByID: func(_ context.Context, id string) (Session, bool, error) {
+			closedIDs = append(closedIDs, id)
+			for _, s := range stale {
+				if s.ID == id {
+					ended := s.LastSeen
+					s.EndedAt = &ended
+					return s, true, nil
+				}
+			}
+			return Session{}, false, nil
+		},
+	}
+	rec := &recorder{}
+	svc := NewServiceWithClock(repo, &mockTasks{}, rec, func() time.Time { return sweepNow })
+
+	got, err := svc.SweepStale(context.Background(), false)
+	if err != nil {
+		t.Fatalf("SweepStale: %v", err)
+	}
+	if got.Considered != 2 || got.Closed != 2 || got.DryRun {
+		t.Fatalf("breakdown = %+v, want considered=2 closed=2 dryRun=false", got)
+	}
+	if want := sweepNow.Add(-StaleThreshold); !gotCutoff.Equal(want) {
+		t.Fatalf("cutoff = %v, want %v", gotCutoff, want)
+	}
+	if gotLimit <= 0 {
+		t.Fatalf("sweep must be capped, got limit %d", gotLimit)
+	}
+	if len(closedIDs) != 2 {
+		t.Fatalf("closed %v, want both", closedIDs)
+	}
+
+	assertAllEndedAtLastSeen(t, rec, 2)
+}
+
+// assertAllEndedAtLastSeen checks every emitted event is a session_ended whose
+// payload was closed at its own last_seen — the sweep's load-bearing rule.
+func assertAllEndedAtLastSeen(t *testing.T, rec *recorder, want int) {
+	t.Helper()
+	if len(rec.events) != want {
+		t.Fatalf("emitted %v, want %d session_ended", rec.types(), want)
+	}
+	for i, ev := range rec.events {
+		if ev.Type != EventSessionEnded {
+			t.Fatalf("event %d = %s, want %s", i, ev.Type, EventSessionEnded)
+		}
+		view, ok := ev.Payload.(SessionView)
+		if !ok || view.EndedAt == nil || *view.EndedAt != view.LastSeen {
+			t.Fatalf("payload %d should be closed at last_seen: %+v", i, ev.Payload)
+		}
+	}
+}
+
+// AC2 — a fresh segment never reaches the sweep: the repo filters by the cutoff,
+// so an empty list is the normal quiet case and must not error or emit.
+func TestService_SweepStale_NothingStale(t *testing.T) {
+	repo := &mockRepo{
+		listStaleOpen: func(context.Context, time.Time, int) ([]Session, error) { return nil, nil },
+		closeByID: func(context.Context, string) (Session, bool, error) {
+			t.Fatal("nothing stale — close must not be called")
+			return Session{}, false, nil
+		},
+	}
+	rec := &recorder{}
+	svc := NewServiceWithClock(repo, &mockTasks{}, rec, func() time.Time { return sweepNow })
+
+	got, err := svc.SweepStale(context.Background(), false)
+	if err != nil {
+		t.Fatalf("SweepStale: %v", err)
+	}
+	if got.Considered != 0 || got.Closed != 0 {
+		t.Fatalf("breakdown = %+v, want zeroes", got)
+	}
+	if len(rec.events) != 0 {
+		t.Fatalf("nothing should be emitted, got %v", rec.types())
+	}
+}
+
+// AC3 — dry run reports what it would close, touches no row, emits nothing.
+func TestService_SweepStale_DryRun(t *testing.T) {
+	repo := &mockRepo{
+		listStaleOpen: func(context.Context, time.Time, int) ([]Session, error) {
+			return []Session{staleSession("a", "user-a", 10*time.Minute)}, nil
+		},
+		closeByID: func(context.Context, string) (Session, bool, error) {
+			t.Fatal("dryRun must not close anything")
+			return Session{}, false, nil
+		},
+	}
+	rec := &recorder{}
+	svc := NewServiceWithClock(repo, &mockTasks{}, rec, func() time.Time { return sweepNow })
+
+	got, err := svc.SweepStale(context.Background(), true)
+	if err != nil {
+		t.Fatalf("SweepStale: %v", err)
+	}
+	if got.Considered != 1 || got.Closed != 0 || !got.DryRun {
+		t.Fatalf("breakdown = %+v, want considered=1 closed=0 dryRun=true", got)
+	}
+	if len(rec.events) != 0 {
+		t.Fatalf("dryRun must not broadcast, got %v", rec.types())
+	}
+}
+
+// Per-item resilience: a row that fails or was already closed must not strand the
+// rest of the batch. Only genuinely-closed rows count and emit.
+func TestService_SweepStale_PerItemResilience(t *testing.T) {
+	stale := []Session{
+		staleSession("fails", "user-a", 10*time.Minute),
+		staleSession("already-closed", "user-b", 9*time.Minute),
+		staleSession("ok", "user-c", 8*time.Minute),
+	}
+	repo := &mockRepo{
+		listStaleOpen: func(context.Context, time.Time, int) ([]Session, error) { return stale, nil },
+		closeByID: func(_ context.Context, id string) (Session, bool, error) {
+			switch id {
+			case "fails":
+				return Session{}, false, errors.New("boom")
+			case "already-closed":
+				// Its own client closed it between the scan and here.
+				return Session{}, false, nil
+			default:
+				s := stale[2]
+				ended := s.LastSeen
+				s.EndedAt = &ended
+				return s, true, nil
+			}
+		},
+	}
+	rec := &recorder{}
+	svc := NewServiceWithClock(repo, &mockTasks{}, rec, func() time.Time { return sweepNow })
+
+	got, err := svc.SweepStale(context.Background(), false)
+	if err != nil {
+		t.Fatalf("one bad row must not fail the sweep: %v", err)
+	}
+	if got.Considered != 3 || got.Closed != 1 {
+		t.Fatalf("breakdown = %+v, want considered=3 closed=1", got)
+	}
+	// Only the genuinely-closed row emits — the failed and already-closed ones must not.
+	assertAllEndedAtLastSeen(t, rec, 1)
+}
+
+// A listing failure is fatal — there is nothing to sweep and reporting success
+// would hide an outage.
+func TestService_SweepStale_ListErrorFails(t *testing.T) {
+	repo := &mockRepo{
+		listStaleOpen: func(context.Context, time.Time, int) ([]Session, error) {
+			return nil, errors.New("db down")
+		},
+	}
+	rec := &recorder{}
+	svc := NewServiceWithClock(repo, &mockTasks{}, rec, func() time.Time { return sweepNow })
+
+	if _, err := svc.SweepStale(context.Background(), false); err == nil {
+		t.Fatal("expected error")
+	}
+	if len(rec.events) != 0 {
+		t.Fatalf("nothing should be emitted, got %v", rec.types())
 	}
 }

@@ -4,6 +4,7 @@ package jobs_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -28,6 +29,15 @@ type stubGC struct{}
 
 func (stubGC) RunGC(context.Context) (jobs.GCSummary, error) {
 	return jobs.GCSummary{ObjectsDeleted: 0, RowsDeleted: 0}, nil
+}
+
+// stubFocusSweeper stands in for the focus service at the jobs boundary — this
+// package tests the route/auth/wiring, not the sweep logic (that lives in the
+// focus package's own tests). It echoes dryRun so the propagation is observable.
+type stubFocusSweeper struct{}
+
+func (stubFocusSweeper) SweepStale(_ context.Context, dryRun bool) (jobs.FocusSweepResult, error) {
+	return jobs.FocusSweepResult{Considered: 2, Closed: 2, DryRun: dryRun}, nil
 }
 
 func clean(t *testing.T, pool *pgxpool.Pool) {
@@ -90,7 +100,7 @@ func newServer(t *testing.T, pool *pgxpool.Pool) *httptest.Server {
 		jobs.NewInboxNotifier(repo, notifSvc),
 		jobs.NewSummaryNotifier(repo, notifSvc),
 		stubGC{},
-	)
+	).WithFocusStale(stubFocusSweeper{})
 
 	r := chi.NewRouter()
 	r.Use(mw.RequestID)
@@ -100,6 +110,8 @@ func newServer(t *testing.T, pool *pgxpool.Pool) *httptest.Server {
 	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/inbox", h.Inbox)
 	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/summary", h.Summary)
 	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/attachment-gc", h.AttachmentGC)
+	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/focus-stale", h.FocusStale)
+	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/run-all", h.RunAll)
 
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
@@ -283,5 +295,125 @@ func TestOverdueSweep_GeneratesAndIsIdempotent(t *testing.T) {
 	}
 	if n.Fired != 0 || countNotifications(t, pool, uid) != 1 {
 		t.Fatalf("run 2: generated=%d / count=%d, want 0 new (idempotent)", n.Fired, countNotifications(t, pool, uid))
+	}
+}
+
+// AC4 — the focus-stale endpoint is gated by the same shared secret as every
+// other internal job: no token or a wrong one is a 401, never a silent run.
+func TestFocusStale_Auth(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	clean(t, pool)
+	t.Cleanup(func() { clean(t, pool) })
+	srv := newServer(t, pool)
+	url := srv.URL + "/internal/jobs/focus-stale"
+
+	cases := []struct {
+		name  string
+		token string
+		want  int
+	}{
+		{"missing token", "", http.StatusUnauthorized},
+		{"wrong token", "nope", http.StatusUnauthorized},
+		{"valid token", cronSecret, http.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if resp := post(t, url, tc.token); resp.StatusCode != tc.want {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, tc.want)
+			}
+		})
+	}
+}
+
+// AC4 (second half) — with CRON_SECRET unset the endpoint is disabled (503),
+// never open.
+func TestFocusStale_DisabledWhenSecretUnset(t *testing.T) {
+	h := (&jobs.Handler{}).WithFocusStale(stubFocusSweeper{})
+	r := chi.NewRouter()
+	r.With(mw.InternalToken("")).Post("/internal/jobs/focus-stale", h.FocusStale)
+	srv := httptest.NewServer(r)
+	t.Cleanup(srv.Close)
+
+	if resp := post(t, srv.URL+"/internal/jobs/focus-stale", "anything"); resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("unset secret → %d, want 503", resp.StatusCode)
+	}
+}
+
+// The sweep reports its breakdown, and dryRun is propagated from the query string.
+func TestFocusStale_BreakdownAndDryRun(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	clean(t, pool)
+	t.Cleanup(func() { clean(t, pool) })
+	srv := newServer(t, pool)
+
+	for _, dryRun := range []bool{false, true} {
+		url := srv.URL + "/internal/jobs/focus-stale"
+		if dryRun {
+			url += "?dryRun=true"
+		}
+		resp := post(t, url, cronSecret)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		var env struct {
+			Data jobs.FocusSweepResult `json:"data"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		resp.Body.Close()
+		if env.Data.Considered != 2 || env.Data.DryRun != dryRun {
+			t.Fatalf("dryRun=%v → %+v", dryRun, env.Data)
+		}
+	}
+}
+
+// An unwired sweeper (focus disabled) must no-op, not panic or 500.
+func TestFocusStale_NilSweeperNoOps(t *testing.T) {
+	h := &jobs.Handler{} // focusStale left nil
+	r := chi.NewRouter()
+	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/focus-stale", h.FocusStale)
+	srv := httptest.NewServer(r)
+	t.Cleanup(srv.Close)
+
+	resp := post(t, srv.URL+"/internal/jobs/focus-stale", cronSecret)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("nil sweeper → %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data jobs.FocusSweepResult `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	resp.Body.Close()
+	if env.Data.Considered != 0 || env.Data.Closed != 0 {
+		t.Fatalf("nil sweeper should report zeroes, got %+v", env.Data)
+	}
+}
+
+// run-all carries the focus sweep, so the single cron picks it up.
+func TestRunAll_IncludesFocusStale(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	clean(t, pool)
+	t.Cleanup(func() { clean(t, pool) })
+	srv := newServer(t, pool)
+
+	resp := post(t, srv.URL+"/internal/jobs/run-all", cronSecret)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data jobs.RunAllResult `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	resp.Body.Close()
+	if env.Data.FocusStale == nil {
+		t.Fatal("run-all payload is missing focusStale")
+	}
+	if env.Data.FocusStale.Closed != 2 {
+		t.Fatalf("focusStale = %+v, want closed=2", env.Data.FocusStale)
 	}
 }

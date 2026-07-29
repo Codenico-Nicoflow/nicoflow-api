@@ -85,12 +85,13 @@ type OpenSessionRequest struct {
 }
 
 // SweepBreakdown reports one stale-sweep run for the internal job's response and
-// its log line. Scanned counts the stale open segments found; Closed counts the
-// ones this run actually closed — the two differ when a segment was closed
-// concurrently by its own client between the scan and the close.
+// its log line. Considered counts the stale open segments found; Closed counts
+// the ones this run actually closed — the two differ under dryRun, and when a
+// segment was closed by its own client between the scan and the close.
 type SweepBreakdown struct {
-	Scanned int `json:"scanned"`
-	Closed  int `json:"closed"`
+	Considered int  `json:"considered"`
+	Closed     int  `json:"closed"`
+	DryRun     bool `json:"dryRun"`
 }
 
 // Service is the focus domain's business-logic contract consumed by the handler.
@@ -103,6 +104,11 @@ type Service interface {
 	CloseCurrent(ctx context.Context, userID string) (SessionView, error)
 	// Heartbeat bumps the open segment's last_seen. Silent — never broadcasts.
 	Heartbeat(ctx context.Context, userID string) error
+	// SweepStale closes open segments abandoned by a client that never sent close
+	// (tab crash, quit-and-left), each at its own last_seen. System-scope,
+	// reachable only from the internal cron. dryRun reports what would close
+	// without touching a row.
+	SweepStale(ctx context.Context, dryRun bool) (SweepBreakdown, error)
 }
 
 // TaskOwnershipChecker is the narrow slice of the task domain this package needs:
