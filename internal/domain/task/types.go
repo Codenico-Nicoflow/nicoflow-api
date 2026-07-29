@@ -9,16 +9,19 @@ import (
 
 // Task is the internal domain model for a task.
 type Task struct {
-	ID               string
-	UserID           string
-	ProjectID        string
-	Title            string
-	Notes            *string
-	Status           string
-	Priority         string
-	Energy           string
-	RollsOver        bool
-	ScheduledFor     *string
+	ID           string
+	UserID       string
+	ProjectID    string
+	Title        string
+	Notes        *string
+	Status       string
+	Priority     string
+	Energy       string
+	RollsOver    bool
+	ScheduledFor *string
+	// ScheduledTime is the optional time-of-day ("HH:MM") on the scheduled_for
+	// day (E-051). Nil = all-day, which is what every pre-timed task means.
+	ScheduledTime    *string
 	EstimatedMinutes *int
 	URL              *string
 	DisplayOrder     int
@@ -42,6 +45,7 @@ type TaskView struct {
 	Energy           string  `json:"energy"`
 	RollsOver        bool    `json:"rollsOver"`
 	ScheduledFor     *string `json:"scheduledFor"`
+	ScheduledTime    *string `json:"scheduledTime"`
 	EstimatedMinutes *int    `json:"estimatedMinutes"`
 	URL              *string `json:"url"`
 	DisplayOrder     int     `json:"displayOrder"`
@@ -83,19 +87,24 @@ type CreateTaskRequest struct {
 	Energy           string  `json:"energy"`
 	RollsOver        *bool   `json:"rollsOver"`
 	ScheduledFor     *string `json:"scheduledFor"`
+	ScheduledTime    *string `json:"scheduledTime"`
 	EstimatedMinutes *int    `json:"estimatedMinutes"`
 	URL              *string `json:"url"`
 }
 
 // UpdateTaskRequest is the body for PATCH /tasks/:id — all fields optional.
 type UpdateTaskRequest struct {
-	Title            *string                `json:"title"`
-	Status           *string                `json:"status"`
-	Priority         *string                `json:"priority"`
-	Energy           *string                `json:"energy"`
-	RollsOver        *bool                  `json:"rollsOver"`
-	Notes            optional.Field[string] `json:"notes"`
-	ScheduledFor     optional.Field[string] `json:"scheduledFor"`
+	Title        *string                `json:"title"`
+	Status       *string                `json:"status"`
+	Priority     *string                `json:"priority"`
+	Energy       *string                `json:"energy"`
+	RollsOver    *bool                  `json:"rollsOver"`
+	Notes        optional.Field[string] `json:"notes"`
+	ScheduledFor optional.Field[string] `json:"scheduledFor"`
+	// ScheduledTime is tri-state: absent leaves the stored time alone, an
+	// explicit null clears it. Clearing must stay reachable without a plan, so
+	// the gate reads Set+Value rather than Set alone.
+	ScheduledTime    optional.Field[string] `json:"scheduledTime"`
 	EstimatedMinutes optional.Field[int]    `json:"estimatedMinutes"`
 	URL              optional.Field[string] `json:"url"`
 }
@@ -108,9 +117,12 @@ type SetStatusRequest struct {
 // ScheduleRequest is the body for PATCH /tasks/:id/schedule.
 // scheduledFor is the primary field of this endpoint, so null/absent both mean
 // "unschedule"; a value sets the soft intention.
+// scheduledTime rides the same convention: null/absent clears the time, which
+// also keeps clearing a date from stranding a time on a now-unscheduled task.
 type ScheduleRequest struct {
-	ScheduledFor *string `json:"scheduledFor"`
-	RollsOver    *bool   `json:"rollsOver"`
+	ScheduledFor  *string `json:"scheduledFor"`
+	ScheduledTime *string `json:"scheduledTime"`
+	RollsOver     *bool   `json:"rollsOver"`
 }
 
 // ReorderOneRequest is the body for PATCH /tasks/:id/reorder.
@@ -130,6 +142,7 @@ func TaskToView(t Task) TaskView {
 		Energy:           t.Energy,
 		RollsOver:        t.RollsOver,
 		ScheduledFor:     t.ScheduledFor,
+		ScheduledTime:    t.ScheduledTime,
 		EstimatedMinutes: t.EstimatedMinutes,
 		URL:              t.URL,
 		DisplayOrder:     t.DisplayOrder,

@@ -163,6 +163,9 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		// Tasks + Subtasks
 		r.Get("/projects/{projectId}/tasks", h.Task.ListByProject)
 		r.Post("/projects/{projectId}/tasks", h.Task.Create)
+		// Ranged task query backing the calendar grid (E-051). Registered before
+		// /tasks/{id} for clarity; chi routes the static path either way.
+		r.Get("/tasks", h.Task.ListByDateRange)
 		r.Get("/tasks/{id}", h.Task.Get)
 		r.Patch("/tasks/{id}", h.Task.Update)
 		r.Delete("/tasks/{id}", h.Task.Delete)

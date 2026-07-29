@@ -29,8 +29,12 @@ type Repository interface {
 	CountNonTerminalByProject(ctx context.Context, userID, projectID string) (int, error)
 	// NextDisplayOrder returns the order to append a new task at the end of a project.
 	NextDisplayOrder(ctx context.Context, userID, projectID string) (int, error)
-	// UpdateSchedule sets (scheduledFor=nil clears) the soft schedule + optional rollsOver.
-	UpdateSchedule(ctx context.Context, userID, id string, scheduledFor *string, rollsOver *bool) (Task, error)
+	// UpdateSchedule sets (nil clears) the soft schedule + time-of-day + optional rollsOver.
+	UpdateSchedule(ctx context.Context, userID, id string, scheduledFor, scheduledTime *string, rollsOver *bool) (Task, error)
+	// ListByDateRange returns the user's tasks scheduled within an inclusive date
+	// range, in calendar-grid order. No roll-forward: a task is returned on the
+	// date it is actually scheduled for (see calendar.go).
+	ListByDateRange(ctx context.Context, userID, from, to string) ([]Task, error)
 	// Repack moves a task to targetOrder and renumbers its project siblings 0..n-1.
 	Repack(ctx context.Context, userID, id string, targetOrder int) (Task, error)
 	// ListActiveInboxByUser returns the user's active+inbox tasks across ALL
@@ -52,14 +56,17 @@ func NewRepository(db *pgxpool.Pool) Repository { return &pgRepo{db: db} }
 
 // occurrence_date is a DATE but travels the wire as YYYY-MM-DD, matching
 // scheduled_for — cast in the projection so it scans straight into a *string.
+// scheduled_time is a TIME but travels the wire as HH:MM — formatted in the
+// projection so it scans straight into a *string and never leaks the seconds
+// Postgres would render (`09:00:00`), which the contract does not include.
 const taskSelectCols = ` id, user_id, project_id, title, notes, status, priority, energy,
-	rolls_over, scheduled_for, estimated_minutes, url, display_order,
+	rolls_over, scheduled_for, to_char(scheduled_time, 'HH24:MI'), estimated_minutes, url, display_order,
 	completed_at, created_at, updated_at, recurrence_rule_id, occurrence_date::text `
 
 func scanTask(row pgx.Row, t *Task) error {
 	return row.Scan(
 		&t.ID, &t.UserID, &t.ProjectID, &t.Title, &t.Notes, &t.Status, &t.Priority, &t.Energy,
-		&t.RollsOver, &t.ScheduledFor, &t.EstimatedMinutes, &t.URL, &t.DisplayOrder,
+		&t.RollsOver, &t.ScheduledFor, &t.ScheduledTime, &t.EstimatedMinutes, &t.URL, &t.DisplayOrder,
 		&t.CompletedAt, &t.CreatedAt, &t.UpdatedAt, &t.RecurrenceRuleID, &t.OccurrenceDate,
 	)
 }
@@ -108,6 +115,39 @@ func (r *pgRepo) ListActiveInboxByUser(ctx context.Context, userID string) ([]Ta
 	return tasks, rows.Err()
 }
 
+// ListByDateRange is the calendar's read. Both bounds are inclusive ISO dates.
+// Unlike Time Spread it applies no roll-forward and no status filter: a month
+// grid has to show an overdue or completed task on the day it was actually
+// scheduled for, or the grid lies about history.
+func (r *pgRepo) ListByDateRange(ctx context.Context, userID, from, to string) ([]Task, error) {
+	// scheduled_for is a VARCHAR holding an ISO date, so a plain string
+	// comparison is both correct (ISO sorts lexicographically = chronologically)
+	// and index-friendly. Casting either side to DATE would defeat the index.
+	rows, err := r.db.Query(ctx,
+		`SELECT`+taskSelectCols+`FROM tasks
+		 WHERE user_id = @userID
+		   AND scheduled_for IS NOT NULL
+		   AND scheduled_for >= @from
+		   AND scheduled_for <= @to
+		 ORDER BY scheduled_for ASC, scheduled_time ASC NULLS FIRST, display_order ASC, id ASC`,
+		pgx.NamedArgs{"userID": userID, "from": from, "to": to},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("task.ListByDateRange: %w", err)
+	}
+	defer rows.Close()
+
+	var tasks []Task
+	for rows.Next() {
+		var t Task
+		if err := scanTask(rows, &t); err != nil {
+			return nil, fmt.Errorf("task.ListByDateRange scan: %w", err)
+		}
+		tasks = append(tasks, t)
+	}
+	return tasks, rows.Err()
+}
+
 func (r *pgRepo) GetByID(ctx context.Context, userID, id string) (*Task, error) {
 	var t Task
 	err := scanTask(
@@ -131,11 +171,11 @@ func (r *pgRepo) Create(ctx context.Context, t Task) (Task, error) {
 		r.db.QueryRow(ctx, `
 			INSERT INTO tasks
 				(id, user_id, project_id, title, notes, status, priority, energy, rolls_over,
-				 scheduled_for, estimated_minutes, url, display_order, completed_at,
+				 scheduled_for, scheduled_time, estimated_minutes, url, display_order, completed_at,
 				 created_at, updated_at)
 			VALUES
 				(@id, @userID, @projectID, @title, @notes, @status, @priority, @energy, @rollsOver,
-				 @scheduledFor, @estimatedMinutes, @url, @displayOrder, @completedAt,
+				 @scheduledFor, @scheduledTime::time, @estimatedMinutes, @url, @displayOrder, @completedAt,
 				 NOW(), NOW())
 			RETURNING`+taskSelectCols,
 			pgx.NamedArgs{
@@ -149,6 +189,7 @@ func (r *pgRepo) Create(ctx context.Context, t Task) (Task, error) {
 				"energy":           t.Energy,
 				"rollsOver":        t.RollsOver,
 				"scheduledFor":     t.ScheduledFor,
+				"scheduledTime":    t.ScheduledTime,
 				"estimatedMinutes": t.EstimatedMinutes,
 				"url":              t.URL,
 				"displayOrder":     t.DisplayOrder,
@@ -198,6 +239,7 @@ func (r *pgRepo) Update(ctx context.Context, userID, id string, req UpdateTaskRe
 				rolls_over        = COALESCE(@rollsOver, rolls_over),
 				notes             = CASE WHEN @notesSet THEN @notes ELSE notes END,
 				scheduled_for     = CASE WHEN @scheduledForSet THEN @scheduledFor ELSE scheduled_for END,
+				scheduled_time    = CASE WHEN @scheduledTimeSet THEN @scheduledTime::time ELSE scheduled_time END,
 				estimated_minutes = CASE WHEN @estimatedMinutesSet THEN @estimatedMinutes ELSE estimated_minutes END,
 				url               = CASE WHEN @urlSet THEN @url ELSE url END,
 				completed_at      = `+completedExpr+`,
@@ -214,6 +256,8 @@ func (r *pgRepo) Update(ctx context.Context, userID, id string, req UpdateTaskRe
 				"notesSet":            req.Notes.Set,
 				"scheduledFor":        req.ScheduledFor.Value,
 				"scheduledForSet":     req.ScheduledFor.Set,
+				"scheduledTime":       req.ScheduledTime.Value,
+				"scheduledTimeSet":    req.ScheduledTime.Set,
 				"estimatedMinutes":    req.EstimatedMinutes.Value,
 				"estimatedMinutesSet": req.EstimatedMinutes.Set,
 				"url":                 req.URL.Value,
@@ -330,17 +374,24 @@ func (r *pgRepo) NextDisplayOrder(ctx context.Context, userID, projectID string)
 	return next, nil
 }
 
-func (r *pgRepo) UpdateSchedule(ctx context.Context, userID, id string, scheduledFor *string, rollsOver *bool) (Task, error) {
+func (r *pgRepo) UpdateSchedule(ctx context.Context, userID, id string, scheduledFor, scheduledTime *string, rollsOver *bool) (Task, error) {
 	var t Task
 	err := scanTask(
 		r.db.QueryRow(ctx, `
 			UPDATE tasks SET
-				scheduled_for = @scheduledFor,
-				rolls_over    = COALESCE(@rollsOver, rolls_over),
-				updated_at    = NOW()
+				scheduled_for  = @scheduledFor,
+				scheduled_time = @scheduledTime::time,
+				rolls_over     = COALESCE(@rollsOver, rolls_over),
+				updated_at     = NOW()
 			WHERE id = @id AND user_id = @userID
 			RETURNING`+taskSelectCols,
-			pgx.NamedArgs{"scheduledFor": scheduledFor, "rollsOver": rollsOver, "id": id, "userID": userID},
+			pgx.NamedArgs{
+				"scheduledFor":  scheduledFor,
+				"scheduledTime": scheduledTime,
+				"rollsOver":     rollsOver,
+				"id":            id,
+				"userID":        userID,
+			},
 		),
 		&t,
 	)
