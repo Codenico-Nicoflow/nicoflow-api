@@ -93,6 +93,39 @@ type SweepBreakdown struct {
 	Closed  int `json:"closed"`
 }
 
+// Service is the focus domain's business-logic contract consumed by the handler.
+type Service interface {
+	// Open starts a segment on req.TaskID, closing any other segment the user has
+	// open. Timestamps are server-stamped; a client-supplied duration is ignored.
+	Open(ctx context.Context, userID string, req OpenSessionRequest) (SessionView, error)
+	// CloseCurrent closes the user's open segment, or reports not-found when there
+	// is none.
+	CloseCurrent(ctx context.Context, userID string) (SessionView, error)
+	// Heartbeat bumps the open segment's last_seen. Silent — never broadcasts.
+	Heartbeat(ctx context.Context, userID string) error
+}
+
+// TaskOwnershipChecker is the narrow slice of the task domain this package needs:
+// may this user start a timer on this task? Defined here (the consumer) and
+// satisfied by task.Repository, so focus never imports the task package.
+type TaskOwnershipChecker interface {
+	IsOpenable(ctx context.Context, userID, id string) (bool, error)
+}
+
+// Broadcaster receives a domain Event for real-time fan-out. Fire-and-forget:
+// implementations must never block or fail the mutation. A nil Broadcaster is a
+// valid no-op seam.
+type Broadcaster interface {
+	Broadcast(userID string, ev Event)
+}
+
+// Event is the domain-level real-time event. The ws adapter maps Type onto the
+// wire EventType.
+type Event struct {
+	Type    string
+	Payload any
+}
+
 // Repository is the data-access contract, defined here in the consuming package
 // per project layering; the pgx implementation lives in repository.go. Every
 // method is row-scoped by user_id except ListStaleOpen and CloseByID, which are
@@ -120,6 +153,12 @@ type Repository interface {
 	// row. ok is false when the segment is gone or already closed — the client
 	// treats that as "your timer stopped", never as a failure.
 	TouchLastSeen(ctx context.Context, userID, id string) (s Session, ok bool, err error)
+
+	// TouchCurrent bumps whichever segment the user has open, in one statement.
+	// The heartbeat targets "my current segment", so resolving the id first would
+	// add a round trip and a window in which a sweep could close the row between
+	// the read and the write. ok is false when nothing is open.
+	TouchCurrent(ctx context.Context, userID string) (s Session, ok bool, err error)
 
 	// ListStaleOpen returns open segments whose last_seen predates cutoff, oldest
 	// first, capped at limit. System-scope: the sweep must see every user's rows.

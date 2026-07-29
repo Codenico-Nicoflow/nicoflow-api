@@ -186,6 +186,28 @@ func (r *pgRepo) TouchLastSeen(ctx context.Context, userID, id string) (Session,
 	return s, true, nil
 }
 
+// TouchCurrent bumps whichever segment the user has open. One statement, so the
+// heartbeat cannot race a sweep between resolving the id and writing.
+func (r *pgRepo) TouchCurrent(ctx context.Context, userID string) (Session, bool, error) {
+	var s Session
+	err := scan(
+		r.db.QueryRow(ctx,
+			`UPDATE focus_sessions SET last_seen = NOW()
+			 WHERE user_id = $1 AND ended_at IS NULL
+			 RETURNING`+selectCols,
+			userID,
+		),
+		&s,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Session{}, false, nil
+	}
+	if err != nil {
+		return Session{}, false, fmt.Errorf("focus.TouchCurrent: %w", err)
+	}
+	return s, true, nil
+}
+
 // ListStaleOpen drives the sweep. Oldest-first with a cap keeps one run bounded;
 // anything left over is picked up by the next run.
 func (r *pgRepo) ListStaleOpen(ctx context.Context, cutoff time.Time, limit int) ([]Session, error) {

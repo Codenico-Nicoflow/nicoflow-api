@@ -15,6 +15,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/auth"
 	"github.com/nicoflow/nicoflow-api/internal/domain/billing"
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
+	"github.com/nicoflow/nicoflow-api/internal/domain/focus"
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
 	"github.com/nicoflow/nicoflow-api/internal/domain/recurrence"
@@ -37,6 +38,7 @@ type Handlers struct {
 	Search       *search.Handler
 	Attachment   *attachment.Handler
 	Recurrence   *recurrence.Handler
+	Focus        *focus.Handler
 	Notification *notification.Handler
 	Jobs         *jobs.Handler
 	WS           *ws.Handler
@@ -191,6 +193,12 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		r.Patch("/recurrence-rules/{id}", h.Recurrence.Update)
 		r.Patch("/recurrence-rules/{id}/pause", h.Recurrence.Pause)
 		r.Delete("/recurrence-rules/{id}", h.Recurrence.Delete)
+
+		// Focus timer (E-049). "current" is the user's single open segment — the
+		// one-open-per-user invariant means it needs no id. FREE on every plan.
+		r.Post("/focus/sessions", h.Focus.Open)
+		r.Post("/focus/sessions/current/close", h.Focus.Close)
+		r.Post("/focus/sessions/current/heartbeat", h.Focus.Heartbeat)
 
 		// Bucket (inbox)
 		r.Get("/bucket", h.Bucket.List)

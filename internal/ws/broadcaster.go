@@ -9,6 +9,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/area"
 	"github.com/nicoflow/nicoflow-api/internal/domain/attachment"
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
+	"github.com/nicoflow/nicoflow-api/internal/domain/focus"
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
 	"github.com/nicoflow/nicoflow-api/internal/domain/recurrence"
@@ -39,16 +40,18 @@ var wireTypes = map[string]EventType{
 	area.EventDeleted:       EventAreaDeleted,
 	// bucket.EventTaskCreated shares task.EventCreated's key ("task.created") —
 	// the entry above covers the bucket process→task emit too.
-	bucket.EventCreated:     EventBucketCreated,
-	bucket.EventProcessed:   EventBucketProcessed,
-	bucket.EventDeleted:     EventBucketDeleted,
-	attachment.EventCreated: EventAttachmentCreated,
-	attachment.EventDeleted: EventAttachmentDeleted,
-	recurrence.EventCreated: EventRecurrenceCreated,
-	recurrence.EventUpdated: EventRecurrenceUpdated,
-	recurrence.EventDeleted: EventRecurrenceDeleted,
-	ai.EventSessionUpdated:  EventAISessionUpdated,
-	"notification.created":  EventNotificationCreated,
+	bucket.EventCreated:       EventBucketCreated,
+	bucket.EventProcessed:     EventBucketProcessed,
+	bucket.EventDeleted:       EventBucketDeleted,
+	attachment.EventCreated:   EventAttachmentCreated,
+	attachment.EventDeleted:   EventAttachmentDeleted,
+	recurrence.EventCreated:   EventRecurrenceCreated,
+	recurrence.EventUpdated:   EventRecurrenceUpdated,
+	recurrence.EventDeleted:   EventRecurrenceDeleted,
+	ai.EventSessionUpdated:    EventAISessionUpdated,
+	focus.EventSessionStarted: EventFocusSessionStarted,
+	focus.EventSessionEnded:   EventFocusSessionEnded,
+	"notification.created":    EventNotificationCreated,
 }
 
 // broadcast resolves the wire type and pushes the envelope. Shared by every
@@ -163,6 +166,20 @@ func NewRecurrenceBroadcaster(hub *Hub) *RecurrenceBroadcaster {
 }
 
 func (b *RecurrenceBroadcaster) Broadcast(userID string, ev recurrence.Event) {
+	broadcast(b.hub, b.now, userID, ev.Type, ev.Payload)
+}
+
+// FocusBroadcaster adapts the Hub to focus.Broadcaster.
+type FocusBroadcaster struct {
+	hub *Hub
+	now func() time.Time
+}
+
+func NewFocusBroadcaster(hub *Hub) *FocusBroadcaster {
+	return &FocusBroadcaster{hub: hub, now: time.Now}
+}
+
+func (b *FocusBroadcaster) Broadcast(userID string, ev focus.Event) {
 	broadcast(b.hub, b.now, userID, ev.Type, ev.Payload)
 }
 

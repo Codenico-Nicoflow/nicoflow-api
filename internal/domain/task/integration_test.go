@@ -529,3 +529,53 @@ func TestIntegration_Task_ReorderRepack(t *testing.T) {
 		}
 	}
 }
+
+// IsOpenable gates the focus timer (E-049): the caller must own the task and it
+// must not be terminal. Ownership failures are indistinguishable from missing.
+func TestIntegration_Task_IsOpenable(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	cleanTaskTestData(t, pool)
+	t.Cleanup(func() { cleanTaskTestData(t, pool) })
+
+	ctx := context.Background()
+	repo := task.NewRepository(pool)
+	ownerID, _ := insertUser(t, pool, "owner-"+sanitizeEmail(t.Name())+testEmailDomain, "free")
+	otherID, _ := insertUser(t, pool, "other-"+sanitizeEmail(t.Name())+testEmailDomain, "free")
+
+	seed := func(userID, status string) string {
+		id := uuid.New().String()
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO tasks (id, user_id, title, status, display_order) VALUES ($1, $2, 'x', $3, 0)`,
+			id, userID, status,
+		); err != nil {
+			t.Fatalf("seed %s: %v", status, err)
+		}
+		return id
+	}
+
+	cases := []struct {
+		name   string
+		taskID string
+		want   bool
+	}{
+		{"inbox is openable", seed(ownerID, "inbox"), true},
+		{"active is openable", seed(ownerID, "active"), true},
+		{"someday is openable", seed(ownerID, "someday"), true},
+		{"done is terminal", seed(ownerID, "done"), false},
+		{"cancelled is terminal", seed(ownerID, "cancelled"), false},
+		{"missed is terminal", seed(ownerID, "missed"), false},
+		{"another user's task", seed(otherID, "active"), false},
+		{"nonexistent task", uuid.New().String(), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := repo.IsOpenable(ctx, ownerID, tc.taskID)
+			if err != nil {
+				t.Fatalf("IsOpenable: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("IsOpenable = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

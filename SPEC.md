@@ -1124,6 +1124,62 @@ Bucketing keys off the task's soft `scheduledFor` (its only date):
 
 ---
 
+#### Focus Timer — sessions (E-049)
+
+Measures real time-on-task. One row per contiguous active run (a **segment**); a task's total is derived as the SUM over its closed segments — there is no cached total. **Server-authoritative:** every timestamp is stamped by the server, and a client-supplied duration is never accepted. **FREE on every plan.**
+
+**One open segment per user.** Opening a segment closes any other the user has open, in one transaction. That is why close/heartbeat address `current` rather than an id.
+
+**`SessionView`** — the response body and the WS payload for both events:
+
+```json
+{
+  "id": "sess_123",
+  "taskId": "task_456",
+  "startedAt": "2026-07-29T10:00:00Z",
+  "endedAt": null,
+  "lastSeen": "2026-07-29T10:00:30Z",
+  "durationSeconds": 0
+}
+```
+
+`endedAt` is `null` while the segment is open; `durationSeconds` is `0` until it closes (the client renders the live tick from `startedAt`).
+
+##### POST /v1/focus/sessions
+
+Opens a segment, auto-closing any other open one for the user.
+
+- **Auth required:** Yes
+- **Body:** `{ "taskId": "task_456" }`
+
+**Response — 201 Created** — `SessionView` (the newly-opened segment)
+
+**Errors:** `INVALID_INPUT` (400 — missing/blank `taskId`, malformed body, unknown field) · `TASK_NOT_FOUND` (404 — not owned, missing, or terminal `done`/`cancelled`/`missed`) · `UNAUTHORIZED` (401)
+
+##### POST /v1/focus/sessions/current/close
+
+Closes the user's open segment.
+
+- **Auth required:** Yes
+
+**Response — 200 OK** — `SessionView` with `endedAt` set
+
+**Errors:** `RESOURCE_NOT_FOUND` (404 — no open segment) · `UNAUTHORIZED` (401)
+
+##### POST /v1/focus/sessions/current/heartbeat
+
+Bumps `lastSeen` on the open segment (~30s client cadence). **Silent — never broadcasts.**
+
+- **Auth required:** Yes
+
+**Response — 204 No Content** (empty body)
+
+**Errors:** `RESOURCE_NOT_FOUND` (404 — no open segment) · `UNAUTHORIZED` (401)
+
+> **`endedAt = lastSeen`, never `now()`.** Every close stamps the last proven heartbeat, so a browser that dies mid-run contributes the time it actually proved rather than the time until a sweep noticed. A stale sweep closes abandoned segments on the same rule.
+
+---
+
 ### 3.8 NLP Smart Scheduling (Pro only)
 
 #### POST /v1/nlp/parse
@@ -1890,6 +1946,13 @@ event fans out to all of them.
 | `recurrence.updated`   | `RecurrenceRuleView` (§3.13) |
 | `recurrence.deleted`   | `{ id }`          |
 | `notification.created` | `INotification` (full `NotificationView`, §3.11) |
+| `focus.session_started` | `SessionView` (§3.7) |
+| `focus.session_ended`   | `SessionView` (§3.7, `endedAt` set) |
+
+Focus events are **transition-only** — heartbeats never broadcast. When opening a
+segment closes a prior one, `focus.session_ended` is emitted **before**
+`focus.session_started`, so another tab stops the old timer before starting the
+new one. Both fire only after the transaction commits.
 
 The frontend maps `notification.created` to a tag-invalidation of the
 notification list + unread count (prefer invalidation over cache-patching); the

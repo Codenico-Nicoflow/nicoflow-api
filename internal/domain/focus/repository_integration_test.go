@@ -359,6 +359,45 @@ func TestRepo_TouchLastSeen_ScopedAndClosedAware(t *testing.T) {
 	}
 }
 
+// TouchCurrent is the heartbeat's one-statement path: it bumps whichever segment
+// the user has open, and reports ok=false once nothing is.
+func TestRepo_TouchCurrent(t *testing.T) {
+	r, pool := newRepo(t)
+	ctx := context.Background()
+	userID := seedUser(t, pool)
+	otherID := seedUser(t, pool)
+	taskID := seedTask(t, pool, userID)
+
+	if _, ok, err := r.TouchCurrent(ctx, userID); err != nil || ok {
+		t.Fatalf("no open segment: ok=%v err=%v", ok, err)
+	}
+
+	opened, _, err := r.OpenAtomic(ctx, newSession(userID, taskID))
+	if err != nil {
+		t.Fatalf("OpenAtomic: %v", err)
+	}
+
+	touched, ok, err := r.TouchCurrent(ctx, userID)
+	if err != nil || !ok {
+		t.Fatalf("TouchCurrent: ok=%v err=%v", ok, err)
+	}
+	if touched.ID != opened.ID || touched.LastSeen.Before(opened.LastSeen) {
+		t.Fatalf("unexpected touch: %+v (was %+v)", touched, opened)
+	}
+
+	// Another user's open segment is untouched by their heartbeat.
+	if _, ok, err := r.TouchCurrent(ctx, otherID); err != nil || ok {
+		t.Fatalf("cross-user touch: ok=%v err=%v", ok, err)
+	}
+
+	if _, _, err := r.CloseOpenByUser(ctx, userID); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if _, ok, err := r.TouchCurrent(ctx, userID); err != nil || ok {
+		t.Fatalf("after close: ok=%v err=%v", ok, err)
+	}
+}
+
 // AC3 — the sweep closes stale segments at last_seen, not now, and is idempotent.
 func TestRepo_ListStaleOpenAndCloseByID(t *testing.T) {
 	r, pool := newRepo(t)

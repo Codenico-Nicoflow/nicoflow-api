@@ -23,6 +23,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/auth"
 	"github.com/nicoflow/nicoflow-api/internal/domain/billing"
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
+	"github.com/nicoflow/nicoflow-api/internal/domain/focus"
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
 	"github.com/nicoflow/nicoflow-api/internal/domain/recurrence"
@@ -194,6 +195,11 @@ func main() {
 	// construction because the two reference each other.
 	taskSvc = taskSvc.WithMaterializer(recurrenceMaterializer)
 
+	// Focus timer (E-049 / NIC-1710). Server-authoritative segments with a
+	// one-open-per-user invariant; FREE on every plan. taskRepo satisfies the
+	// narrow TaskOwnershipChecker seam, so focus never imports the task package.
+	focusSvc := focus.NewService(focus.NewRepository(pool), taskRepo, ws.NewFocusBroadcaster(wsHub))
+
 	// Sweep jobs — hourly, invoked by Render Cron Jobs via /internal/jobs/*.
 	jobsRepo := jobs.NewRepository(pool)
 	dueDateNotifier := jobs.NewDueDateNotifier(jobsRepo, notificationSvc, cfg.SMTPDsn)
@@ -213,6 +219,7 @@ func main() {
 		Search:       search.NewHandler(searchSvc),
 		Attachment:   attachment.NewHandler(attachmentSvc),
 		Recurrence:   recurrence.NewHandler(recurrenceSvc),
+		Focus:        focus.NewHandler(focusSvc),
 		Notification: notification.NewHandler(notificationSvc),
 		Jobs: jobs.NewHandler(dueDateNotifier, overdueNotifier, dayStartNotifier, inboxNotifier, summaryNotifier, attachmentGCAdapter{svc: attachmentSvc}).
 			WithRecurrence(recurrenceSweepAdapter{m: recurrenceMaterializer}),
