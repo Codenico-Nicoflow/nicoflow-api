@@ -286,6 +286,51 @@ func (s *service) SetPaused(ctx context.Context, userID, id string, paused bool)
 	return view, nil
 }
 
+// Stats derives a rule's history from its occurrence rows. Nothing is stored: a
+// counter column would count materializations, not completions, and drift the
+// moment either trigger retries.
+func (s *service) Stats(ctx context.Context, userID, id string) (StatsView, error) {
+	// Scoped read first, so another user's rule 404s rather than leaking counts.
+	if _, err := s.repo.GetByID(ctx, userID, id); err != nil {
+		return StatsView{}, err
+	}
+
+	counts, err := s.repo.CountOccurrencesByStatus(ctx, userID, id)
+	if err != nil {
+		return StatsView{}, err
+	}
+	statuses, err := s.repo.ListOccurrenceStatuses(ctx, userID, id)
+	if err != nil {
+		return StatsView{}, err
+	}
+
+	return StatsView{
+		Done:      counts[StatusDone],
+		Missed:    counts[StatusMissed],
+		Cancelled: counts[StatusCancelled],
+		Streak:    currentStreak(statuses),
+	}, nil
+}
+
+// currentStreak walks the occurrences newest-first and counts consecutive dones.
+// The still-open instance (active) is skipped rather than breaking the streak —
+// today being unfinished is not a failure yet. `cancelled` also passes: the user
+// deliberately opted out, which is not the same as letting the window lapse.
+func currentStreak(newestFirst []string) int {
+	streak := 0
+	for _, st := range newestFirst {
+		switch st {
+		case StatusDone:
+			streak++
+		case StatusActive, StatusCancelled:
+			continue
+		default:
+			return streak
+		}
+	}
+	return streak
+}
+
 // Delete ends the series. Past occurrences are orphaned (FK ON DELETE SET NULL),
 // never destroyed — they are the user's record of what they did.
 func (s *service) Delete(ctx context.Context, userID, id string) error {

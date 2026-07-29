@@ -546,3 +546,117 @@ func TestService_Delete_NilCleanerIsNoop(t *testing.T) {
 		t.Fatalf("unexpected err with nil cleaner: %v", err)
 	}
 }
+
+// ── recurrence successor trigger (E-050 / NIC-1773) ──────────────────────────
+
+// fakeMaterializer records the successor calls the task service makes.
+type fakeMaterializer struct {
+	calls []string
+	err   error
+}
+
+func (f *fakeMaterializer) MaterializeAfterCompletion(_ context.Context, _, ruleID string) error {
+	f.calls = append(f.calls, ruleID)
+	return f.err
+}
+
+// setStatusSvc wires a service whose update() returns the given task.
+func setStatusSvc(t *testing.T, stored Task, m RecurrenceMaterializer) Service {
+	t.Helper()
+	repo := &mockRepo{
+		getByID: func(context.Context, string, string) (*Task, error) { return &stored, nil },
+		update: func(_ context.Context, _, _ string, req UpdateTaskRequest, _ completedAtChange) (Task, error) {
+			out := stored
+			if req.Status != nil {
+				out.Status = *req.Status
+			}
+			return out, nil
+		},
+		countActiveInbox: func(context.Context, string, string) (int, error) { return 0, nil },
+	}
+	return NewService(repo, nil, nil).WithMaterializer(m)
+}
+
+func recurringStored() Task {
+	ruleID := "rule-1"
+	occ := "2026-03-02"
+	return Task{
+		ID: "t1", UserID: "u1", ProjectID: "p1", Title: "Water", Status: "active",
+		Priority: "medium", Energy: "medium",
+		RecurrenceRuleID: &ruleID, OccurrenceDate: &occ,
+	}
+}
+
+// Completing a recurring occurrence materializes its successor in the same request.
+func TestSetStatus_CompletingRecurringMaterializesSuccessor(t *testing.T) {
+	m := &fakeMaterializer{}
+	svc := setStatusSvc(t, recurringStored(), m)
+
+	if _, err := svc.SetStatus(context.Background(), "u1", "t1", "free", statusDone); err != nil {
+		t.Fatalf("SetStatus: %v", err)
+	}
+	if len(m.calls) != 1 || m.calls[0] != "rule-1" {
+		t.Errorf("materializer calls = %v, want [rule-1]", m.calls)
+	}
+}
+
+// Only completion triggers a successor, and only for recurring tasks.
+func TestSetStatus_SuccessorNotTriggered(t *testing.T) {
+	tests := []struct {
+		name   string
+		stored Task
+		status string
+	}{
+		{"recurring but cancelled", recurringStored(), "cancelled"},
+		{"recurring but merely active", recurringStored(), "active"},
+		{"recurring but missed", recurringStored(), statusMissed},
+		{"non-recurring completed", Task{ID: "t1", UserID: "u1", ProjectID: "p1", Status: "active"}, statusDone},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &fakeMaterializer{}
+			svc := setStatusSvc(t, tt.stored, m)
+
+			if _, err := svc.SetStatus(context.Background(), "u1", "t1", "free", tt.status); err != nil {
+				t.Fatalf("SetStatus: %v", err)
+			}
+			if len(m.calls) != 0 {
+				t.Errorf("materializer calls = %v, want none", m.calls)
+			}
+		})
+	}
+}
+
+// The successor is best-effort: a failure is swallowed so the status change the
+// user already made still succeeds. The cron sweep retries.
+func TestSetStatus_SuccessorFailureDoesNotFailTheRequest(t *testing.T) {
+	m := &fakeMaterializer{err: errors.New("db down")}
+	svc := setStatusSvc(t, recurringStored(), m)
+
+	view, err := svc.SetStatus(context.Background(), "u1", "t1", "free", statusDone)
+	if err != nil {
+		t.Fatalf("SetStatus = %v, want the status change to survive a failed successor", err)
+	}
+	if view.Status != statusDone {
+		t.Errorf("status = %q, want %q", view.Status, statusDone)
+	}
+}
+
+// A nil materializer (feature unwired) must not panic.
+func TestSetStatus_NilMaterializerIsSafe(t *testing.T) {
+	svc := setStatusSvc(t, recurringStored(), nil)
+	if _, err := svc.SetStatus(context.Background(), "u1", "t1", "free", statusDone); err != nil {
+		t.Fatalf("SetStatus: %v", err)
+	}
+}
+
+// `missed` is a valid status on the enum but must never count against the plan
+// limit — an ignored daily rule would otherwise fill the 50-task cap invisibly.
+func TestMissedStatus_AllowedButNotPlanCounted(t *testing.T) {
+	if !allowedStatuses[statusMissed] {
+		t.Error("missed must be an accepted status")
+	}
+	if activeInboxStatuses[statusMissed] {
+		t.Error("missed must not count against the plan limit")
+	}
+}

@@ -482,3 +482,320 @@ func TestRepo_SetPausedTogglesCursorEligibility(t *testing.T) {
 		t.Error("paused = true, want false")
 	}
 }
+
+// ── materializer (NIC-1773) ──────────────────────────────────────────────────
+
+func seedUserTZ(t *testing.T, pool *pgxpool.Pool, tz string) string {
+	t.Helper()
+	id := seedUser(t, pool)
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE users SET timezone = $2 WHERE id = $1`, id, tz,
+	); err != nil {
+		t.Fatalf("seedUserTZ: %v", err)
+	}
+	return id
+}
+
+func taskStatus(t *testing.T, pool *pgxpool.Pool, ruleID, occDate string) string {
+	t.Helper()
+	var s string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT status FROM tasks WHERE recurrence_rule_id = $1 AND occurrence_date = $2`,
+		ruleID, occDate,
+	).Scan(&s); err != nil {
+		t.Fatalf("taskStatus(%s): %v", occDate, err)
+	}
+	return s
+}
+
+func ruleCursor(t *testing.T, pool *pgxpool.Pool, ruleID string) *string {
+	t.Helper()
+	var c *string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT next_occurrence::text FROM recurrence_rules WHERE id = $1`, ruleID,
+	).Scan(&c); err != nil {
+		t.Fatalf("ruleCursor: %v", err)
+	}
+	return c
+}
+
+// Materialize inserts the next occurrence, reaps the lapsed one to `missed`, and
+// advances the cursor — all together.
+func TestRepo_MaterializeReapsAndAdvances(t *testing.T) {
+	r, pool := newRepo(t)
+	ctx := context.Background()
+	userID := seedUser(t, pool)
+	projectID := seedProject(t, pool, userID)
+
+	rule := newRule(userID, projectID)
+	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02")); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	advanced := rule
+	next := date("2026-03-16")
+	advanced.NextOccurrence = &next
+	occ := newOccurrence(rule, "2026-03-09")
+
+	out, err := r.Materialize(ctx, advanced, occ, 50)
+	if err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+	if out.Created == nil {
+		t.Fatal("Created = nil, want the new occurrence")
+	}
+	if !out.Reaped {
+		t.Error("Reaped = false, want the lapsed instance reaped")
+	}
+	if got := taskStatus(t, pool, rule.ID, "2026-03-02"); got != "missed" {
+		t.Errorf("lapsed instance status = %q, want missed", got)
+	}
+	if got := taskStatus(t, pool, rule.ID, "2026-03-09"); got != "active" {
+		t.Errorf("new instance status = %q, want active", got)
+	}
+	if got := ruleCursor(t, pool, rule.ID); got == nil || *got != "2026-03-16" {
+		t.Errorf("cursor = %v, want 2026-03-16", got)
+	}
+}
+
+// The reap sets `missed`, never `cancelled`, and never touches a done instance —
+// the streak calculation depends on telling them apart.
+func TestRepo_MaterializeDoesNotReapCompleted(t *testing.T) {
+	r, pool := newRepo(t)
+	ctx := context.Background()
+	userID := seedUser(t, pool)
+	projectID := seedProject(t, pool, userID)
+
+	rule := newRule(userID, projectID)
+	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02")); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`UPDATE tasks SET status = 'done' WHERE recurrence_rule_id = $1`, rule.ID,
+	); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+
+	advanced := rule
+	next := date("2026-03-16")
+	advanced.NextOccurrence = &next
+	out, err := r.Materialize(ctx, advanced, newOccurrence(rule, "2026-03-09"), 50)
+	if err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+	if out.Reaped {
+		t.Error("Reaped = true, want a completed instance left alone")
+	}
+	if got := taskStatus(t, pool, rule.ID, "2026-03-02"); got != "done" {
+		t.Errorf("completed instance status = %q, want it untouched at done", got)
+	}
+}
+
+// Running twice creates no duplicate — the partial unique index is what lets the
+// cron sweep and the sync-on-complete path race safely.
+func TestRepo_MaterializeIsIdempotent(t *testing.T) {
+	r, pool := newRepo(t)
+	ctx := context.Background()
+	userID := seedUser(t, pool)
+	projectID := seedProject(t, pool, userID)
+
+	rule := newRule(userID, projectID)
+	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02")); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	advanced := rule
+	next := date("2026-03-16")
+	advanced.NextOccurrence = &next
+	occ := newOccurrence(rule, "2026-03-09")
+
+	if _, err := r.Materialize(ctx, advanced, occ, 50); err != nil {
+		t.Fatalf("first Materialize: %v", err)
+	}
+	// A second attempt for the same date — the horizon is already satisfied.
+	second, err := r.Materialize(ctx, advanced, newOccurrence(rule, "2026-03-09"), 50)
+	if err != nil {
+		t.Fatalf("second Materialize: %v", err)
+	}
+	if second.Created != nil {
+		t.Error("second run created a row, want the duplicate suppressed")
+	}
+	if n := countTasks(t, pool, rule.ID); n != 2 {
+		t.Errorf("occurrence rows = %d, want 2 (the original + one new)", n)
+	}
+}
+
+// The horizon is exactly one live instance per rule: a still-open instance for a
+// later date blocks materialization rather than stacking up.
+func TestRepo_MaterializeRespectsHorizon(t *testing.T) {
+	r, pool := newRepo(t)
+	ctx := context.Background()
+	userID := seedUser(t, pool)
+	projectID := seedProject(t, pool, userID)
+
+	rule := newRule(userID, projectID)
+	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-09")); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	advanced := rule
+	next := date("2026-03-16")
+	advanced.NextOccurrence = &next
+	// An earlier date while a later instance is still live.
+	out, err := r.Materialize(ctx, advanced, newOccurrence(rule, "2026-03-02"), 50)
+	if err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+	if !out.SkippedExisting {
+		t.Error("SkippedExisting = false, want the live instance to hold the horizon")
+	}
+	if n := countTasks(t, pool, rule.ID); n != 1 {
+		t.Errorf("occurrence rows = %d, want 1", n)
+	}
+}
+
+// The plan-limit stall: at the cap, nothing is inserted AND the cursor stays put
+// so the occurrence is retried rather than silently skipped.
+func TestRepo_MaterializePlanLimitLeavesCursorUnchanged(t *testing.T) {
+	r, pool := newRepo(t)
+	ctx := context.Background()
+	userID := seedUser(t, pool)
+	projectID := seedProject(t, pool, userID)
+
+	rule := newRule(userID, projectID)
+	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02")); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// Complete it so the horizon is free, leaving the project's one active task
+	// as the entire budget.
+	if _, err := pool.Exec(ctx,
+		`UPDATE tasks SET status = 'done' WHERE recurrence_rule_id = $1`, rule.ID,
+	); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO tasks (id, user_id, project_id, title, status, priority, energy, display_order)
+		VALUES ($1, $2, $3, 'filler', 'active', 'medium', 'medium', 9)`,
+		uuid.NewString(), userID, projectID,
+	); err != nil {
+		t.Fatalf("filler: %v", err)
+	}
+
+	before := ruleCursor(t, pool, rule.ID)
+
+	advanced := rule
+	next := date("2026-03-16")
+	advanced.NextOccurrence = &next
+	// limit=1 and the project already holds 1 active task.
+	out, err := r.Materialize(ctx, advanced, newOccurrence(rule, "2026-03-09"), 1)
+	if err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+	if !out.SkippedPlanLimit {
+		t.Fatal("SkippedPlanLimit = false, want the guard to trip")
+	}
+	after := ruleCursor(t, pool, rule.ID)
+	if (before == nil) != (after == nil) || (before != nil && *before != *after) {
+		t.Errorf("cursor moved from %v to %v — the occurrence would be lost", before, after)
+	}
+	if n := countTasks(t, pool, rule.ID); n != 1 {
+		t.Errorf("occurrence rows = %d, want 1 (nothing new inserted)", n)
+	}
+}
+
+// ListDue returns non-paused, non-exhausted, due rules with the owner's zone.
+func TestRepo_ListDue(t *testing.T) {
+	r, pool := newRepo(t)
+	ctx := context.Background()
+	userID := seedUserTZ(t, pool, "Asia/Jerusalem")
+	projectID := seedProject(t, pool, userID)
+
+	mk := func(next *time.Time, paused bool) string {
+		rule := newRule(userID, projectID)
+		rule.NextOccurrence = next
+		rule.Paused = paused
+		created, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02"))
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		if paused {
+			if _, err := r.SetPaused(ctx, userID, created.ID, true); err != nil {
+				t.Fatalf("pause: %v", err)
+			}
+		}
+		return created.ID
+	}
+
+	past := date("2020-01-01")
+	future := date("2999-01-01")
+	dueID := mk(&past, false)
+	mk(&past, true)    // paused → excluded
+	mk(nil, false)     // exhausted → excluded
+	mk(&future, false) // far future → excluded by the SQL bound
+
+	due, err := r.ListDue(ctx)
+	if err != nil {
+		t.Fatalf("ListDue: %v", err)
+	}
+	if len(due) != 1 {
+		t.Fatalf("due rules = %d, want 1", len(due))
+	}
+	if due[0].Rule.ID != dueID {
+		t.Errorf("due rule = %s, want %s", due[0].Rule.ID, dueID)
+	}
+	if due[0].Timezone != "Asia/Jerusalem" {
+		t.Errorf("timezone = %q, want Asia/Jerusalem", due[0].Timezone)
+	}
+}
+
+// Stats are derived from occurrence rows; the streak walks back from newest.
+func TestRepo_OccurrenceStatsAndStreak(t *testing.T) {
+	r, pool := newRepo(t)
+	ctx := context.Background()
+	userID := seedUser(t, pool)
+	projectID := seedProject(t, pool, userID)
+
+	rule := newRule(userID, projectID)
+	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02")); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	add := func(d, status string) {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO tasks (id, user_id, project_id, title, status, priority, energy,
+				display_order, recurrence_rule_id, occurrence_date)
+			VALUES ($1, $2, $3, 'occ', $4, 'medium', 'medium', 0, $5, $6::date)`,
+			uuid.NewString(), userID, projectID, status, rule.ID, d,
+		); err != nil {
+			t.Fatalf("add %s: %v", d, err)
+		}
+	}
+	// Oldest → newest: done, missed, done, done. The first row (03-02) is active.
+	if _, err := pool.Exec(ctx,
+		`UPDATE tasks SET status = 'done' WHERE recurrence_rule_id = $1`, rule.ID,
+	); err != nil {
+		t.Fatalf("seed first done: %v", err)
+	}
+	add("2026-03-09", "missed")
+	add("2026-03-16", "done")
+	add("2026-03-23", "done")
+
+	counts, err := r.CountOccurrencesByStatus(ctx, userID, rule.ID)
+	if err != nil {
+		t.Fatalf("CountOccurrencesByStatus: %v", err)
+	}
+	if counts["done"] != 3 || counts["missed"] != 1 {
+		t.Errorf("counts = %v, want 3 done / 1 missed", counts)
+	}
+
+	statuses, err := r.ListOccurrenceStatuses(ctx, userID, rule.ID)
+	if err != nil {
+		t.Fatalf("ListOccurrenceStatuses: %v", err)
+	}
+	if len(statuses) != 4 || statuses[0] != "done" {
+		t.Fatalf("statuses = %v, want newest-first starting with done", statuses)
+	}
+	// done, done, then missed breaks it.
+	if got := recurrence.CurrentStreakForTest(statuses); got != 2 {
+		t.Errorf("streak = %d, want 2", got)
+	}
+}

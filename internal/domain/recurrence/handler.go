@@ -70,6 +70,17 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, view)
 }
 
+// Stats handles GET /recurrence-rules/{id}/stats — derived done/missed/cancelled
+// counts plus the current streak.
+func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
+	stats, err := h.svc.Stats(r.Context(), mw.UserIDFromCtx(r.Context()), chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, stats)
+}
+
 // Update handles PATCH /recurrence-rules/{id} — edits the series template.
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	var req UpdateRuleRequest

@@ -89,6 +89,7 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/inbox", h.Jobs.Inbox)
 	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/summary", h.Jobs.Summary)
 	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/attachment-gc", h.Jobs.AttachmentGC)
+	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/recurrence", h.Jobs.Recurrence)
 	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/run-all", h.Jobs.RunAll)
 
 	// Auth — stricter per-endpoint IP rate limits
@@ -186,6 +187,7 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		r.Post("/projects/{projectId}/recurrence-rules", h.Recurrence.Create)
 		r.Get("/recurrence-rules", h.Recurrence.List)
 		r.Get("/recurrence-rules/{id}", h.Recurrence.Get)
+		r.Get("/recurrence-rules/{id}/stats", h.Recurrence.Stats)
 		r.Patch("/recurrence-rules/{id}", h.Recurrence.Update)
 		r.Patch("/recurrence-rules/{id}/pause", h.Recurrence.Pause)
 		r.Delete("/recurrence-rules/{id}", h.Recurrence.Delete)

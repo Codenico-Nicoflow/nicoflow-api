@@ -25,6 +25,16 @@ const (
 	EventDeleted = "recurrence.deleted"
 )
 
+// Occurrence statuses this domain reads or writes. They mirror the task domain's
+// enum; duplicated as constants here so recurrence never imports task (the
+// dependency runs the other way, via the task package's Materializer seam).
+const (
+	StatusActive    = "active"
+	StatusDone      = "done"
+	StatusMissed    = "missed"
+	StatusCancelled = "cancelled"
+)
+
 var (
 	allowedFreqs      = map[string]bool{FreqDaily: true, FreqWeekly: true, FreqMonthly: true, FreqYearly: true}
 	allowedPriorities = map[string]bool{"low": true, "medium": true, "high": true}
@@ -187,6 +197,8 @@ type Service interface {
 	Update(ctx context.Context, userID, id string, req UpdateRuleRequest) (RuleView, error)
 	SetPaused(ctx context.Context, userID, id string, paused bool) (RuleView, error)
 	Delete(ctx context.Context, userID, id string) error
+	// Stats derives a rule's history: per-status counts plus the current streak.
+	Stats(ctx context.Context, userID, id string) (StatsView, error)
 }
 
 // Repository is the data-access contract. Every method is row-scoped by user_id.
@@ -223,4 +235,59 @@ type Repository interface {
 
 	// ProjectOwned reports whether the project exists and belongs to the user.
 	ProjectOwned(ctx context.Context, userID, projectID string) (bool, error)
+
+	// ListDue returns every non-paused, non-exhausted rule whose cursor has come
+	// due, joined to the owner's timezone so the sweep can decide "today" in the
+	// user's local terms. System-scoped by design — this is the only path that is
+	// not user-scoped, and it is reachable solely from the internal cron.
+	ListDue(ctx context.Context) ([]DueRule, error)
+
+	// GetForMaterialize loads one rule for the sync-on-complete path, scoped to
+	// the user.
+	GetForMaterialize(ctx context.Context, userID, ruleID string) (Rule, error)
+
+	// Materialize inserts the next occurrence, reaps the prior un-done instance to
+	// `missed`, and advances the cursor — all in one transaction, and only if the
+	// project stays under its active-task limit. Returns what happened so the
+	// sweep can report it and the caller can broadcast.
+	Materialize(ctx context.Context, r Rule, occ Occurrence, limit int) (MaterializeResult, error)
+
+	// CountOccurrencesByStatus tallies a rule's occurrences per status, and
+	// ListOccurrenceStatuses returns them newest-first for the streak walk. Stats
+	// are derived from these rows — no counter columns exist by design.
+	CountOccurrencesByStatus(ctx context.Context, userID, ruleID string) (map[string]int, error)
+	ListOccurrenceStatuses(ctx context.Context, userID, ruleID string) ([]string, error)
+}
+
+// DueRule pairs a due rule with its owner's timezone — the sweep compares
+// next_occurrence against the user's local today, not UTC's.
+type DueRule struct {
+	Rule     Rule
+	Timezone string
+}
+
+// MaterializeResult reports what one materialization attempt did. Exactly one of
+// Created / SkippedPlanLimit / SkippedExisting is true.
+type MaterializeResult struct {
+	// Created is the new occurrence, set only when one was inserted.
+	Created *Occurrence
+	// Reaped is true when the prior un-done instance was moved to `missed`.
+	Reaped bool
+	// SkippedPlanLimit means the project is at its active-task limit. The cursor
+	// is deliberately NOT advanced: silently stepping past an occurrence the user
+	// never saw is data loss, so the sweep retries next run.
+	SkippedPlanLimit bool
+	// SkippedExisting means an un-done instance for this rule already exists, so
+	// the horizon (exactly one live instance per rule) is already satisfied.
+	SkippedExisting bool
+}
+
+// StatsView is a rule's derived history: per-status counts plus the current
+// streak. Never stored — a counter would count materializations, not
+// completions, and drift.
+type StatsView struct {
+	Done      int `json:"done"`
+	Missed    int `json:"missed"`
+	Cancelled int `json:"cancelled"`
+	Streak    int `json:"streak"`
 }

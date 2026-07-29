@@ -667,7 +667,9 @@ Delete a project and all its tasks.
 >   projectId: string;
 >   title: string;
 >   notes?: string | null;
->   status: "inbox" | "active" | "someday" | "done" | "cancelled";
+>   status: "inbox" | "active" | "someday" | "done" | "cancelled" | "missed";
+>   recurrenceRuleId: string | null;  // set only on a materialized occurrence
+>   occurrenceDate: string | null;    // YYYY-MM-DD
 >   priority: "low" | "medium" | "high";          // default "medium"
 >   energy: "low" | "medium" | "deep";            // default "medium"
 >   rollsOver: boolean;                           // default true
@@ -686,7 +688,7 @@ Delete a project and all its tasks.
 > **List envelope.** List endpoints (`GET …/tasks`, `GET /focus`) return `{ "items": ITask[] }` inside the standard `data` envelope — i.e. `data.items`, **not** a bare `data: ITask[]`. The frontend `transformResponse` must unwrap to `.data.items`.
 
 > **⚠️ E-014 frontend type fix required (NIC-1382/1383/1384).** The live frontend `ITask` (`src/lib/types/interfaces/index.ts`) and `tasks/type.ts` are **out of sync** with the contract above and must be aligned (no `Number()`/string coercion — fix the types):
-> - `status` is typed off `TaskStatus { TODO, IN_PROGRESS, DONE }` → must become `"inbox" | "active" | "someday" | "done" | "cancelled"`.
+> - `status` is typed off `TaskStatus { TODO, IN_PROGRESS, DONE }` → must become `"inbox" | "active" | "someday" | "done" | "cancelled" | "missed"`.
 > - `scheduledFor` is typed `'today' | 'tomorrow' | 'this_week' | null` (an enum) → must become an **ISO date string** `string | null`. The `ScheduledFor` constant and its uses are obsolete; today/tomorrow/thisWeek is a *view* (`/time-spread`), not a stored field.
 > - Add the missing fields: **`energy: "low"|"medium"|"deep"`** and **`rollsOver: boolean`** (plus on the create/update request types).
 > - List responses unwrap to `.data.items` (currently typed `ITask[]`).
@@ -701,7 +703,7 @@ List all tasks within a project.
 
 | Param       | Type   | Description                                                            |
 | ----------- | ------ | --------------------------------------------------------------------- |
-| `status`    | string | Filter by `inbox` \| `active` \| `someday` \| `done` \| `cancelled`   |
+| `status`    | string | Filter by `inbox` \| `active` \| `someday` \| `done` \| `cancelled` \| `missed` |
 | `priority`  | string | Filter by `low` \| `medium` \| `high`                                 |
 | `energy`    | string | Filter by `low` \| `medium` \| `deep`                                 |
 | `search`    | string | Case-insensitive ILIKE over `title` + `notes`                         |
@@ -731,7 +733,7 @@ Retrieve a single task.
 Create a task inside a project. **Title-only is valid** (quick-add); everything else defaults server-side.
 
 - **Auth required:** Yes
-- **Plan limit:** Free plan allows **50 active+inbox tasks per project**. Only `active` and `inbox` count — `someday`, `done`, and `cancelled` are free. Exceeding it (or a PATCH that moves a task *into* active/inbox over the cap) returns `PLAN_LIMIT_EXCEEDED` (403).
+- **Plan limit:** Free plan allows **50 active+inbox tasks per project**. Only `active` and `inbox` count — `someday`, `done`, `cancelled`, and `missed` are free. (`missed` being uncounted is load-bearing: without it an ignored daily recurrence would silently fill the cap with rows the user cannot see.) Exceeding it (or a PATCH that moves a task *into* active/inbox over the cap) returns `PLAN_LIMIT_EXCEEDED` (403).
 
 **Request body**
 
@@ -752,7 +754,7 @@ Create a task inside a project. **Title-only is valid** (quick-add); everything 
 | ------------------ | ------- | -------- | ----------------------------------------------------------------- |
 | `title`            | string  | Yes      | 1–255 characters (trimmed)                                        |
 | `notes`            | string  | No       | ≤ 2000 characters                                                 |
-| `status`           | string  | No       | `inbox` \| `active` \| `someday` \| `done` \| `cancelled` — default `inbox` |
+| `status`           | string  | No       | `inbox` \| `active` \| `someday` \| `done` \| `cancelled` \| `missed` — default `inbox` |
 | `priority`         | string  | No       | `low` \| `medium` \| `high` — default `medium`                    |
 | `energy`           | string  | No       | `low` \| `medium` \| `deep` — default `medium`                    |
 | `rollsOver`        | boolean | No       | default `true` (a past `scheduledFor` carries forward)            |
@@ -806,7 +808,7 @@ Status-only shorthand (checkbox toggle, move to someday). Same `completedAt` sid
 
 | Field    | Type   | Required | Values                                                       |
 | -------- | ------ | -------- | ------------------------------------------------------------ |
-| `status` | string | Yes      | `inbox` \| `active` \| `someday` \| `done` \| `cancelled`    |
+| `status` | string | Yes      | `inbox` \| `active` \| `someday` \| `done` \| `cancelled` \| `missed` |
 
 **Response — 200 OK** — Updated `ITask`
 
@@ -1680,6 +1682,26 @@ Body `{ "paused": true }`. A paused rule is excluded from the due scan. Broadcas
 
 **Response — 200 OK:** `RecurrenceRuleView` · **Errors:** `RECURRENCE_RULE_NOT_FOUND` (404)
 
+#### GET /v1/recurrence-rules/:id/stats
+
+Derived history for one rule. **Never stored** — a counter column would count
+materializations, not completions, and drift the moment either trigger retries.
+
+- **Auth required:** Yes
+
+**Response — 200 OK**
+
+```jsonc
+{ "done": 12, "missed": 3, "cancelled": 1, "streak": 4 }
+```
+
+`streak` walks occurrences newest-first and counts consecutive `done`. The
+still-open instance (`active`) is skipped rather than breaking it — today being
+unfinished is not a failure yet — and `cancelled` is skipped too, since opting out
+deliberately is not the same as letting the window lapse.
+
+**Errors:** `RECURRENCE_RULE_NOT_FOUND` (404)
+
 #### DELETE /v1/recurrence-rules/:id
 
 End the series. The **pending** (un-done) occurrence is deleted; **past occurrences
@@ -1693,6 +1715,60 @@ they are the user's record of what they did. Broadcasts `recurrence.deleted`.
 **No skip endpoint.** Ignoring an occurrence yields `missed` (time ran out); an
 explicit "no" is `PATCH /tasks/:id/status` → `cancelled` (the user decided against
 it). The two are deliberately distinct — the streak calculation tells them apart.
+
+#### Materialization (E-050 / NIC-1773)
+
+**Horizon: exactly one live instance per rule.** This is what bounds row growth and
+stops a daily rule from eating a project's 50-task limit. The engine never
+materializes ahead.
+
+One routine, two triggers:
+
+1. **Cron sweep** — `POST /internal/jobs/recurrence` (and folded into
+   `run-all`, so the single hourly Render cron already reaches it; do **not**
+   provision a second cron). `InternalToken`-guarded, `?dryRun=true` supported.
+2. **Synchronous on completion** — when a task carrying a `recurrenceRuleId`
+   transitions to `done`, its successor is created in the same request, so an
+   active user sees the habit continue even if the cron is broken.
+
+Both are safe to race: the partial unique index on
+`(recurrence_rule_id, occurrence_date)` means the loser inserts nothing.
+
+Per due rule the materializer: skips if an un-done instance already exists →
+**reaps** the lapsed instance (`active` → `missed`) → inserts the new task from
+the template (`status='active'`, `scheduled_for = occurrence_date`) → advances
+`next_occurrence`, nulling it when `end_date` is spent.
+
+**"Due" is decided in the owner's timezone**, not UTC's — a rule fires on the
+user's Monday.
+
+**Plan-limit stall.** If the project is at its active-task limit the insert is
+guarded away and `next_occurrence` is **deliberately not advanced**: silently
+stepping past an occurrence the user never saw is data loss. It is counted as
+`skippedPlanLimit` and retried on the next tick.
+
+**Sweep response** (`considered`, `materialized`, `reaped`, `skippedPlanLimit`,
+`skippedExisting`, `skippedNotDue`, `skippedBadTimezone`). A run that considered
+due rules but materialized nothing logs at **warn** — a silent `generated:0` is
+exactly what hid the earlier staging cron failure. Paused and exhausted rules
+never enter the due scan, so the alarm cannot cry wolf.
+
+#### Time Spread & list placement of occurrences
+
+A recurring occurrence is **an appointment with a window, not a debt that follows
+you**:
+
+- on its `occurrenceDate` → **Today**, as normal;
+- past its date and still `active` → **no bucket**. It stays completable from the
+  project view and search, but stops occupying Today. `rollsOver` is not read on
+  this path — `missed` supersedes it.
+
+Non-recurring tasks keep their existing roll-forward behaviour, unchanged.
+
+`done` and `missed` **occurrences** are excluded from the default project task
+list and from search, so years of history never clutter the working views (a
+one-off `done` task is unaffected). History stays reachable from the rule detail
+view; occurrence rows are kept forever — there is no purge job.
 
 ---
 

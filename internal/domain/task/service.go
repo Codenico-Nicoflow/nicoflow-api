@@ -13,10 +13,17 @@ import (
 )
 
 const (
-	// freePlanTaskLimit counts only active+inbox tasks per project (calm limit).
-	freePlanTaskLimit = 50
+	// FreePlanTaskLimit counts only active+inbox tasks per project (calm limit).
+	// Exported so the recurrence materializer enforces the same ceiling rather
+	// than duplicating the number.
+	FreePlanTaskLimit = 50
+	freePlanTaskLimit = FreePlanTaskLimit
 
-	statusDone     = "done"
+	statusDone = "done"
+	// statusMissed is a recurring occurrence whose window closed without
+	// completion. Deliberately distinct from "cancelled" (the user decided
+	// against it) — the streak calculation has to tell them apart.
+	statusMissed   = "missed"
 	defaultStatus  = "inbox"
 	defaultPriorty = "medium"
 	defaultEnergy  = "medium"
@@ -30,7 +37,7 @@ const (
 )
 
 var (
-	allowedStatuses   = map[string]bool{"inbox": true, "active": true, "someday": true, "done": true, "cancelled": true}
+	allowedStatuses   = map[string]bool{"inbox": true, "active": true, "someday": true, "done": true, "cancelled": true, statusMissed: true}
 	allowedPriorities = map[string]bool{"low": true, "medium": true, "high": true}
 	allowedEnergies   = map[string]bool{"low": true, "medium": true, "deep": true}
 	// activeInboxStatuses are the statuses that count against the plan limit.
@@ -56,6 +63,9 @@ type Service interface {
 	// WithCleaner injects the attachment cleaner invoked best-effort on delete
 	// and returns the service for chaining. Wired once in main.go.
 	WithCleaner(c AttachmentCleaner) Service
+	// WithMaterializer injects the recurrence materializer invoked best-effort
+	// when a recurring occurrence is completed. Wired once in main.go.
+	WithMaterializer(m RecurrenceMaterializer) Service
 }
 
 type service struct {
@@ -64,6 +74,8 @@ type service struct {
 	notif       notifier          // best-effort notification emitter; nil disables emission
 	broadcaster Broadcaster       // real-time WS emitter; nil disables emission
 	cleaner     AttachmentCleaner // best-effort attachment cleanup on delete; nil disables
+	// best-effort recurrence successor on completion; nil disables (cron still catches it)
+	materializer RecurrenceMaterializer
 }
 
 // WithCleaner injects the attachment cleaner used on task delete. Kept as a
@@ -71,6 +83,14 @@ type service struct {
 // wired once in main.go, where the attachment service concrete is available.
 func (s *service) WithCleaner(c AttachmentCleaner) Service {
 	s.cleaner = c
+	return s
+}
+
+// WithMaterializer injects the recurrence materializer used on completion. Kept
+// as a post-construction option for the same reason as WithCleaner: the two
+// services reference each other, so the concretes only meet in main.go.
+func (s *service) WithMaterializer(m RecurrenceMaterializer) Service {
+	s.materializer = m
 	return s
 }
 
@@ -305,6 +325,9 @@ func (s *service) SetStatus(ctx context.Context, userID, id, plan, status string
 		return TaskView{}, err
 	}
 	s.emit(userID, Event{Type: EventStatusChanged, Payload: view})
+	// A completed recurring occurrence immediately spawns its successor, so the
+	// habit continues without waiting for the hourly sweep.
+	s.materializeSuccessor(ctx, userID, view)
 	return view, nil
 }
 
