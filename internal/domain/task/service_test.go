@@ -27,6 +27,7 @@ type mockRepo struct {
 	repack           func(ctx context.Context, userID, id string, targetOrder int) (Task, error)
 	listActiveInbox  func(ctx context.Context, userID string) ([]Task, error)
 	existsByID       func(ctx context.Context, id string) (bool, error)
+	isOpenable       func(ctx context.Context, userID, id string) (bool, error)
 }
 
 func (m *mockRepo) ListByProject(ctx context.Context, userID, projectID string, f ListTasksFilter) ([]Task, error) {
@@ -69,6 +70,12 @@ func (m *mockRepo) ListActiveInboxByUser(ctx context.Context, userID string) ([]
 func (m *mockRepo) ExistsByID(ctx context.Context, id string) (bool, error) {
 	if m.existsByID != nil {
 		return m.existsByID(ctx, id)
+	}
+	return false, nil
+}
+func (m *mockRepo) IsOpenable(ctx context.Context, userID, id string) (bool, error) {
+	if m.isOpenable != nil {
+		return m.isOpenable(ctx, userID, id)
 	}
 	return false, nil
 }

@@ -39,6 +39,10 @@ type Repository interface {
 	// ExistsByID reports whether a task exists, system-wide (no user scope). Used
 	// by the attachment GC sweep to detect dead owners; not for user requests.
 	ExistsByID(ctx context.Context, id string) (bool, error)
+	// IsOpenable reports whether the user owns the task and it can still accrue
+	// focus time, i.e. it is not in a terminal status. A task the user does not
+	// own is indistinguishable from a missing one.
+	IsOpenable(ctx context.Context, userID, id string) (bool, error)
 }
 
 type pgRepo struct{ db *pgxpool.Pool }
@@ -253,6 +257,25 @@ func (r *pgRepo) ExistsByID(ctx context.Context, id string) (bool, error) {
 		return false, fmt.Errorf("task.ExistsByID: %w", err)
 	}
 	return exists, nil
+}
+
+// IsOpenable gates opening a focus segment: the caller must own the task and it
+// must not be terminal. `missed` counts as terminal alongside done/cancelled —
+// its window has closed, so it can no longer accrue time.
+func (r *pgRepo) IsOpenable(ctx context.Context, userID, id string) (bool, error) {
+	var openable bool
+	err := r.db.QueryRow(ctx,
+		`SELECT EXISTS(
+			SELECT 1 FROM tasks
+			WHERE id = @id AND user_id = @user_id
+			  AND status NOT IN ('done', 'cancelled', 'missed')
+		)`,
+		pgx.NamedArgs{"id": id, "user_id": userID},
+	).Scan(&openable)
+	if err != nil {
+		return false, fmt.Errorf("task.IsOpenable: %w", err)
+	}
+	return openable, nil
 }
 
 func (r *pgRepo) ProjectOwned(ctx context.Context, userID, projectID string) (bool, error) {

@@ -33,6 +33,10 @@ const (
 	EventRecurrenceCreated EventType = "recurrence.created"
 	EventRecurrenceUpdated EventType = "recurrence.updated"
 	EventRecurrenceDeleted EventType = "recurrence.deleted"
+	// Focus timer events (E-049) carry a full SessionView. Transition-only —
+	// heartbeats never broadcast. FREE on every plan.
+	EventFocusSessionStarted EventType = "focus.session_started"
+	EventFocusSessionEnded   EventType = "focus.session_ended"
 )
 
 // Event is the envelope for every server-pushed WebSocket message.
