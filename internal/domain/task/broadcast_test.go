@@ -30,7 +30,7 @@ func happyRepo(t Task) *mockRepo {
 			return t, nil
 		},
 		deleteFn:       func(context.Context, string, string) error { return nil },
-		updateSchedule: func(context.Context, string, string, *string, *bool) (Task, error) { return t, nil },
+		updateSchedule: func(context.Context, string, string, *string, *string, *bool) (Task, error) { return t, nil },
 		repack:         func(context.Context, string, string, int) (Task, error) { return t, nil },
 	}
 }
@@ -86,7 +86,7 @@ func TestBroadcast_EventPerMutation(t *testing.T) {
 		{
 			name: "Schedule emits task.updated",
 			call: func(svc Service) error {
-				_, err := svc.Schedule(context.Background(), "u1", "t1", ScheduleRequest{})
+				_, err := svc.Schedule(context.Background(), "u1", "t1", "pro", ScheduleRequest{})
 				return err
 			},
 			wantTypes: []string{EventUpdated},

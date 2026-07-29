@@ -19,6 +19,10 @@ const (
 	FreePlanTaskLimit = 50
 	freePlanTaskLimit = FreePlanTaskLimit
 
+	// planFree is the JWT plan claim for a free user — the value every plan gate
+	// in this package compares against.
+	planFree = "free"
+
 	statusDone = "done"
 	// statusMissed is a recurring occurrence whose window closed without
 	// completion. Deliberately distinct from "cancelled" (the user decided
@@ -56,7 +60,10 @@ type Service interface {
 	Update(ctx context.Context, userID, id, plan string, req UpdateTaskRequest) (TaskView, error)
 	Delete(ctx context.Context, userID, id string) error
 	SetStatus(ctx context.Context, userID, id, plan, status string) (TaskView, error)
-	Schedule(ctx context.Context, userID, id string, req ScheduleRequest) (TaskView, error)
+	Schedule(ctx context.Context, userID, id, plan string, req ScheduleRequest) (TaskView, error)
+	// ListByDateRange returns the user's tasks scheduled within an inclusive date
+	// window, in calendar-grid order and with no roll-forward applied.
+	ListByDateRange(ctx context.Context, userID, from, to string) (ListTasksResponse, error)
 	ReorderOne(ctx context.Context, userID, id string, displayOrder int) (TaskView, error)
 	Focus(ctx context.Context, userID string, p FocusParams) (ListTasksResponse, error)
 	TimeSpread(ctx context.Context, userID string, loc *time.Location) (TimeSpreadResponse, error)
@@ -179,6 +186,9 @@ func (s *service) CreateWithoutEvent(ctx context.Context, userID, projectID, pla
 	if err != nil {
 		return TaskView{}, err
 	}
+	if err := enforceTimedSchedulingPlan(plan, req.ScheduledTime); err != nil {
+		return TaskView{}, err
+	}
 
 	owned, err := s.repo.ProjectOwned(ctx, userID, projectID)
 	if err != nil {
@@ -211,7 +221,8 @@ func (s *service) CreateWithoutEvent(ctx context.Context, userID, projectID, pla
 		Energy:           req.Energy,
 		RollsOver:        rollsOver,
 		ScheduledFor:     req.ScheduledFor,
-		EstimatedMinutes: req.EstimatedMinutes,
+		ScheduledTime:    req.ScheduledTime,
+		EstimatedMinutes: clampEstimateToDayEnd(req.ScheduledTime, req.EstimatedMinutes),
 		URL:              req.URL,
 		DisplayOrder:     order,
 	}
@@ -242,11 +253,21 @@ func (s *service) update(ctx context.Context, userID, id, plan string, req Updat
 	if err := validateUpdate(&req); err != nil {
 		return TaskView{}, err
 	}
+	// Only a PATCH that actually sets a time is gated; an absent field and an
+	// explicit null both leave a free user unblocked.
+	if req.ScheduledTime.Set {
+		if err := enforceTimedSchedulingPlan(plan, req.ScheduledTime.Value); err != nil {
+			return TaskView{}, err
+		}
+	}
 
 	current, err := s.repo.GetByID(ctx, userID, id)
 	if err != nil {
 		return TaskView{}, err
 	}
+	// Clamp against the EFFECTIVE pair: either side may be untouched by this
+	// PATCH, so a new estimate must still respect an already-stored time.
+	req.EstimatedMinutes = clampUpdateEstimate(req, *current)
 
 	// Plan limit applies when a PATCH moves a task INTO active/inbox.
 	if plan == "free" && req.Status != nil &&
@@ -320,6 +341,27 @@ func (s *service) Focus(ctx context.Context, userID string, p FocusParams) (List
 	return ListTasksResponse{Items: items}, nil
 }
 
+// ListByDateRange backs the calendar grid. Deliberately NOT an extension of
+// Time Spread: Time Spread rolls a missed task forward onto today, which is
+// exactly wrong for a calendar — a month view must show a task on the day it
+// was actually scheduled for. Not Pro-gated; this is only tasks by date, and
+// the gate lives on writing a time.
+func (s *service) ListByDateRange(ctx context.Context, userID, from, to string) (ListTasksResponse, error) {
+	window, err := parseDateRange(from, to)
+	if err != nil {
+		return ListTasksResponse{}, err
+	}
+	tasks, err := s.repo.ListByDateRange(ctx, userID, window.From, window.To)
+	if err != nil {
+		return ListTasksResponse{}, err
+	}
+	items := make([]TaskView, len(tasks))
+	for i, t := range tasks {
+		items[i] = TaskToView(t)
+	}
+	return ListTasksResponse{Items: items}, nil
+}
+
 // TimeSpread buckets the user's active+inbox tasks into today/tomorrow/this-week
 // with the no-guilt roll-forward. Bucketing is pure (timespread.go); the clock
 // is injected so tests are reproducible. `loc` sets which day boundary counts as
@@ -365,12 +407,26 @@ func validateScheduledFor(scheduledFor *string) error {
 	return nil
 }
 
-// Schedule sets (or clears) the soft scheduledFor intention + rollsOver flag.
-func (s *service) Schedule(ctx context.Context, userID, id string, req ScheduleRequest) (TaskView, error) {
+// Schedule sets (or clears) the soft scheduledFor intention, the optional
+// time-of-day, and the rollsOver flag. Setting a time is Pro-gated; clearing it
+// is open on every plan.
+func (s *service) Schedule(ctx context.Context, userID, id, plan string, req ScheduleRequest) (TaskView, error) {
 	if err := validateScheduledFor(req.ScheduledFor); err != nil {
 		return TaskView{}, err
 	}
-	t, err := s.repo.UpdateSchedule(ctx, userID, id, req.ScheduledFor, req.RollsOver)
+	if err := validateScheduledTime(req.ScheduledTime); err != nil {
+		return TaskView{}, err
+	}
+	if err := enforceTimedSchedulingPlan(plan, req.ScheduledTime); err != nil {
+		return TaskView{}, err
+	}
+	// A time without a day has nowhere to land — the grid is keyed by date.
+	if req.ScheduledFor == nil && req.ScheduledTime != nil {
+		return TaskView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput,
+			"scheduledTime requires a scheduledFor date")
+	}
+
+	t, err := s.repo.UpdateSchedule(ctx, userID, id, req.ScheduledFor, req.ScheduledTime, req.RollsOver)
 	if err != nil {
 		return TaskView{}, err
 	}
@@ -453,6 +509,9 @@ func normalizeCreate(req CreateTaskRequest) (CreateTaskRequest, bool, error) {
 	if err := validateScheduledFor(req.ScheduledFor); err != nil {
 		return req, false, err
 	}
+	if err := validateScheduledTime(req.ScheduledTime); err != nil {
+		return req, false, err
+	}
 
 	rollsOver := true
 	if req.RollsOver != nil {
@@ -482,6 +541,9 @@ func validateUpdate(req *UpdateTaskRequest) error {
 		return errInvalidEnergy()
 	}
 	if err := validateScheduledFor(req.ScheduledFor.Value); err != nil {
+		return err
+	}
+	if err := validateScheduledTime(req.ScheduledTime.Value); err != nil {
 		return err
 	}
 	return validateOptional(req.Notes.Value, req.EstimatedMinutes.Value, req.URL.Value)

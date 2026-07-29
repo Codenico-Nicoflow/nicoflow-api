@@ -219,19 +219,22 @@ func (h *Handler) SetStatus(w http.ResponseWriter, r *http.Request) {
 
 // Schedule godoc
 // @Summary      Schedule a task (soft)
-// @Description  Sets the soft scheduledFor intention + rollsOver flag. scheduledFor null (or absent) unschedules. A bad date returns 400 INVALID_DATE.
+// @Description  Sets the soft scheduledFor intention, optional scheduledTime (HH:MM, Pro-only) and rollsOver flag. scheduledFor null (or absent) unschedules. A bad date returns 400 INVALID_DATE.
 // @Tags         tasks
 // @Accept       json
 // @Produce      json
 // @Param        id    path      string           true  "Task ID"
-// @Param        body  body      ScheduleRequest  true  "scheduledFor (ISO date or null) + optional rollsOver"
+// @Param        body  body      ScheduleRequest  true  "scheduledFor (ISO date or null) + optional scheduledTime + rollsOver"
 // @Security     BearerAuth
 // @Success      200  {object}  TaskEnvelope   "The updated task"
 // @Failure      400  {object}  ErrorEnvelope  "INVALID_DATE"
+// @Failure      403  {object}  ErrorEnvelope  "PLAN_LIMIT_EXCEEDED (free plan setting a time)"
 // @Failure      404  {object}  ErrorEnvelope  "TASK_NOT_FOUND"
+// @Failure      422  {object}  ErrorEnvelope  "INVALID_INPUT (malformed or non-snapped time)"
 // @Router       /tasks/{id}/schedule [patch]
 func (h *Handler) Schedule(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())
+	plan := mw.PlanFromCtx(r.Context())
 	id := chi.URLParam(r, "id")
 
 	var req ScheduleRequest
@@ -240,7 +243,7 @@ func (h *Handler) Schedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	view, err := h.svc.Schedule(r.Context(), userID, id, req)
+	view, err := h.svc.Schedule(r.Context(), userID, id, plan, req)
 	if err != nil {
 		writeAppError(w, r, err)
 		return
@@ -314,6 +317,29 @@ func (h *Handler) Focus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := h.svc.Focus(r.Context(), userID, p)
+	if err != nil {
+		writeAppError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, resp)
+}
+
+// ListByDateRange godoc
+// @Summary      List tasks in a date range (calendar)
+// @Description  Flat list of the user's tasks scheduled within an inclusive date range, ordered by (scheduledFor, scheduledTime NULLS FIRST, displayOrder). Unlike Time Spread no roll-forward is applied — a task is returned on the date it is actually scheduled for. Both bounds are required and the span is capped at 62 days.
+// @Tags         tasks
+// @Produce      json
+// @Param        scheduledFrom  query     string  true  "Inclusive start date (YYYY-MM-DD)"
+// @Param        scheduledTo    query     string  true  "Inclusive end date (YYYY-MM-DD)"
+// @Security     BearerAuth
+// @Success      200  {object}  TaskListEnvelope  "Tasks in the range"
+// @Failure      422  {object}  ErrorEnvelope     "INVALID_INPUT (missing bound, bad date, or span > 62 days)"
+// @Router       /tasks [get]
+func (h *Handler) ListByDateRange(w http.ResponseWriter, r *http.Request) {
+	userID := mw.UserIDFromCtx(r.Context())
+	q := r.URL.Query()
+
+	resp, err := h.svc.ListByDateRange(r.Context(), userID, q.Get("scheduledFrom"), q.Get("scheduledTo"))
 	if err != nil {
 		writeAppError(w, r, err)
 		return

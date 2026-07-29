@@ -23,9 +23,10 @@ type mockRepo struct {
 	countActiveInbox func(ctx context.Context, userID, projectID string) (int, error)
 	countNonTerminal func(ctx context.Context, userID, projectID string) (int, error)
 	nextDisplayOrder func(ctx context.Context, userID, projectID string) (int, error)
-	updateSchedule   func(ctx context.Context, userID, id string, scheduledFor *string, rollsOver *bool) (Task, error)
+	updateSchedule   func(ctx context.Context, userID, id string, scheduledFor, scheduledTime *string, rollsOver *bool) (Task, error)
 	repack           func(ctx context.Context, userID, id string, targetOrder int) (Task, error)
 	listActiveInbox  func(ctx context.Context, userID string) ([]Task, error)
+	listByDateRange  func(ctx context.Context, userID, from, to string) ([]Task, error)
 	existsByID       func(ctx context.Context, id string) (bool, error)
 	isOpenable       func(ctx context.Context, userID, id string) (bool, error)
 }
@@ -58,8 +59,14 @@ func (m *mockRepo) CountNonTerminalByProject(ctx context.Context, userID, projec
 func (m *mockRepo) NextDisplayOrder(ctx context.Context, userID, projectID string) (int, error) {
 	return m.nextDisplayOrder(ctx, userID, projectID)
 }
-func (m *mockRepo) UpdateSchedule(ctx context.Context, userID, id string, scheduledFor *string, rollsOver *bool) (Task, error) {
-	return m.updateSchedule(ctx, userID, id, scheduledFor, rollsOver)
+func (m *mockRepo) UpdateSchedule(ctx context.Context, userID, id string, scheduledFor, scheduledTime *string, rollsOver *bool) (Task, error) {
+	return m.updateSchedule(ctx, userID, id, scheduledFor, scheduledTime, rollsOver)
+}
+func (m *mockRepo) ListByDateRange(ctx context.Context, userID, from, to string) ([]Task, error) {
+	if m.listByDateRange == nil {
+		return nil, nil
+	}
+	return m.listByDateRange(ctx, userID, from, to)
 }
 func (m *mockRepo) Repack(ctx context.Context, userID, id string, targetOrder int) (Task, error) {
 	return m.repack(ctx, userID, id, targetOrder)
@@ -376,11 +383,11 @@ func TestService_Schedule(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := &mockRepo{
-				updateSchedule: func(_ context.Context, _, _ string, sf *string, _ *bool) (Task, error) {
-					return Task{ID: "t1", ScheduledFor: sf}, nil
+				updateSchedule: func(_ context.Context, _, _ string, sf, st *string, _ *bool) (Task, error) {
+					return Task{ID: "t1", ScheduledFor: sf, ScheduledTime: st}, nil
 				},
 			}
-			_, err := NewService(repo, nil, nil).Schedule(context.Background(), "u1", "t1", ScheduleRequest{ScheduledFor: tt.date})
+			_, err := NewService(repo, nil, nil).Schedule(context.Background(), "u1", "t1", "pro", ScheduleRequest{ScheduledFor: tt.date})
 			if tt.wantErr {
 				if ae := appErr(err); ae == nil || ae.Code != tt.wantCode {
 					t.Fatalf("want %s, got %+v", tt.wantCode, err)
