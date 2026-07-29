@@ -222,7 +222,8 @@ func main() {
 		Focus:        focus.NewHandler(focusSvc),
 		Notification: notification.NewHandler(notificationSvc),
 		Jobs: jobs.NewHandler(dueDateNotifier, overdueNotifier, dayStartNotifier, inboxNotifier, summaryNotifier, attachmentGCAdapter{svc: attachmentSvc}).
-			WithRecurrence(recurrenceSweepAdapter{m: recurrenceMaterializer}),
+			WithRecurrence(recurrenceSweepAdapter{m: recurrenceMaterializer}).
+			WithFocusStale(focusStaleAdapter{svc: focusSvc}),
 		WS: ws.NewHandler(wsHub, cfg.JWTSecret, cfg.CORSOrigins),
 	}
 
@@ -288,6 +289,25 @@ func (e taskOwnerExistence) OwnerExists(ctx context.Context, ownerType, ownerID 
 		return false, nil
 	}
 	return e.tasks.ExistsByID(ctx, ownerID)
+}
+
+// focusStaleAdapter adapts the focus service to jobs.FocusStaleSweeper,
+// translating the domain breakdown into the jobs-facing one so neither package
+// imports the other.
+type focusStaleAdapter struct {
+	svc focus.Service
+}
+
+func (a focusStaleAdapter) SweepStale(ctx context.Context, dryRun bool) (jobs.FocusSweepResult, error) {
+	res, err := a.svc.SweepStale(ctx, dryRun)
+	if err != nil {
+		return jobs.FocusSweepResult{}, err
+	}
+	return jobs.FocusSweepResult{
+		Considered: res.Considered,
+		Closed:     res.Closed,
+		DryRun:     res.DryRun,
+	}, nil
 }
 
 // recurrenceSweepAdapter adapts the recurrence materializer to jobs.RecurrenceSweep,

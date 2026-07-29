@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rs/zerolog/log"
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
 )
@@ -16,16 +17,27 @@ import (
 // single dropped heartbeat (or a slow network) never costs the user their timer.
 const StaleThreshold = 90 * time.Second
 
+// maxStalePerSweep caps one sweep run. Anything beyond it is picked up on the
+// next tick, so a backlog can never turn a single run into an unbounded job.
+const maxStalePerSweep = 500
+
 type service struct {
 	repo        Repository
 	tasks       TaskOwnershipChecker
-	broadcaster Broadcaster // nil disables emission
+	broadcaster Broadcaster      // nil disables emission
+	now         func() time.Time // injectable clock — only the sweep cutoff reads it
 }
 
-// NewService creates a focus Service. broadcaster may be nil (real-time emission
-// disabled); pass the ws adapter to light up live updates.
+// NewService creates a focus Service with a real clock. broadcaster may be nil
+// (real-time emission disabled); pass the ws adapter to light up live updates.
 func NewService(repo Repository, tasks TaskOwnershipChecker, broadcaster Broadcaster) Service {
-	return &service{repo: repo, tasks: tasks, broadcaster: broadcaster}
+	return &service{repo: repo, tasks: tasks, broadcaster: broadcaster, now: time.Now}
+}
+
+// NewServiceWithClock is like NewService but with an injected clock, so the
+// stale-sweep cutoff is deterministic in tests.
+func NewServiceWithClock(repo Repository, tasks TaskOwnershipChecker, broadcaster Broadcaster, now func() time.Time) Service {
+	return &service{repo: repo, tasks: tasks, broadcaster: broadcaster, now: now}
 }
 
 // emit fans a domain event out best-effort. A nil broadcaster is a valid no-op.
@@ -91,6 +103,41 @@ func (s *service) CloseCurrent(ctx context.Context, userID string) (SessionView,
 // Heartbeat bumps the open segment's last_seen. Deliberately silent: a heartbeat
 // carries no state change a client could act on, and broadcasting one every 30s
 // per user would be pure noise.
+// SweepStale is crash recovery: it closes segments whose client stopped
+// heartbeating and never sent a close. Each is closed at its own last_seen —
+// never the sweep's wall clock and never a fixed cap — so a stranded session
+// contributes neither phantom time nor a truncated total, whether it was
+// abandoned after 2 minutes or genuinely ran for three hours.
+func (s *service) SweepStale(ctx context.Context, dryRun bool) (SweepBreakdown, error) {
+	cutoff := s.now().Add(-StaleThreshold)
+	stale, err := s.repo.ListStaleOpen(ctx, cutoff, maxStalePerSweep)
+	if err != nil {
+		return SweepBreakdown{}, err
+	}
+
+	out := SweepBreakdown{Considered: len(stale), DryRun: dryRun}
+	if dryRun {
+		return out, nil
+	}
+
+	for _, seg := range stale {
+		// Per-item resilience: one row that fails to close must not strand the
+		// rest. CloseByID is idempotent, so the next tick retries this one.
+		closed, ok, err := s.repo.CloseByID(ctx, seg.ID)
+		if err != nil {
+			log.Error().Err(err).Str("session_id", seg.ID).Msg("focus: stale close failed")
+			continue
+		}
+		if !ok {
+			// Closed by its own client between the scan and here — not an error.
+			continue
+		}
+		out.Closed++
+		s.emit(closed.UserID, Event{Type: EventSessionEnded, Payload: ToView(closed)})
+	}
+	return out, nil
+}
+
 func (s *service) Heartbeat(ctx context.Context, userID string) error {
 	_, ok, err := s.repo.TouchCurrent(ctx, userID)
 	if err != nil {

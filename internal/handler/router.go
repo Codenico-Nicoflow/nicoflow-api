@@ -92,6 +92,7 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/summary", h.Jobs.Summary)
 	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/attachment-gc", h.Jobs.AttachmentGC)
 	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/recurrence", h.Jobs.Recurrence)
+	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/focus-stale", h.Jobs.FocusStale)
 	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/run-all", h.Jobs.RunAll)
 
 	// Auth — stricter per-endpoint IP rate limits
