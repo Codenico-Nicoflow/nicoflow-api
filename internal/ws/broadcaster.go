@@ -11,6 +11,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
+	"github.com/nicoflow/nicoflow-api/internal/domain/recurrence"
 	"github.com/nicoflow/nicoflow-api/internal/domain/task"
 )
 
@@ -43,6 +44,9 @@ var wireTypes = map[string]EventType{
 	bucket.EventDeleted:     EventBucketDeleted,
 	attachment.EventCreated: EventAttachmentCreated,
 	attachment.EventDeleted: EventAttachmentDeleted,
+	recurrence.EventCreated: EventRecurrenceCreated,
+	recurrence.EventUpdated: EventRecurrenceUpdated,
+	recurrence.EventDeleted: EventRecurrenceDeleted,
 	ai.EventSessionUpdated:  EventAISessionUpdated,
 	"notification.created":  EventNotificationCreated,
 }
@@ -145,6 +149,20 @@ func NewAttachmentBroadcaster(hub *Hub) *AttachmentBroadcaster {
 }
 
 func (b *AttachmentBroadcaster) Broadcast(userID string, ev attachment.Event) {
+	broadcast(b.hub, b.now, userID, ev.Type, ev.Payload)
+}
+
+// RecurrenceBroadcaster adapts the Hub to recurrence.Broadcaster.
+type RecurrenceBroadcaster struct {
+	hub *Hub
+	now func() time.Time
+}
+
+func NewRecurrenceBroadcaster(hub *Hub) *RecurrenceBroadcaster {
+	return &RecurrenceBroadcaster{hub: hub, now: time.Now}
+}
+
+func (b *RecurrenceBroadcaster) Broadcast(userID string, ev recurrence.Event) {
 	broadcast(b.hub, b.now, userID, ev.Type, ev.Payload)
 }
 

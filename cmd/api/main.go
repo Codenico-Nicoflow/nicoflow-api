@@ -25,6 +25,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
+	"github.com/nicoflow/nicoflow-api/internal/domain/recurrence"
 	"github.com/nicoflow/nicoflow-api/internal/domain/search"
 	"github.com/nicoflow/nicoflow-api/internal/domain/task"
 	"github.com/nicoflow/nicoflow-api/internal/handler"
@@ -176,6 +177,11 @@ func main() {
 	}
 	aiSvc := ai.NewService(ai.NewRepository(pool), aiClient, cfg.AIModel, ws.NewAIBroadcaster(wsHub))
 
+	// Task recurrence (E-050 / NIC-1772). Rule CRUD; creating a rule materializes
+	// instance #1 in the same transaction. FREE on every plan for reads; the
+	// 3-rule cap on free is enforced in the service.
+	recurrenceSvc := recurrence.NewService(recurrence.NewRepository(pool), ws.NewRecurrenceBroadcaster(wsHub))
+
 	// Sweep jobs — hourly, invoked by Render Cron Jobs via /internal/jobs/*.
 	jobsRepo := jobs.NewRepository(pool)
 	dueDateNotifier := jobs.NewDueDateNotifier(jobsRepo, notificationSvc, cfg.SMTPDsn)
@@ -194,6 +200,7 @@ func main() {
 		Billing:      billing.NewHandler(nil),
 		Search:       search.NewHandler(searchSvc),
 		Attachment:   attachment.NewHandler(attachmentSvc),
+		Recurrence:   recurrence.NewHandler(recurrenceSvc),
 		Notification: notification.NewHandler(notificationSvc),
 		Jobs:         jobs.NewHandler(dueDateNotifier, overdueNotifier, dayStartNotifier, inboxNotifier, summaryNotifier, attachmentGCAdapter{svc: attachmentSvc}),
 		WS:           ws.NewHandler(wsHub, cfg.JWTSecret, cfg.CORSOrigins),

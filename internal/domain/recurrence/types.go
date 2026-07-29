@@ -1,0 +1,226 @@
+package recurrence
+
+import (
+	"context"
+	"time"
+
+	"github.com/nicoflow/nicoflow-api/pkg/optional"
+)
+
+// freePlanRuleLimit is the number of recurrence rules a free user may own
+// (SPEC §5). Enforced in the service via COUNT(*) before insert; the plan comes
+// from the JWT claim, never a DB lookup.
+const freePlanRuleLimit = 3
+
+const (
+	maxTitleLen = 255
+	maxNotesLen = 2000
+)
+
+// Domain event types emitted on mutation. Equal to the wire names by convention;
+// the ws adapter maps them through an explicit table (never a cast).
+const (
+	EventCreated = "recurrence.created"
+	EventUpdated = "recurrence.updated"
+	EventDeleted = "recurrence.deleted"
+)
+
+var (
+	allowedFreqs      = map[string]bool{FreqDaily: true, FreqWeekly: true, FreqMonthly: true, FreqYearly: true}
+	allowedPriorities = map[string]bool{"low": true, "medium": true, "high": true}
+	allowedEnergies   = map[string]bool{"low": true, "medium": true, "deep": true}
+)
+
+// Rule is the internal domain model. StartDate/EndDate/NextOccurrence are dates,
+// not instants — "every Sunday" is Sunday in every timezone.
+type Rule struct {
+	ID               string
+	UserID           string
+	ProjectID        string
+	Title            string
+	Notes            *string
+	Priority         string
+	Energy           string
+	EstimatedMinutes *int
+	Freq             string
+	Interval         int
+	ByWeekday        []int
+	ByMonthday       *int
+	StartDate        time.Time
+	EndDate          *time.Time
+	NextOccurrence   *time.Time
+	Paused           bool
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+// RuleView is the JSON response shape. All IDs are strings; dates are YYYY-MM-DD.
+type RuleView struct {
+	ID               string  `json:"id"`
+	ProjectID        string  `json:"projectId"`
+	Title            string  `json:"title"`
+	Notes            *string `json:"notes"`
+	Priority         string  `json:"priority"`
+	Energy           string  `json:"energy"`
+	EstimatedMinutes *int    `json:"estimatedMinutes"`
+	Freq             string  `json:"freq"`
+	Interval         int     `json:"interval"`
+	ByWeekday        []int   `json:"byWeekday"`
+	ByMonthday       *int    `json:"byMonthday"`
+	StartDate        string  `json:"startDate"`
+	EndDate          *string `json:"endDate"`
+	NextOccurrence   *string `json:"nextOccurrence"`
+	Paused           bool    `json:"paused"`
+	CreatedAt        string  `json:"createdAt"`
+	UpdatedAt        string  `json:"updatedAt"`
+}
+
+// ToView maps the domain model to its JSON shape.
+func ToView(r Rule) RuleView {
+	v := RuleView{
+		ID: r.ID, ProjectID: r.ProjectID, Title: r.Title, Notes: r.Notes,
+		Priority: r.Priority, Energy: r.Energy, EstimatedMinutes: r.EstimatedMinutes,
+		Freq: r.Freq, Interval: r.Interval, ByMonthday: r.ByMonthday,
+		StartDate: FormatDate(r.StartDate), Paused: r.Paused,
+		CreatedAt: r.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt: r.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+	// Always a JSON array, never null — the client renders it directly.
+	v.ByWeekday = r.ByWeekday
+	if v.ByWeekday == nil {
+		v.ByWeekday = []int{}
+	}
+	if r.EndDate != nil {
+		s := FormatDate(*r.EndDate)
+		v.EndDate = &s
+	}
+	if r.NextOccurrence != nil {
+		s := FormatDate(*r.NextOccurrence)
+		v.NextOccurrence = &s
+	}
+	return v
+}
+
+// ListRulesResponse is the list response shape.
+type ListRulesResponse struct {
+	Items []RuleView `json:"items"`
+}
+
+// Ref is the recurrence.deleted payload — just enough to drop the row client-side.
+type Ref struct {
+	ID string `json:"id"`
+}
+
+// CreateRuleRequest is the body for POST /projects/:projectId/recurrence-rules.
+type CreateRuleRequest struct {
+	Title            string  `json:"title"`
+	Notes            *string `json:"notes"`
+	Priority         string  `json:"priority"`
+	Energy           string  `json:"energy"`
+	EstimatedMinutes *int    `json:"estimatedMinutes"`
+	Freq             string  `json:"freq"`
+	Interval         int     `json:"interval"`
+	ByWeekday        []int   `json:"byWeekday"`
+	ByMonthday       *int    `json:"byMonthday"`
+	StartDate        string  `json:"startDate"`
+	EndDate          *string `json:"endDate"`
+}
+
+// UpdateRuleRequest is the body for PATCH /recurrence-rules/:id — all optional.
+// Schedule fields use optional.Field so "absent" and "explicit null" differ:
+// clearing endDate un-exhausts a series, which absence must not do.
+type UpdateRuleRequest struct {
+	Title            *string                `json:"title"`
+	Notes            optional.Field[string] `json:"notes"`
+	Priority         *string                `json:"priority"`
+	Energy           *string                `json:"energy"`
+	EstimatedMinutes optional.Field[int]    `json:"estimatedMinutes"`
+	Freq             *string                `json:"freq"`
+	Interval         *int                   `json:"interval"`
+	ByWeekday        *[]int                 `json:"byWeekday"`
+	ByMonthday       optional.Field[int]    `json:"byMonthday"`
+	StartDate        *string                `json:"startDate"`
+	EndDate          optional.Field[string] `json:"endDate"`
+}
+
+// PauseRequest is the body for PATCH /recurrence-rules/:id/pause.
+type PauseRequest struct {
+	Paused bool `json:"paused"`
+}
+
+// Occurrence is the task row a rule materializes. The recurrence domain writes it
+// directly (in the rule's transaction) rather than calling the task service, so
+// instance #1 is atomic with rule creation and the two packages stay decoupled.
+type Occurrence struct {
+	ID               string
+	UserID           string
+	ProjectID        string
+	RuleID           string
+	Title            string
+	Notes            *string
+	Priority         string
+	Energy           string
+	EstimatedMinutes *int
+	OccurrenceDate   time.Time
+}
+
+// Broadcaster receives a domain Event for real-time fan-out. Fire-and-forget:
+// implementations must never block or fail the mutation. A nil Broadcaster is a
+// valid no-op seam.
+type Broadcaster interface {
+	Broadcast(userID string, ev Event)
+}
+
+// Event is the domain-level real-time event. The ws adapter maps Type onto the
+// wire EventType.
+type Event struct {
+	Type    string
+	Payload any
+}
+
+// Service is the recurrence domain's business-logic contract consumed by the
+// handler.
+type Service interface {
+	Create(ctx context.Context, userID, projectID, plan string, req CreateRuleRequest) (RuleView, error)
+	List(ctx context.Context, userID string, projectID *string) (ListRulesResponse, error)
+	Get(ctx context.Context, userID, id string) (RuleView, error)
+	Update(ctx context.Context, userID, id string, req UpdateRuleRequest) (RuleView, error)
+	SetPaused(ctx context.Context, userID, id string, paused bool) (RuleView, error)
+	Delete(ctx context.Context, userID, id string) error
+}
+
+// Repository is the data-access contract. Every method is row-scoped by user_id.
+// Defined here (the consumer package) per project layering; the pg implementation
+// lives in repository.go.
+type Repository interface {
+	// CreateWithOccurrence inserts the rule and materializes instance #1 in one
+	// transaction, so a rule can never exist without its first task. The
+	// occurrence's display_order is resolved inside the transaction.
+	CreateWithOccurrence(ctx context.Context, r Rule, occ Occurrence) (Rule, error)
+
+	// List returns the user's rules, optionally filtered to one project.
+	List(ctx context.Context, userID string, projectID *string) ([]Rule, error)
+
+	// GetByID returns one rule scoped to the user, or a not-found error. A rule
+	// belonging to another user is indistinguishable from a missing one.
+	GetByID(ctx context.Context, userID, id string) (Rule, error)
+
+	// Update writes the changed rule and re-stamps the single live (un-done)
+	// occurrence from the new template, in one transaction. Past occurrences are
+	// left untouched — history is not rewritten.
+	Update(ctx context.Context, r Rule) (Rule, error)
+
+	// SetPaused flips the paused flag, scoped to the user.
+	SetPaused(ctx context.Context, userID, id string, paused bool) (Rule, error)
+
+	// Delete ends the series: the pending (un-done) occurrence is removed and the
+	// rule dropped. Past occurrences survive with a NULL recurrence_rule_id via
+	// the FK's ON DELETE SET NULL.
+	Delete(ctx context.Context, userID, id string) error
+
+	// CountByUser is the plan-limit count.
+	CountByUser(ctx context.Context, userID string) (int, error)
+
+	// ProjectOwned reports whether the project exists and belongs to the user.
+	ProjectOwned(ctx context.Context, userID, projectID string) (bool, error)
+}

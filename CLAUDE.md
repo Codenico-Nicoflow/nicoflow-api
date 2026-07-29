@@ -110,6 +110,7 @@ Dependency direction: Handler → Service interface → Repository interface. In
 016 create_biometric_credentials     034 notification_prefs_families
 017 users_login_lockout              035 notification_prefs_reminder_hours
 018 users_email_partial_unique       036 create_file_attachments
+                                     037 create_recurrence_rules
 ```
 (031–035 are the notification stack: notifications table → preferences → Web Push subscriptions → per-family toggles → reminder-hours. 036 is the E-024 file-attachments table: polymorphic owner `{type,id}` (no FK), `user_id` cascade, unique `s3_key`; quota enforced by the repo's atomic guarded insert — NIC-1638.)
 
@@ -204,6 +205,7 @@ Client IP is resolved through `TRUSTED_PROXY` / `TrustedProxyCIDRs`. Exceeded �
 | Projects     | 5 total   | Unlimited | `PLAN_LIMIT_EXCEEDED` |
 | AI requests  | 5 lifetime | 500/month | `AI_LIMIT_REACHED`    |
 | Attachments  | ❌ (Pro-only write) | 20/owner · 100 MB/user | `PLAN_LIMIT_EXCEEDED` · `STORAGE_LIMIT_EXCEEDED` |
+| Recurrence rules | 3     | Unlimited | `PLAN_LIMIT_EXCEEDED` |
 | NLP parse    | ❌        | ✅        | `PLAN_LIMIT_EXCEEDED` |
 
 Check via `COUNT(*)` before insert. Plan is read from `ctx` Claims — no DB call. Downgrade is graceful (excess resources read-only, never deleted). Canonical numbers: `SPEC.md` §5.
