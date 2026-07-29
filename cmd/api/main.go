@@ -198,7 +198,11 @@ func main() {
 	// Focus timer (E-049 / NIC-1710). Server-authoritative segments with a
 	// one-open-per-user invariant; FREE on every plan. taskRepo satisfies the
 	// narrow TaskOwnershipChecker seam, so focus never imports the task package.
-	focusSvc := focus.NewService(focus.NewRepository(pool), taskRepo, ws.NewFocusBroadcaster(wsHub))
+	focusRepo := focus.NewRepository(pool)
+	focusSvc := focus.NewService(focusRepo, taskRepo, ws.NewFocusBroadcaster(wsHub))
+	// Wire focus totals back into the task service so Focus + GetTask responses
+	// carry totalFocusSeconds (NIC-1712); the reverse seam keeps task ↛ focus.
+	taskSvc = taskSvc.WithFocusTotals(focusRepo)
 
 	// Sweep jobs — hourly, invoked by Render Cron Jobs via /internal/jobs/*.
 	jobsRepo := jobs.NewRepository(pool)

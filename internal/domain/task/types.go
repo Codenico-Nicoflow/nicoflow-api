@@ -50,6 +50,10 @@ type TaskView struct {
 	UpdatedAt        string  `json:"updatedAt"`
 	RecurrenceRuleID *string `json:"recurrenceRuleId"`
 	OccurrenceDate   *string `json:"occurrenceDate"`
+	// TotalFocusSeconds is the SUM of the task's closed focus segments (E-049).
+	// Enriched only on Focus + GetTask; 0 on the project task-list, where a
+	// per-row SUM would be pure cost for a value the list never renders.
+	TotalFocusSeconds int64 `json:"totalFocusSeconds"`
 }
 
 // ListTasksResponse is the list response for tasks within a project.
