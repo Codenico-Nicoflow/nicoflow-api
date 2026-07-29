@@ -66,6 +66,9 @@ type Service interface {
 	// WithMaterializer injects the recurrence materializer invoked best-effort
 	// when a recurring occurrence is completed. Wired once in main.go.
 	WithMaterializer(m RecurrenceMaterializer) Service
+	// WithFocusTotals injects the focus-totals reader that enriches Focus +
+	// GetTask responses with totalFocusSeconds. Wired once in main.go.
+	WithFocusTotals(f FocusTotals) Service
 }
 
 type service struct {
@@ -76,6 +79,7 @@ type service struct {
 	cleaner     AttachmentCleaner // best-effort attachment cleanup on delete; nil disables
 	// best-effort recurrence successor on completion; nil disables (cron still catches it)
 	materializer RecurrenceMaterializer
+	focusTotals  FocusTotals // enriches Focus/GetTask with totalFocusSeconds; nil = zero-default
 }
 
 // WithCleaner injects the attachment cleaner used on task delete. Kept as a
@@ -91,6 +95,13 @@ func (s *service) WithCleaner(c AttachmentCleaner) Service {
 // services reference each other, so the concretes only meet in main.go.
 func (s *service) WithMaterializer(m RecurrenceMaterializer) Service {
 	s.materializer = m
+	return s
+}
+
+// WithFocusTotals injects the focus-totals reader, same post-construction
+// pattern as above: task and focus meet only in main.go wiring.
+func (s *service) WithFocusTotals(f FocusTotals) Service {
+	s.focusTotals = f
 	return s
 }
 
@@ -143,7 +154,15 @@ func (s *service) Get(ctx context.Context, userID, id string) (TaskView, error) 
 	if err != nil {
 		return TaskView{}, err
 	}
-	return TaskToView(*t), nil
+	view := TaskToView(*t)
+	if s.focusTotals != nil {
+		total, err := s.focusTotals.SumClosedSecondsByTask(ctx, userID, id)
+		if err != nil {
+			return TaskView{}, fmt.Errorf("task focus total: %w", err)
+		}
+		view.TotalFocusSeconds = total
+	}
+	return view, nil
 }
 
 func (s *service) Create(ctx context.Context, userID, projectID, plan string, req CreateTaskRequest) (TaskView, error) {
@@ -294,6 +313,9 @@ func (s *service) Focus(ctx context.Context, userID string, p FocusParams) (List
 	items := make([]TaskView, len(ranked))
 	for i, t := range ranked {
 		items[i] = TaskToView(t)
+	}
+	if err := s.enrichFocusTotals(ctx, userID, items); err != nil {
+		return ListTasksResponse{}, err
 	}
 	return ListTasksResponse{Items: items}, nil
 }

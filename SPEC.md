@@ -680,8 +680,11 @@ Delete a project and all its tasks.
 >   completedAt?: string | null;                  // set server-side when status→done
 >   createdAt: string;                            // RFC3339
 >   updatedAt: string;                            // RFC3339
+>   totalFocusSeconds: number;                    // SUM of closed focus segments (E-049); always present
 > }
 > ```
+>
+> **`totalFocusSeconds`** is derived on read from `focus_sessions` (never cached) and **enriched only on `GET /v1/tasks/:id` (scalar) and `GET /v1/focus` (one batch query)**. On the project task-list it is always `0` — the list never renders it, and a per-row SUM would be pure cost. Zero-default, never null/omitted.
 >
 > **⚠️ `scheduledFor` is the task's only date.** It is a bare ISO **date string** `YYYY-MM-DD` (a soft, roll-forward intention) — **not** a timestamp and **not** an enum like `today|tomorrow|this_week`. Tasks have **no** hard `dueDate` (that field was removed; a hard deadline lives only on **projects**). The today/tomorrow/thisWeek grouping is *computed* server-side by `GET /v1/time-spread` (§3.7) from `scheduledFor` + `rollsOver`; it is never a stored value. See §3.7 for the bucketing rules.
 
@@ -722,7 +725,7 @@ Retrieve a single task.
 
 - **Auth required:** Yes
 
-**Response — 200 OK** — `ITask`
+**Response — 200 OK** — `ITask` (with `totalFocusSeconds` enriched — the SUM of the task's closed focus segments, `0` when none)
 
 **Errors:** `TASK_NOT_FOUND` (404 — cross-user access returns 404, no existence leak)
 
@@ -1088,7 +1091,7 @@ These two read-only endpoints derive their lists from the user's `active`+`inbox
 
 Ranking (deterministic, Free baseline) blends: energy match, time-budget fit (over-budget excluded), `scheduledFor` proximity + escalation (a past-and-rolling-over schedule is the loudest signal, then today, then soon), and a small priority tiebreak. Ties break by `id`.
 
-**Response — 200 OK** — `{ "items": ITask[] }`
+**Response — 200 OK** — `{ "items": ITask[] }` (each item's `totalFocusSeconds` is enriched via one batch SUM over closed focus segments; `0` when a task has none)
 
 **Errors:** `INVALID_INPUT` (400 — non-integer `available`/`limit`, or bad `energy`)
 
