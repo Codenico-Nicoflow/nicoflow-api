@@ -72,6 +72,10 @@ func (r *pgRepository) SearchTasks(ctx context.Context, userID, term string, lim
 		LEFT JOIN projects p ON p.id = t.project_id
 		WHERE t.user_id = $1
 		  AND t.search_vector @@ to_tsquery('simple', $2)
+		  -- Terminal recurrence occurrences stay out of search (E-050): years of
+		  -- history would drown the live results. Reachable from the rule detail
+		  -- view instead. One-off done tasks are unaffected.
+		  AND (t.recurrence_rule_id IS NULL OR t.status NOT IN ('done', 'missed'))
 		ORDER BY ts_rank(t.search_vector, to_tsquery('simple', $2)) DESC, t.created_at DESC
 		LIMIT $3`
 

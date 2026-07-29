@@ -16,9 +16,11 @@ type fakeRepo struct {
 	count        int
 	projectOwned bool
 
-	createdOcc Occurrence
-	deletedID  string
-	createErr  error
+	createdOcc   Occurrence
+	deletedID    string
+	createErr    error
+	statusCounts map[string]int
+	statuses     []string
 }
 
 func newFakeRepo() *fakeRepo {
@@ -79,6 +81,24 @@ func (f *fakeRepo) Delete(_ context.Context, userID, id string) error {
 }
 
 func (f *fakeRepo) CountByUser(context.Context, string) (int, error) { return f.count, nil }
+
+func (f *fakeRepo) ListDue(context.Context) ([]DueRule, error) { return nil, nil }
+
+func (f *fakeRepo) GetForMaterialize(ctx context.Context, userID, ruleID string) (Rule, error) {
+	return f.GetByID(ctx, userID, ruleID)
+}
+
+func (f *fakeRepo) Materialize(_ context.Context, _ Rule, occ Occurrence, _ int) (MaterializeResult, error) {
+	return MaterializeResult{Created: &occ}, nil
+}
+
+func (f *fakeRepo) CountOccurrencesByStatus(context.Context, string, string) (map[string]int, error) {
+	return f.statusCounts, nil
+}
+
+func (f *fakeRepo) ListOccurrenceStatuses(context.Context, string, string) ([]string, error) {
+	return f.statuses, nil
+}
 func (f *fakeRepo) ProjectOwned(context.Context, string, string) (bool, error) {
 	return f.projectOwned, nil
 }

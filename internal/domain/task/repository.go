@@ -46,15 +46,17 @@ type pgRepo struct{ db *pgxpool.Pool }
 // NewRepository creates a new postgres-backed task repository.
 func NewRepository(db *pgxpool.Pool) Repository { return &pgRepo{db: db} }
 
+// occurrence_date is a DATE but travels the wire as YYYY-MM-DD, matching
+// scheduled_for — cast in the projection so it scans straight into a *string.
 const taskSelectCols = ` id, user_id, project_id, title, notes, status, priority, energy,
 	rolls_over, scheduled_for, estimated_minutes, url, display_order,
-	completed_at, created_at, updated_at `
+	completed_at, created_at, updated_at, recurrence_rule_id, occurrence_date::text `
 
 func scanTask(row pgx.Row, t *Task) error {
 	return row.Scan(
 		&t.ID, &t.UserID, &t.ProjectID, &t.Title, &t.Notes, &t.Status, &t.Priority, &t.Energy,
 		&t.RollsOver, &t.ScheduledFor, &t.EstimatedMinutes, &t.URL, &t.DisplayOrder,
-		&t.CompletedAt, &t.CreatedAt, &t.UpdatedAt,
+		&t.CompletedAt, &t.CreatedAt, &t.UpdatedAt, &t.RecurrenceRuleID, &t.OccurrenceDate,
 	)
 }
 

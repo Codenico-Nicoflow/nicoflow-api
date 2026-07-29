@@ -14,6 +14,7 @@ type TimeSpreadResponse struct {
 // roll-forward. Pure: `now` is injected, never read here.
 //
 // Placement, first match wins:
+//   - a recurring occurrence past its date → no bucket (see placeTask)
 //   - a scheduledFor for today, OR a past scheduledFor that rollsOver → today
 //   - scheduledFor tomorrow → tomorrow
 //   - scheduledFor within the rest of this week (≤ 6 days out) → thisWeek
@@ -62,6 +63,13 @@ func placeTask(t Task, loc *time.Location, today, tomorrow, weekEnd time.Time) b
 	schedDay := dayStart(sched)
 	switch {
 	case schedDay.Before(today):
+		// A recurring occurrence is an appointment with a window, not a debt that
+		// follows you: once its day passes it leaves Today regardless of
+		// rollsOver, which is meaningless on this path. It stays completable from
+		// the project view and search until the sweep reaps it to `missed`.
+		if t.RecurrenceRuleID != nil {
+			return bucketNone
+		}
 		if t.RollsOver {
 			return bucketToday // carried over, no guilt
 		}

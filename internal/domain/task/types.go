@@ -25,6 +25,10 @@ type Task struct {
 	CompletedAt      *time.Time
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+	// RecurrenceRuleID / OccurrenceDate are set only on materialized recurring
+	// occurrences (E-050). Both nil on an ordinary task.
+	RecurrenceRuleID *string
+	OccurrenceDate   *string
 }
 
 // TaskView is the JSON response shape (ITask) for a single task.
@@ -44,6 +48,8 @@ type TaskView struct {
 	CompletedAt      *string `json:"completedAt"`
 	CreatedAt        string  `json:"createdAt"`
 	UpdatedAt        string  `json:"updatedAt"`
+	RecurrenceRuleID *string `json:"recurrenceRuleId"`
+	OccurrenceDate   *string `json:"occurrenceDate"`
 }
 
 // ListTasksResponse is the list response for tasks within a project.
@@ -125,6 +131,8 @@ func TaskToView(t Task) TaskView {
 		DisplayOrder:     t.DisplayOrder,
 		CreatedAt:        t.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:        t.UpdatedAt.UTC().Format(time.RFC3339),
+		RecurrenceRuleID: t.RecurrenceRuleID,
+		OccurrenceDate:   t.OccurrenceDate,
 	}
 	if t.CompletedAt != nil {
 		s := t.CompletedAt.UTC().Format(time.RFC3339)

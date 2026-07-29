@@ -26,6 +26,26 @@ type GCSummary struct {
 	RowsDeleted    int `json:"rowsDeleted"`
 }
 
+// RecurrenceSweep materializes due recurrence occurrences (E-050). Defined here
+// (the consumer) so jobs never imports the recurrence domain; the concrete is the
+// recurrence materializer, injected at wire-up. Nil skips the step.
+type RecurrenceSweep interface {
+	Run(ctx context.Context, dryRun bool) (*RecurrenceResult, error)
+}
+
+// RecurrenceResult mirrors recurrence.SweepResult. A run that considered due
+// rules but materialized nothing is the signal a silent `generated:0` used to
+// hide, so every counter is reported.
+type RecurrenceResult struct {
+	Considered       int `json:"considered"`
+	Materialized     int `json:"materialized"`
+	Reaped           int `json:"reaped"`
+	SkippedPlanLimit int `json:"skippedPlanLimit"`
+	SkippedExisting  int `json:"skippedExisting"`
+	SkippedNotDue    int `json:"skippedNotDue"`
+	SkippedBadZone   int `json:"skippedBadTimezone"`
+}
+
 // Handler exposes the internal job endpoints. These sit outside the public /v1
 // contract and are guarded by the InternalToken middleware, not JWT.
 type Handler struct {
@@ -35,6 +55,7 @@ type Handler struct {
 	inboxNotifier    *InboxNotifier
 	summaryNotifier  *SummaryNotifier
 	attachmentGC     AttachmentGC
+	recurrence       RecurrenceSweep
 }
 
 // NewHandler builds the jobs Handler. attachmentGC may be nil (attachment
@@ -48,6 +69,31 @@ func NewHandler(dueNotifier *DueDateNotifier, overdueNotifier *OverdueNotifier, 
 		summaryNotifier:  summaryNotifier,
 		attachmentGC:     attachmentGC,
 	}
+}
+
+// WithRecurrence injects the recurrence sweep and returns the handler for
+// chaining. Post-construction so the existing NewHandler callers need no change;
+// wired once in main.go. Nil leaves the step out of run-all.
+func (h *Handler) WithRecurrence(s RecurrenceSweep) *Handler {
+	h.recurrence = s
+	return h
+}
+
+// Recurrence runs one recurrence materialization sweep directly (ops/debug); the
+// hourly cron reaches it through run-all. Idempotent — the partial unique index
+// on (rule, occurrence_date) means a re-run within the same day creates nothing.
+func (h *Handler) Recurrence(w http.ResponseWriter, r *http.Request) {
+	if h.recurrence == nil {
+		respond.JSON(w, http.StatusOK, RecurrenceResult{})
+		return
+	}
+	res, err := h.recurrence.Run(r.Context(), r.URL.Query().Get("dryRun") == "true")
+	if err != nil {
+		log.Error().Err(err).Str("request_id", mw.GetRequestID(r.Context())).Msg("recurrence sweep failed")
+		respond.Error(w, http.StatusInternalServerError, apperror.ErrInternalServerError, "sweep failed")
+		return
+	}
+	respond.JSON(w, http.StatusOK, res)
 }
 
 // runFunc is a sweep's Run method: it takes dryRun and returns a breakdown.
@@ -125,6 +171,7 @@ func (h *Handler) AttachmentGC(w http.ResponseWriter, r *http.Request) {
 type RunAllResult struct {
 	Sweeps       map[string]*SweepBreakdown `json:"sweeps"`
 	AttachmentGC *GCSummary                 `json:"attachmentGc,omitempty"`
+	Recurrence   *RecurrenceResult          `json:"recurrence,omitempty"`
 }
 
 // RunAll runs every sweep in sequence and returns a combined result. The single
@@ -156,6 +203,18 @@ func (h *Handler) RunAll(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result.Sweeps[s.name] = breakdown
+	}
+
+	// Recurrence runs before the GC and honours dryRun (it computes the breakdown
+	// without writing). A nil sweep is left out of the payload.
+	if h.recurrence != nil {
+		rec, err := h.recurrence.Run(r.Context(), dryRun)
+		if err != nil {
+			log.Error().Err(err).Str("request_id", mw.GetRequestID(r.Context())).Msg("recurrence sweep failed")
+			respond.Error(w, http.StatusInternalServerError, apperror.ErrInternalServerError, "sweep failed")
+			return
+		}
+		result.Recurrence = rec
 	}
 
 	// GC mutates the object store, so it's skipped under dryRun. A nil GC (feature

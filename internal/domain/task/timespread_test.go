@@ -75,3 +75,72 @@ func TestBucketTimeSpread_EmptyBucketsNonNil(t *testing.T) {
 		t.Error("buckets should serialize as [] not null")
 	}
 }
+
+// recurringTask is a materialized occurrence: it carries a rule reference, so it
+// takes the recurrence branch in placeTask.
+func recurringTask(id string, dayOffset int, rollsOver bool) Task {
+	t := schedTask(id, dayOffset, rollsOver)
+	ruleID := "rule-1"
+	t.RecurrenceRuleID = &ruleID
+	occ := tsNow.AddDate(0, 0, dayOffset).Format(scheduledForLayout)
+	t.OccurrenceDate = &occ
+	return t
+}
+
+// A recurring occurrence is an appointment with a window: on its day it sits in
+// Today, and once the day passes it leaves every bucket regardless of rollsOver.
+func TestBucketTimeSpread_RecurringOccurrencePlacement(t *testing.T) {
+	tests := []struct {
+		name      string
+		dayOffset int
+		rollsOver bool
+		wantToday bool
+	}{
+		{"on its occurrence day", 0, false, true},
+		{"on its day, rollsOver set", 0, true, true},
+		{"past its day does not roll", -2, true, false},
+		{"past its day, rollsOver false", -2, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := bucketTimeSpread([]Task{recurringTask("occ", tt.dayOffset, tt.rollsOver)}, tsNow)
+			if inBucket(got.Today, "occ") != tt.wantToday {
+				t.Errorf("in today = %v, want %v", inBucket(got.Today, "occ"), tt.wantToday)
+			}
+			if !tt.wantToday && (inBucket(got.Tomorrow, "occ") || inBucket(got.ThisWeek, "occ")) {
+				t.Error("a lapsed occurrence must not appear in any bucket")
+			}
+		})
+	}
+}
+
+// A recurring occurrence scheduled ahead still buckets normally — the recurrence
+// branch only changes the past-due case.
+func TestBucketTimeSpread_RecurringFutureBucketsNormally(t *testing.T) {
+	got := bucketTimeSpread([]Task{
+		recurringTask("occ-tomorrow", 1, false),
+		recurringTask("occ-thisweek", 4, false),
+	}, tsNow)
+
+	if !inBucket(got.Tomorrow, "occ-tomorrow") {
+		t.Error("occ-tomorrow should be in tomorrow")
+	}
+	if !inBucket(got.ThisWeek, "occ-thisweek") {
+		t.Error("occ-thisweek should be in thisWeek")
+	}
+}
+
+// The recurrence branch must not disturb ordinary tasks' roll-forward.
+func TestBucketTimeSpread_NonRecurringRollForwardUnchanged(t *testing.T) {
+	got := bucketTimeSpread([]Task{
+		schedTask("rolls", -3, true),
+		schedTask("drops", -3, false),
+	}, tsNow)
+
+	if !inBucket(got.Today, "rolls") {
+		t.Error("a past rollsOver task must still carry forward to today")
+	}
+	if inBucket(got.Today, "drops") {
+		t.Error("a past non-rolling task must still drop off")
+	}
+}

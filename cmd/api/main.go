@@ -180,7 +180,19 @@ func main() {
 	// Task recurrence (E-050 / NIC-1772). Rule CRUD; creating a rule materializes
 	// instance #1 in the same transaction. FREE on every plan for reads; the
 	// 3-rule cap on free is enforced in the service.
-	recurrenceSvc := recurrence.NewService(recurrence.NewRepository(pool), ws.NewRecurrenceBroadcaster(wsHub))
+	recurrenceRepo := recurrence.NewRepository(pool)
+	recurrenceSvc := recurrence.NewService(recurrenceRepo, ws.NewRecurrenceBroadcaster(wsHub))
+
+	// The materializer (E-050 / NIC-1773) drives both triggers: the hourly cron
+	// sweep via run-all, and the synchronous successor on completion. It enforces
+	// the same per-project active-task ceiling as the task service.
+	recurrenceMaterializer := recurrence.NewMaterializer(
+		recurrenceRepo, ws.NewRecurrenceBroadcaster(wsHub), task.FreePlanTaskLimit,
+	)
+	// Wire the synchronous trigger back into the task service so completing a
+	// recurring occurrence spawns its successor in the same request. Post-
+	// construction because the two reference each other.
+	taskSvc = taskSvc.WithMaterializer(recurrenceMaterializer)
 
 	// Sweep jobs — hourly, invoked by Render Cron Jobs via /internal/jobs/*.
 	jobsRepo := jobs.NewRepository(pool)
@@ -202,8 +214,9 @@ func main() {
 		Attachment:   attachment.NewHandler(attachmentSvc),
 		Recurrence:   recurrence.NewHandler(recurrenceSvc),
 		Notification: notification.NewHandler(notificationSvc),
-		Jobs:         jobs.NewHandler(dueDateNotifier, overdueNotifier, dayStartNotifier, inboxNotifier, summaryNotifier, attachmentGCAdapter{svc: attachmentSvc}),
-		WS:           ws.NewHandler(wsHub, cfg.JWTSecret, cfg.CORSOrigins),
+		Jobs: jobs.NewHandler(dueDateNotifier, overdueNotifier, dayStartNotifier, inboxNotifier, summaryNotifier, attachmentGCAdapter{svc: attachmentSvc}).
+			WithRecurrence(recurrenceSweepAdapter{m: recurrenceMaterializer}),
+		WS: ws.NewHandler(wsHub, cfg.JWTSecret, cfg.CORSOrigins),
 	}
 
 	srv := &http.Server{
@@ -268,6 +281,29 @@ func (e taskOwnerExistence) OwnerExists(ctx context.Context, ownerType, ownerID 
 		return false, nil
 	}
 	return e.tasks.ExistsByID(ctx, ownerID)
+}
+
+// recurrenceSweepAdapter adapts the recurrence materializer to jobs.RecurrenceSweep,
+// translating the domain result into the jobs-facing one so neither package
+// imports the other.
+type recurrenceSweepAdapter struct {
+	m *recurrence.Materializer
+}
+
+func (a recurrenceSweepAdapter) Run(ctx context.Context, dryRun bool) (*jobs.RecurrenceResult, error) {
+	res, err := a.m.Run(ctx, dryRun)
+	if err != nil {
+		return nil, err
+	}
+	return &jobs.RecurrenceResult{
+		Considered:       res.Considered,
+		Materialized:     res.Materialized,
+		Reaped:           res.Reaped,
+		SkippedPlanLimit: res.SkippedPlanLimit,
+		SkippedExisting:  res.SkippedExisting,
+		SkippedNotDue:    res.SkippedNotDue,
+		SkippedBadZone:   res.SkippedBadZone,
+	}, nil
 }
 
 // attachmentGCAdapter adapts the attachment service to jobs.AttachmentGC,
