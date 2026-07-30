@@ -66,28 +66,38 @@ type ProcessBucketRequest struct {
 	TaskDetails      *ProcessTaskDetails `json:"taskDetails"`
 }
 
-// ProcessTaskDetails is the narrow subset of task fields the process dialog sends.
-// Energy/status/rollsOver/scheduledFor are intentionally omitted so the task
-// service fills its own defaults.
+// ProcessTaskDetails is the subset of task fields the process dialog sends.
+// Status is intentionally omitted so the task service fills its own default;
+// every other field the dialog offers is carried through. Nil = "use the task
+// service default", so an older client that omits a field is unaffected.
 type ProcessTaskDetails struct {
 	Title            string  `json:"title"`
 	Notes            *string `json:"notes"`
 	Priority         *string `json:"priority"`
+	Energy           *string `json:"energy"`
+	RollsOver        *bool   `json:"rollsOver"`
+	ScheduledFor     *string `json:"scheduledFor"`
 	EstimatedMinutes *int    `json:"estimatedMinutes"`
 	URL              *string `json:"url"`
 }
 
 // toTaskCreateRequest maps the process details onto the task create contract.
-// Priority falls through to the task service default when nil.
+// Priority/Energy fall through to the task service defaults when nil, as does
+// scheduledFor — which the task service validates as an ISO date.
 func (d ProcessTaskDetails) toTaskCreateRequest() task.CreateTaskRequest {
 	req := task.CreateTaskRequest{
 		Title:            d.Title,
 		Notes:            d.Notes,
+		RollsOver:        d.RollsOver,
+		ScheduledFor:     d.ScheduledFor,
 		EstimatedMinutes: d.EstimatedMinutes,
 		URL:              d.URL,
 	}
 	if d.Priority != nil {
 		req.Priority = *d.Priority
+	}
+	if d.Energy != nil {
+		req.Energy = *d.Energy
 	}
 	return req
 }

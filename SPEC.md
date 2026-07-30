@@ -681,10 +681,14 @@ Delete a project and all its tasks.
 >   createdAt: string;                            // RFC3339
 >   updatedAt: string;                            // RFC3339
 >   totalFocusSeconds: number;                    // SUM of closed focus segments (E-049); always present
+>   subtaskCount: number;                         // total subtasks; always present
+>   openSubtaskCount: number;                     // subtasks with done=false; always present
 > }
 > ```
 >
 > **`totalFocusSeconds`** is derived on read from `focus_sessions` (never cached) and **enriched only on `GET /v1/tasks/:id` (scalar) and `GET /v1/focus` (one batch query)**. On the project task-list it is always `0` — the list never renders it, and a per-row SUM would be pure cost. Zero-default, never null/omitted.
+>
+> **`subtaskCount` / `openSubtaskCount`** are derived on read from `subtasks` and — unlike `totalFocusSeconds` — are populated on **every** task read, list included. They are correlated scalar subqueries over an index on `subtasks(task_id)`, and the list needs them: the client blocks a complete behind a confirmation whenever `openSubtaskCount > 0`, and a task can be checked off straight from a list row. Zero-default, never null/omitted.
 >
 > **⚠️ `scheduledFor` is the task's only date.** It is a bare ISO **date string** `YYYY-MM-DD` (a soft, roll-forward intention) — **not** a timestamp and **not** an enum like `today|tomorrow|this_week`. Tasks have **no** hard `dueDate` (that field was removed; a hard deadline lives only on **projects**). The today/tomorrow/thisWeek grouping is *computed* server-side by `GET /v1/time-spread` (§3.7) from `scheduledFor` + `rollsOver`; it is never a stored value. See §3.7 for the bucketing rules.
 
@@ -1042,8 +1046,11 @@ Process an inbox item — convert it to a task or note, or trash it.
     "title": "Buy groceries",
     "notes": "Weekly shop",
     "priority": "medium",
+    "energy": "low",
+    "rollsOver": true,
     "scheduledFor": "2026-05-05",
-    "estimatedMinutes": 60
+    "estimatedMinutes": 60,
+    "url": "https://example.com"
   }
 }
 ```
@@ -1054,6 +1061,13 @@ Process an inbox item — convert it to a task or note, or trash it.
 | `projectId`        | string | No       | Required when `processingResult = "task"` |
 | `taskDetails`      | object | No       | Required when `processingResult = "task"` |
 | `noteDetails`      | object | No       | Required when `processingResult = "note"` |
+
+Inside `taskDetails`, only `title` is required. Every other field is optional and
+omitting it means "use the task service default" — the same defaults `POST
+/v1/projects/:projectId/tasks` applies. `status` is not accepted here (the task
+service owns it), and `scheduledTime` is not offered by the process flow. Values
+are validated by the task service, so a malformed `scheduledFor` fails with
+`INVALID_DATE` (400) **before** the inbox item is marked processed.
 
 **Response — 200 OK** — Updated `IBucket` (with `processedAt` and `processingResult` populated)
 

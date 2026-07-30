@@ -59,15 +59,22 @@ func NewRepository(db *pgxpool.Pool) Repository { return &pgRepo{db: db} }
 // scheduled_time is a TIME but travels the wire as HH:MM — formatted in the
 // projection so it scans straight into a *string and never leaks the seconds
 // Postgres would render (`09:00:00`), which the contract does not include.
+// The two subtask counts are correlated scalar subqueries rather than an
+// enrichment seam (unlike TotalFocusSeconds): they are cheap — subtasks is
+// indexed on task_id — and every read needs them, because the client blocks a
+// complete on OpenSubtaskCount > 0 wherever a task can be checked off.
 const taskSelectCols = ` id, user_id, project_id, title, notes, status, priority, energy,
 	rolls_over, scheduled_for, to_char(scheduled_time, 'HH24:MI'), estimated_minutes, url, display_order,
-	completed_at, created_at, updated_at, recurrence_rule_id, occurrence_date::text `
+	completed_at, created_at, updated_at, recurrence_rule_id, occurrence_date::text,
+	(SELECT COUNT(*) FROM subtasks s WHERE s.task_id = tasks.id),
+	(SELECT COUNT(*) FROM subtasks s WHERE s.task_id = tasks.id AND s.done = FALSE) `
 
 func scanTask(row pgx.Row, t *Task) error {
 	return row.Scan(
 		&t.ID, &t.UserID, &t.ProjectID, &t.Title, &t.Notes, &t.Status, &t.Priority, &t.Energy,
 		&t.RollsOver, &t.ScheduledFor, &t.ScheduledTime, &t.EstimatedMinutes, &t.URL, &t.DisplayOrder,
 		&t.CompletedAt, &t.CreatedAt, &t.UpdatedAt, &t.RecurrenceRuleID, &t.OccurrenceDate,
+		&t.SubtaskCount, &t.OpenSubtaskCount,
 	)
 }
 

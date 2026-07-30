@@ -81,6 +81,65 @@ func TestIntegration_Subtask_Lifecycle(t *testing.T) {
 	}
 }
 
+// The counts ride on every task read, not an enrichment seam — the client uses
+// openSubtaskCount to decide whether completing a task needs a confirmation,
+// and it has to work from the list as well as the detail read.
+func TestIntegration_Subtask_CountsOnTaskReads(t *testing.T) {
+	env := newTaskServer(t, "pro")
+	parent := createTask(t, env, map[string]any{"title": "Parent"})
+	if parent.SubtaskCount != 0 || parent.OpenSubtaskCount != 0 {
+		t.Fatalf("fresh task counts = %d/%d, want 0/0", parent.SubtaskCount, parent.OpenSubtaskCount)
+	}
+
+	a := createSubtask(t, env, parent.ID, map[string]any{"title": "Step A"})
+	createSubtask(t, env, parent.ID, map[string]any{"title": "Step B"})
+
+	assertCounts := func(where string, v task.TaskView, total, open int) {
+		t.Helper()
+		if v.SubtaskCount != total || v.OpenSubtaskCount != open {
+			t.Errorf("%s counts = %d/%d, want %d/%d", where, v.SubtaskCount, v.OpenSubtaskCount, total, open)
+		}
+	}
+
+	assertCounts("get", getTaskByID(t, env, parent.ID), 2, 2)
+	assertCounts("list", findTask(t, listTasks(t, env, ""), parent.ID), 2, 2)
+
+	// Closing one subtask drops only the open count.
+	resp := do(t, env.srv, http.MethodPatch, "/v1/tasks/"+parent.ID+"/subtasks/"+a.ID,
+		map[string]any{"done": true}, env.token)
+	assertStatus(t, resp, http.StatusOK)
+
+	assertCounts("get after done", getTaskByID(t, env, parent.ID), 2, 1)
+	assertCounts("list after done", findTask(t, listTasks(t, env, ""), parent.ID), 2, 1)
+
+	// Deleting the closed subtask drops the total, leaving the open count alone.
+	resp = do(t, env.srv, http.MethodDelete, "/v1/tasks/"+parent.ID+"/subtasks/"+a.ID, nil, env.token)
+	assertStatus(t, resp, http.StatusNoContent)
+	assertCounts("get after delete", getTaskByID(t, env, parent.ID), 1, 1)
+}
+
+func getTaskByID(t *testing.T, env taskEnv, id string) task.TaskView {
+	t.Helper()
+	resp := do(t, env.srv, http.MethodGet, "/v1/tasks/"+id, nil, env.token)
+	assertStatus(t, resp, http.StatusOK)
+	var out struct {
+		Data task.TaskView `json:"data"`
+	}
+	decode(t, resp, &out)
+	return out.Data
+}
+
+func findTask(t *testing.T, items []task.TaskView, id string) task.TaskView {
+	t.Helper()
+	for _, v := range items {
+		if v.ID == id {
+			return v
+		}
+	}
+	t.Fatalf("task %s not in list", id)
+	return task.TaskView{}
+}
+
 func TestIntegration_Subtask_CascadeOnTaskDelete(t *testing.T) {
 	env := newTaskServer(t, "pro")
 	parent := createTask(t, env, map[string]any{"title": "Parent"})
