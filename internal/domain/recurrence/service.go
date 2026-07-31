@@ -59,6 +59,10 @@ func (s *service) Create(ctx context.Context, userID, projectID, plan string, re
 	if err != nil {
 		return RuleView{}, err
 	}
+	if err := enforceTimedSchedulingPlan(plan, req.ScheduledTime); err != nil {
+		return RuleView{}, err
+	}
+	req.EstimatedMinutes = clampEstimateToDayEnd(req.ScheduledTime, req.EstimatedMinutes)
 
 	// Ownership before the plan count: a foreign project must not reveal how many
 	// rules the caller has.
@@ -89,6 +93,7 @@ func (s *service) Create(ctx context.Context, userID, projectID, plan string, re
 		Priority:         req.Priority,
 		Energy:           req.Energy,
 		EstimatedMinutes: req.EstimatedMinutes,
+		ScheduledTime:    req.ScheduledTime,
 		Freq:             req.Freq,
 		Interval:         req.Interval,
 		ByWeekday:        normalizeWeekdays(req.ByWeekday),
@@ -120,6 +125,7 @@ func (s *service) Create(ctx context.Context, userID, projectID, plan string, re
 		Priority:         rule.Priority,
 		Energy:           rule.Energy,
 		EstimatedMinutes: rule.EstimatedMinutes,
+		ScheduledTime:    rule.ScheduledTime,
 		OccurrenceDate:   first,
 	}
 
@@ -155,7 +161,15 @@ func (s *service) Get(ctx context.Context, userID, id string) (RuleView, error) 
 // Update edits the series. Rule edits change the template for future instances;
 // the repository re-stamps the single live instance in the same transaction.
 // Editing an instance never propagates back to the rule.
-func (s *service) Update(ctx context.Context, userID, id string, req UpdateRuleRequest) (RuleView, error) {
+func (s *service) Update(ctx context.Context, userID, id, plan string, req UpdateRuleRequest) (RuleView, error) {
+	// Only a PATCH that actually sets a time is gated; an absent field and an
+	// explicit null both leave a free user unblocked.
+	if req.ScheduledTime.Set {
+		if err := enforceTimedSchedulingPlan(plan, req.ScheduledTime.Value); err != nil {
+			return RuleView{}, err
+		}
+	}
+
 	existing, err := s.repo.GetByID(ctx, userID, id)
 	if err != nil {
 		return RuleView{}, err
@@ -217,6 +231,12 @@ func applyTemplatePatch(r Rule, req UpdateRuleRequest) Rule {
 	if req.EstimatedMinutes.Set {
 		r.EstimatedMinutes = req.EstimatedMinutes.Value
 	}
+	if req.ScheduledTime.Set {
+		r.ScheduledTime = req.ScheduledTime.Value
+	}
+	// Clamped against the EFFECTIVE pair: either side may be untouched by this
+	// PATCH, so a new time must still respect an already-stored estimate.
+	r.EstimatedMinutes = clampEstimateToDayEnd(r.ScheduledTime, r.EstimatedMinutes)
 	return r
 }
 

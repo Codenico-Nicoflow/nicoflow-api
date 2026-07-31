@@ -12,6 +12,9 @@ import (
 // from the JWT claim, never a DB lookup.
 const freePlanRuleLimit = 3
 
+// planFree is the JWT claim value for the free tier.
+const planFree = "free"
+
 const (
 	maxTitleLen = 255
 	maxNotesLen = 2000
@@ -52,16 +55,18 @@ type Rule struct {
 	Priority         string
 	Energy           string
 	EstimatedMinutes *int
-	Freq             string
-	Interval         int
-	ByWeekday        []int
-	ByMonthday       *int
-	StartDate        time.Time
-	EndDate          *time.Time
-	NextOccurrence   *time.Time
-	Paused           bool
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// ScheduledTime is HH:MM or nil for all-day. Stamped onto every occurrence.
+	ScheduledTime  *string
+	Freq           string
+	Interval       int
+	ByWeekday      []int
+	ByMonthday     *int
+	StartDate      time.Time
+	EndDate        *time.Time
+	NextOccurrence *time.Time
+	Paused         bool
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 // RuleView is the JSON response shape. All IDs are strings; dates are YYYY-MM-DD.
@@ -73,6 +78,7 @@ type RuleView struct {
 	Priority         string  `json:"priority"`
 	Energy           string  `json:"energy"`
 	EstimatedMinutes *int    `json:"estimatedMinutes"`
+	ScheduledTime    *string `json:"scheduledTime"`
 	Freq             string  `json:"freq"`
 	Interval         int     `json:"interval"`
 	ByWeekday        []int   `json:"byWeekday"`
@@ -90,7 +96,8 @@ func ToView(r Rule) RuleView {
 	v := RuleView{
 		ID: r.ID, ProjectID: r.ProjectID, Title: r.Title, Notes: r.Notes,
 		Priority: r.Priority, Energy: r.Energy, EstimatedMinutes: r.EstimatedMinutes,
-		Freq: r.Freq, Interval: r.Interval, ByMonthday: r.ByMonthday,
+		ScheduledTime: r.ScheduledTime,
+		Freq:          r.Freq, Interval: r.Interval, ByMonthday: r.ByMonthday,
 		StartDate: FormatDate(r.StartDate), Paused: r.Paused,
 		CreatedAt: r.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt: r.UpdatedAt.UTC().Format(time.RFC3339),
@@ -128,6 +135,7 @@ type CreateRuleRequest struct {
 	Priority         string  `json:"priority"`
 	Energy           string  `json:"energy"`
 	EstimatedMinutes *int    `json:"estimatedMinutes"`
+	ScheduledTime    *string `json:"scheduledTime"`
 	Freq             string  `json:"freq"`
 	Interval         int     `json:"interval"`
 	ByWeekday        []int   `json:"byWeekday"`
@@ -145,6 +153,7 @@ type UpdateRuleRequest struct {
 	Priority         *string                `json:"priority"`
 	Energy           *string                `json:"energy"`
 	EstimatedMinutes optional.Field[int]    `json:"estimatedMinutes"`
+	ScheduledTime    optional.Field[string] `json:"scheduledTime"`
 	Freq             *string                `json:"freq"`
 	Interval         *int                   `json:"interval"`
 	ByWeekday        *[]int                 `json:"byWeekday"`
@@ -171,6 +180,7 @@ type Occurrence struct {
 	Priority         string
 	Energy           string
 	EstimatedMinutes *int
+	ScheduledTime    *string
 	OccurrenceDate   time.Time
 }
 
@@ -194,7 +204,7 @@ type Service interface {
 	Create(ctx context.Context, userID, projectID, plan string, req CreateRuleRequest) (RuleView, error)
 	List(ctx context.Context, userID string, projectID *string) (ListRulesResponse, error)
 	Get(ctx context.Context, userID, id string) (RuleView, error)
-	Update(ctx context.Context, userID, id string, req UpdateRuleRequest) (RuleView, error)
+	Update(ctx context.Context, userID, id, plan string, req UpdateRuleRequest) (RuleView, error)
 	SetPaused(ctx context.Context, userID, id string, paused bool) (RuleView, error)
 	Delete(ctx context.Context, userID, id string) error
 	// Stats derives a rule's history: per-status counts plus the current streak.

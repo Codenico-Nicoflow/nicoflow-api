@@ -1699,6 +1699,7 @@ was dropped in migration 026.
   "id": "uuid", "projectId": "uuid",
   "title": "Water the plants", "notes": null,
   "priority": "medium", "energy": "medium", "estimatedMinutes": null,
+  "scheduledTime": "09:00",    // HH:MM stamped onto every occurrence; null = all-day. Pro-only to SET
   "freq": "weekly",            // daily | weekly | monthly | yearly
   "interval": 1,               // 1..366
   "byWeekday": [1, 4],         // weekly only; 0=Sun..6=Sat; always an array, never null
@@ -1715,6 +1716,13 @@ was dropped in migration 026.
 28th (29th in a leap year) in February — a monthly obligation never vanishes
 because the month is short.
 
+**`scheduledTime` lives on the rule, not the occurrence.** "Every weekday at 09:00"
+is a property of the habit, so every materialized task inherits it and a rule edit
+re-stamps the live instance. Same contract as `tasks.scheduledTime`: `HH:MM`, snapped
+to 15 minutes, Pro-only to **set** (`PLAN_LIMIT_EXCEEDED` on Free; clearing to `null`
+is open on every plan so a downgraded user is never trapped). `estimatedMinutes` is
+clamped so `scheduledTime + estimate` cannot cross midnight.
+
 #### POST /v1/projects/:projectId/recurrence-rules
 
 Create a rule and **materialize instance #1 in the same transaction** — a rule can
@@ -1728,7 +1736,8 @@ never exist without its first task. Broadcasts `recurrence.created`.
 
 **Errors:** `PROJECT_NOT_FOUND` (404 — checked *before* the plan count, so a foreign
 project can't be used to probe the caller's rule count), `PLAN_LIMIT_EXCEEDED` (403 —
-4th rule on Free), `INVALID_RECURRENCE` (422), `INVALID_INPUT` (422), `INVALID_DATE` (422)
+4th rule on Free, or a `scheduledTime` on Free), `INVALID_RECURRENCE` (422),
+`INVALID_INPUT` (422), `INVALID_DATE` (422)
 
 #### GET /v1/recurrence-rules
 
@@ -1758,7 +1767,8 @@ to clear it, which revives an exhausted series. Broadcasts `recurrence.updated`.
 
 **Response — 200 OK:** `RecurrenceRuleView`
 
-**Errors:** `RECURRENCE_RULE_NOT_FOUND` (404), `INVALID_RECURRENCE` (422), `INVALID_INPUT` (422), `INVALID_DATE` (422)
+**Errors:** `RECURRENCE_RULE_NOT_FOUND` (404), `PLAN_LIMIT_EXCEEDED` (403 — setting a
+`scheduledTime` on Free), `INVALID_RECURRENCE` (422), `INVALID_INPUT` (422), `INVALID_DATE` (422)
 
 #### PATCH /v1/recurrence-rules/:id/pause
 
@@ -1816,7 +1826,10 @@ One routine, two triggers:
    provision a second cron). `InternalToken`-guarded, `?dryRun=true` supported.
 2. **Synchronous on completion** — when a task carrying a `recurrenceRuleId`
    transitions to `done`, its successor is created in the same request, so an
-   active user sees the habit continue even if the cron is broken.
+   active user sees the habit continue even if the cron is broken. The trigger
+   hangs off the transition itself, not one route, so **both** `PATCH /tasks/:id`
+   (the edit dialog) and `PATCH /tasks/:id/status` (the list checkbox) fire it —
+   exactly once each.
 
 Both are safe to race: the partial unique index on
 `(recurrence_rule_id, occurrence_date)` means the loser inserts nothing.

@@ -16,9 +16,32 @@ type pgRepo struct{ db *pgxpool.Pool }
 // NewRepository creates a postgres-backed recurrence repository.
 func NewRepository(db *pgxpool.Pool) Repository { return &pgRepo{db: db} }
 
-const selectCols = ` id, user_id, project_id, title, notes, priority, energy, estimated_minutes,
-	freq, interval, by_weekday, by_monthday, start_date, end_date,
-	next_occurrence, paused, created_at, updated_at `
+// selectCols is the unaliased projection; cols(alias) qualifies it for a JOIN.
+// scheduled_time is a TIME but travels the wire as HH:MM — formatted here so it
+// scans straight into a *string, matching the task domain's contract (never the
+// seconds Postgres would render).
+var selectCols = cols("")
+
+// cols builds the rule projection, optionally qualified by a table alias. A
+// builder rather than a string-splitting rewrite: the to_char expression carries
+// a comma of its own, which any naive split would tear in half.
+func cols(alias string) string {
+	if alias != "" {
+		alias += "."
+	}
+	names := []string{
+		"id", "user_id", "project_id", "title", "notes", "priority", "energy", "estimated_minutes",
+		"freq", "interval", "by_weekday", "by_monthday", "start_date", "end_date",
+		"next_occurrence", "paused", "created_at", "updated_at",
+	}
+	out := make([]string, 0, len(names)+1)
+	for _, n := range names {
+		out = append(out, alias+n)
+	}
+	// Appended last so the scan order stays stable as columns are added.
+	out = append(out, "to_char("+alias+"scheduled_time, 'HH24:MI')")
+	return " " + strings.Join(out, ", ") + " "
+}
 
 func scanRule(row pgx.Row, r *Rule) error {
 	return row.Scan(ruleFields(r)...)
@@ -34,18 +57,8 @@ func ruleFields(r *Rule) []any {
 	return []any{
 		&r.ID, &r.UserID, &r.ProjectID, &r.Title, &r.Notes, &r.Priority, &r.Energy, &r.EstimatedMinutes,
 		&r.Freq, &r.Interval, &r.ByWeekday, &r.ByMonthday, &r.StartDate, &r.EndDate,
-		&r.NextOccurrence, &r.Paused, &r.CreatedAt, &r.UpdatedAt,
+		&r.NextOccurrence, &r.Paused, &r.CreatedAt, &r.UpdatedAt, &r.ScheduledTime,
 	}
-}
-
-// prefixed qualifies every column in a select list with a table alias, so the
-// shared column const can be reused inside a JOIN without ambiguity.
-func prefixed(cols, alias string) string {
-	parts := strings.Split(cols, ",")
-	for i, p := range parts {
-		parts[i] = " " + alias + "." + strings.TrimSpace(p)
-	}
-	return strings.Join(parts, ",")
 }
 
 // CreateWithOccurrence writes the rule and its first task in one transaction, so
@@ -68,11 +81,13 @@ func (r *pgRepo) CreateWithOccurrence(ctx context.Context, rule Rule, occ Occurr
 	err = scanRule(tx.QueryRow(ctx, `
 		INSERT INTO recurrence_rules
 			(id, user_id, project_id, title, notes, priority, energy, estimated_minutes,
-			 freq, interval, by_weekday, by_monthday, start_date, end_date, next_occurrence)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+			 freq, interval, by_weekday, by_monthday, start_date, end_date, next_occurrence,
+			 scheduled_time)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::time)
 		RETURNING`+selectCols,
 		rule.ID, rule.UserID, rule.ProjectID, rule.Title, rule.Notes, rule.Priority, rule.Energy, rule.EstimatedMinutes,
 		rule.Freq, rule.Interval, rule.ByWeekday, rule.ByMonthday, rule.StartDate, rule.EndDate, rule.NextOccurrence,
+		rule.ScheduledTime,
 	), &out)
 	if err != nil {
 		return Rule{}, fmt.Errorf("recurrence.CreateWithOccurrence insert rule: %w", err)
@@ -97,14 +112,15 @@ func insertOccurrence(ctx context.Context, tx pgx.Tx, occ Occurrence) error {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO tasks
 			(id, user_id, project_id, title, notes, status, priority, energy,
-			 scheduled_for, estimated_minutes, display_order, recurrence_rule_id, occurrence_date)
-		SELECT $1, $2, $3, $4, $5, 'active', $6, $7, $8::date::text, $9,
+			 scheduled_for, scheduled_time, estimated_minutes, display_order,
+			 recurrence_rule_id, occurrence_date)
+		SELECT $1, $2, $3, $4, $5, 'active', $6, $7, $8::date::text, $11::time, $9,
 			COALESCE((SELECT MAX(display_order) + 1 FROM tasks WHERE user_id = $2 AND project_id = $3), 0),
 			$10, $8::date
 		ON CONFLICT (recurrence_rule_id, occurrence_date) WHERE recurrence_rule_id IS NOT NULL
 		DO NOTHING`,
 		occ.ID, occ.UserID, occ.ProjectID, occ.Title, occ.Notes, occ.Priority, occ.Energy,
-		occ.OccurrenceDate, occ.EstimatedMinutes, occ.RuleID,
+		occ.OccurrenceDate, occ.EstimatedMinutes, occ.RuleID, occ.ScheduledTime,
 	)
 	if err != nil {
 		return fmt.Errorf("recurrence.insertOccurrence: %w", err)
@@ -176,12 +192,13 @@ func (r *pgRepo) Update(ctx context.Context, rule Rule) (Rule, error) {
 		UPDATE recurrence_rules SET
 			title = $3, notes = $4, priority = $5, energy = $6, estimated_minutes = $7,
 			freq = $8, interval = $9, by_weekday = $10, by_monthday = $11,
-			start_date = $12, end_date = $13, next_occurrence = $14, updated_at = NOW()
+			start_date = $12, end_date = $13, next_occurrence = $14,
+			scheduled_time = $15::time, updated_at = NOW()
 		WHERE id = $1 AND user_id = $2
 		RETURNING`+selectCols,
 		rule.ID, rule.UserID, rule.Title, rule.Notes, rule.Priority, rule.Energy, rule.EstimatedMinutes,
 		rule.Freq, rule.Interval, rule.ByWeekday, rule.ByMonthday,
-		rule.StartDate, rule.EndDate, rule.NextOccurrence,
+		rule.StartDate, rule.EndDate, rule.NextOccurrence, rule.ScheduledTime,
 	), &out)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Rule{}, errRuleNotFound()
@@ -197,10 +214,11 @@ func (r *pgRepo) Update(ctx context.Context, rule Rule) (Rule, error) {
 			title = $3, notes = $4, priority = $5, energy = $6, estimated_minutes = $7,
 			scheduled_for = COALESCE($8::date::text, scheduled_for),
 			occurrence_date = COALESCE($8::date, occurrence_date),
+			scheduled_time = $9::time,
 			updated_at = NOW()
 		WHERE recurrence_rule_id = $1 AND user_id = $2 AND status NOT IN ('done', 'cancelled')`,
 		rule.ID, rule.UserID, rule.Title, rule.Notes, rule.Priority, rule.Energy, rule.EstimatedMinutes,
-		rule.NextOccurrence,
+		rule.NextOccurrence, rule.ScheduledTime,
 	); err != nil {
 		return Rule{}, fmt.Errorf("recurrence.Update restamp: %w", err)
 	}
@@ -271,7 +289,7 @@ func (r *pgRepo) Delete(ctx context.Context, userID, id string) error {
 // internal cron. Paused and exhausted rules never appear.
 func (r *pgRepo) ListDue(ctx context.Context) ([]DueRule, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT`+prefixed(selectCols, "r")+`, COALESCE(u.timezone, 'UTC')
+		SELECT`+cols("r")+`, COALESCE(u.timezone, 'UTC')
 		FROM recurrence_rules r
 		JOIN users u ON u.id = r.user_id
 		WHERE r.paused = FALSE
@@ -343,8 +361,9 @@ func (r *pgRepo) Materialize(ctx context.Context, rule Rule, occ Occurrence, lim
 	tag, err := tx.Exec(ctx, `
 		INSERT INTO tasks
 			(id, user_id, project_id, title, notes, status, priority, energy,
-			 scheduled_for, estimated_minutes, display_order, recurrence_rule_id, occurrence_date)
-		SELECT $1, $2, $3, $4, $5, 'active', $6, $7, $8::date::text, $9,
+			 scheduled_for, scheduled_time, estimated_minutes, display_order,
+			 recurrence_rule_id, occurrence_date)
+		SELECT $1, $2, $3, $4, $5, 'active', $6, $7, $8::date::text, $12::time, $9,
 			COALESCE((SELECT MAX(display_order) + 1 FROM tasks WHERE user_id = $2 AND project_id = $3), 0),
 			$10, $8::date
 		WHERE (SELECT COUNT(*) FROM tasks
@@ -352,7 +371,7 @@ func (r *pgRepo) Materialize(ctx context.Context, rule Rule, occ Occurrence, lim
 		ON CONFLICT (recurrence_rule_id, occurrence_date) WHERE recurrence_rule_id IS NOT NULL
 		DO NOTHING`,
 		occ.ID, occ.UserID, occ.ProjectID, occ.Title, occ.Notes, occ.Priority, occ.Energy,
-		occ.OccurrenceDate, occ.EstimatedMinutes, occ.RuleID, limit,
+		occ.OccurrenceDate, occ.EstimatedMinutes, occ.RuleID, limit, occ.ScheduledTime,
 	)
 	if err != nil {
 		return MaterializeResult{}, fmt.Errorf("recurrence.Materialize insert: %w", err)

@@ -142,6 +142,7 @@ func (m *Materializer) materialize(ctx context.Context, rule Rule) (MaterializeR
 		Priority:         rule.Priority,
 		Energy:           rule.Energy,
 		EstimatedMinutes: rule.EstimatedMinutes,
+		ScheduledTime:    rule.ScheduledTime,
 		OccurrenceDate:   occDate,
 	}
 
