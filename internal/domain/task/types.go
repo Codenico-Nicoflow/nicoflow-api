@@ -32,6 +32,11 @@ type Task struct {
 	// occurrences (E-050). Both nil on an ordinary task.
 	RecurrenceRuleID *string
 	OccurrenceDate   *string
+	// SubtaskCount / OpenSubtaskCount are read-only projections filled by every
+	// task read (see taskSelectCols). OpenSubtaskCount > 0 is what makes the
+	// client confirm before completing a task.
+	SubtaskCount     int
+	OpenSubtaskCount int
 }
 
 // TaskView is the JSON response shape (ITask) for a single task.
@@ -58,6 +63,9 @@ type TaskView struct {
 	// Enriched only on Focus + GetTask; 0 on the project task-list, where a
 	// per-row SUM would be pure cost for a value the list never renders.
 	TotalFocusSeconds int64 `json:"totalFocusSeconds"`
+	// SubtaskCount / OpenSubtaskCount are always populated, on every read.
+	SubtaskCount     int `json:"subtaskCount"`
+	OpenSubtaskCount int `json:"openSubtaskCount"`
 }
 
 // ListTasksResponse is the list response for tasks within a project.
@@ -150,6 +158,8 @@ func TaskToView(t Task) TaskView {
 		UpdatedAt:        t.UpdatedAt.UTC().Format(time.RFC3339),
 		RecurrenceRuleID: t.RecurrenceRuleID,
 		OccurrenceDate:   t.OccurrenceDate,
+		SubtaskCount:     t.SubtaskCount,
+		OpenSubtaskCount: t.OpenSubtaskCount,
 	}
 	if t.CompletedAt != nil {
 		s := t.CompletedAt.UTC().Format(time.RFC3339)

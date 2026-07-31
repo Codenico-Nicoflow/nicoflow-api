@@ -309,7 +309,10 @@ func TestService_Process_Task_HappyPath_MapsDetailsAndMarks(t *testing.T) {
 	view, err := svc.Process(context.Background(), "u1", "b1", "free", bucket.ProcessBucketRequest{
 		ProcessingResult: bucket.ResultTask,
 		ProjectID:        ptr("p1"),
-		TaskDetails:      &bucket.ProcessTaskDetails{Title: "Write report", Priority: ptr("high"), EstimatedMinutes: ptr(30)},
+		TaskDetails: &bucket.ProcessTaskDetails{
+			Title: "Write report", Priority: ptr("high"), Energy: ptr("deep"),
+			RollsOver: ptr(false), ScheduledFor: ptr("2026-08-01"), EstimatedMinutes: ptr(30),
+		},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -321,15 +324,53 @@ func TestService_Process_Task_HappyPath_MapsDetailsAndMarks(t *testing.T) {
 	}
 }
 
-// assertMappedTaskRequest checks only the narrow subset is forwarded and
-// energy/status/rollsOver are left unset so the task defaults apply.
+// A field the dialog leaves blank must arrive unset so the task service applies
+// its own default rather than the process path inventing one.
+func TestService_Process_Task_OmittedFieldsFallThroughToDefaults(t *testing.T) {
+	var gotReq task.CreateTaskRequest
+	repo := &mockRepo{
+		getByID: func(_ context.Context, _, id string) (bucket.Bucket, error) { return unprocessed(id), nil },
+		markProcessed: func(_ context.Context, _, id, _ string, _, _ *string) (bucket.Bucket, error) {
+			return unprocessed(id), nil
+		},
+	}
+	tc := &mockTaskCreator{create: func(_ context.Context, _, _, _ string, req task.CreateTaskRequest) (task.TaskView, error) {
+		gotReq = req
+		return task.TaskView{ID: "task-123"}, nil
+	}}
+	svc := bucket.NewService(repo, tc, nil, nil)
+	_, err := svc.Process(context.Background(), "u1", "b1", "free", bucket.ProcessBucketRequest{
+		ProcessingResult: bucket.ResultTask,
+		ProjectID:        ptr("p1"),
+		TaskDetails:      &bucket.ProcessTaskDetails{Title: "Bare"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotReq.Priority != "" || gotReq.Energy != "" || gotReq.Status != "" ||
+		gotReq.RollsOver != nil || gotReq.ScheduledFor != nil {
+		t.Errorf("omitted fields must stay unset: %+v", gotReq)
+	}
+}
+
+// assertMappedTaskRequest checks every field the process dialog offers reaches
+// the task create contract. Status alone stays unset — the task service owns it.
 func assertMappedTaskRequest(t *testing.T, req task.CreateTaskRequest) {
 	t.Helper()
-	if req.Title != "Write report" || req.Priority != "high" || req.EstimatedMinutes == nil || *req.EstimatedMinutes != 30 {
+	if req.Title != "Write report" || req.Priority != "high" || req.Energy != "deep" {
 		t.Errorf("mapping wrong: %+v", req)
 	}
-	if req.Energy != "" || req.Status != "" || req.RollsOver != nil {
-		t.Errorf("energy/status/rollsOver must be unset: %+v", req)
+	if req.EstimatedMinutes == nil || *req.EstimatedMinutes != 30 {
+		t.Errorf("estimatedMinutes not forwarded: %+v", req)
+	}
+	if req.RollsOver == nil || *req.RollsOver {
+		t.Errorf("rollsOver not forwarded: %+v", req)
+	}
+	if req.ScheduledFor == nil || *req.ScheduledFor != "2026-08-01" {
+		t.Errorf("scheduledFor not forwarded: %+v", req)
+	}
+	if req.Status != "" {
+		t.Errorf("status must be unset: %+v", req)
 	}
 }
 
