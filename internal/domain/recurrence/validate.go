@@ -13,6 +13,64 @@ import (
 // not an intent.
 const maxInterval = 366
 
+// The scheduled_time contract, duplicated from the task domain rather than
+// imported — the dependency runs the other way (task consumes recurrence via the
+// Materializer seam), exactly as the occurrence status constants are duplicated.
+const (
+	scheduledTimeLayout = "15:04"
+	scheduleSnapMinutes = 15
+	dayEndMinutes       = 23*60 + 59
+)
+
+// clampEstimateToDayEnd caps an estimate so a timed occurrence cannot cross
+// midnight — the same invariant the task domain enforces, applied at the
+// template so no materialized row can ever violate it.
+func clampEstimateToDayEnd(scheduledTime *string, estimatedMinutes *int) *int {
+	if scheduledTime == nil || estimatedMinutes == nil {
+		return estimatedMinutes
+	}
+	start, err := time.Parse(scheduledTimeLayout, *scheduledTime)
+	if err != nil {
+		return estimatedMinutes // malformed input is the validator's error to raise
+	}
+	startMinutes := start.Hour()*60 + start.Minute()
+	if startMinutes+*estimatedMinutes <= dayEndMinutes {
+		return estimatedMinutes
+	}
+	clamped := dayEndMinutes - startMinutes
+	return &clamped
+}
+
+// validateScheduledTime rejects a malformed or non-snapped time. Nil means
+// all-day and passes on every plan.
+func validateScheduledTime(scheduledTime *string) error {
+	if scheduledTime == nil {
+		return nil
+	}
+	t, err := time.Parse(scheduledTimeLayout, *scheduledTime)
+	if err != nil {
+		return errInvalidInput("scheduledTime must be a 24-hour time (HH:MM)")
+	}
+	if t.Minute()%scheduleSnapMinutes != 0 {
+		return errInvalidInput("scheduledTime must fall on a 15-minute boundary")
+	}
+	return nil
+}
+
+// enforceTimedSchedulingPlan gates SETTING a time to Pro, mirroring the task
+// domain. Clearing is open on every plan so a downgraded user is never trapped
+// holding a rule they cannot edit.
+func enforceTimedSchedulingPlan(plan string, scheduledTime *string) error {
+	if scheduledTime == nil || plan != planFree {
+		return nil
+	}
+	return errPlanLimit("timed scheduling is a Pro feature")
+}
+
+func errPlanLimit(msg string) error {
+	return apperror.New(http.StatusForbidden, apperror.ErrPlanLimitExceeded, msg)
+}
+
 func errInvalidRecurrence(msg string) error {
 	return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidRecurrence, msg)
 }
@@ -72,6 +130,9 @@ func validateCreate(req CreateRuleRequest) (start time.Time, end *time.Time, err
 	if err := validateSchedule(req.Freq, req.Interval, req.ByWeekday, req.ByMonthday); err != nil {
 		return time.Time{}, nil, err
 	}
+	if err := validateScheduledTime(req.ScheduledTime); err != nil {
+		return time.Time{}, nil, err
+	}
 	start, err = parseDate("startDate", req.StartDate)
 	if err != nil {
 		return time.Time{}, nil, err
@@ -95,6 +156,9 @@ func validateUpdate(r Rule) error {
 		return err
 	}
 	if err := validateSchedule(r.Freq, r.Interval, r.ByWeekday, r.ByMonthday); err != nil {
+		return err
+	}
+	if err := validateScheduledTime(r.ScheduledTime); err != nil {
 		return err
 	}
 	return validateDates(r.StartDate, r.EndDate)

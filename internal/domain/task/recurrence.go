@@ -17,10 +17,12 @@ type RecurrenceMaterializer interface {
 
 // materializeSuccessor is trigger 2 of the recurrence engine: completing an
 // occurrence immediately creates the next one, so an active user sees the habit
-// continue without waiting for the cron. Best-effort by design — the status
-// change has already committed, and the partial unique index makes this racing
-// the sweep safe, so a failure is logged and swallowed rather than failing a
-// request the user considers done.
+// continue without waiting for the cron. Called from the shared update path, so
+// every route into `done` — the list checkbox and the edit dialog alike — spawns
+// the successor. Best-effort by design — the status change has already
+// committed, and the partial unique index makes this racing the sweep safe, so a
+// failure is logged and swallowed rather than failing a request the user
+// considers done.
 func (s *service) materializeSuccessor(ctx context.Context, userID string, view TaskView) {
 	if s.materializer == nil || view.RecurrenceRuleID == nil || view.Status != statusDone {
 		return

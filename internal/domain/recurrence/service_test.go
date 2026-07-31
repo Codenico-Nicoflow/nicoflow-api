@@ -370,7 +370,7 @@ func TestRowLevelIsolation(t *testing.T) {
 		assertCode(t, err, apperror.ErrRecurrenceRuleNotFound)
 	})
 	t.Run("Update", func(t *testing.T) {
-		_, err := svc.Update(context.Background(), "u2", view.ID, UpdateRuleRequest{})
+		_, err := svc.Update(context.Background(), "u2", view.ID, "free", UpdateRuleRequest{})
 		assertCode(t, err, apperror.ErrRecurrenceRuleNotFound)
 	})
 	t.Run("SetPaused", func(t *testing.T) {
@@ -394,7 +394,7 @@ func TestUpdate_TemplateOnlyKeepsCursor(t *testing.T) {
 	view := seedRule(t, svc)
 
 	title := "Water the ferns"
-	got, err := svc.Update(context.Background(), "u1", view.ID, UpdateRuleRequest{Title: &title})
+	got, err := svc.Update(context.Background(), "u1", view.ID, "free", UpdateRuleRequest{Title: &title})
 	if err != nil {
 		t.Fatalf("Update: %v", err)
 	}
@@ -414,7 +414,7 @@ func TestUpdate_ScheduleChangeRecomputesCursor(t *testing.T) {
 	view := seedRule(t, svc)
 
 	weekdays := []int{4} // move to Thursday
-	got, err := svc.Update(context.Background(), "u1", view.ID, UpdateRuleRequest{ByWeekday: &weekdays})
+	got, err := svc.Update(context.Background(), "u1", view.ID, "free", UpdateRuleRequest{ByWeekday: &weekdays})
 	if err != nil {
 		t.Fatalf("Update: %v", err)
 	}
@@ -440,7 +440,7 @@ func TestUpdate_ClearingEndDateRevivesSeries(t *testing.T) {
 		t.Fatalf("precondition: nextOccurrence = %v, want nil", *view.NextOccurrence)
 	}
 
-	got, err := svc.Update(context.Background(), "u1", view.ID, UpdateRuleRequest{
+	got, err := svc.Update(context.Background(), "u1", view.ID, "free", UpdateRuleRequest{
 		EndDate: optional.Field[string]{Set: true, Value: nil},
 	})
 	if err != nil {
@@ -462,7 +462,7 @@ func TestUpdate_SwitchingFreqClearsStaleConstraint(t *testing.T) {
 	view := seedRule(t, svc) // weekly with byWeekday=[1]
 
 	freq := FreqDaily
-	got, err := svc.Update(context.Background(), "u1", view.ID, UpdateRuleRequest{Freq: &freq})
+	got, err := svc.Update(context.Background(), "u1", view.ID, "free", UpdateRuleRequest{Freq: &freq})
 	if err != nil {
 		t.Fatalf("Update: %v", err)
 	}
@@ -480,7 +480,7 @@ func TestUpdate_PatchesEveryField(t *testing.T) {
 	notes, priority, energy := "water deeply", "high", "deep"
 	freq, interval, start := FreqMonthly, 2, "2026-04-05"
 	monthday := 5
-	got, err := svc.Update(context.Background(), "u1", view.ID, UpdateRuleRequest{
+	got, err := svc.Update(context.Background(), "u1", view.ID, "free", UpdateRuleRequest{
 		Notes:            optional.Field[string]{Set: true, Value: &notes},
 		Priority:         &priority,
 		Energy:           &energy,
@@ -531,7 +531,7 @@ func TestUpdate_ClearsNullableFields(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	got, err := svc.Update(context.Background(), "u1", view.ID, UpdateRuleRequest{
+	got, err := svc.Update(context.Background(), "u1", view.ID, "free", UpdateRuleRequest{
 		Notes:            optional.Field[string]{Set: true, Value: nil},
 		EstimatedMinutes: optional.Field[int]{Set: true, Value: nil},
 	})
@@ -553,12 +553,12 @@ func TestUpdate_RejectsMalformedDates(t *testing.T) {
 
 	t.Run("startDate", func(t *testing.T) {
 		bad := "not-a-date"
-		_, err := svc.Update(context.Background(), "u1", view.ID, UpdateRuleRequest{StartDate: &bad})
+		_, err := svc.Update(context.Background(), "u1", view.ID, "free", UpdateRuleRequest{StartDate: &bad})
 		assertCode(t, err, apperror.ErrInvalidDate)
 	})
 	t.Run("endDate", func(t *testing.T) {
 		bad := "2026-13-45"
-		_, err := svc.Update(context.Background(), "u1", view.ID, UpdateRuleRequest{
+		_, err := svc.Update(context.Background(), "u1", view.ID, "free", UpdateRuleRequest{
 			EndDate: optional.Field[string]{Set: true, Value: &bad},
 		})
 		assertCode(t, err, apperror.ErrInvalidDate)
@@ -571,7 +571,7 @@ func TestUpdate_RejectsInvalidSchedule(t *testing.T) {
 	view := seedRule(t, svc)
 
 	interval := 999
-	_, err := svc.Update(context.Background(), "u1", view.ID, UpdateRuleRequest{Interval: &interval})
+	_, err := svc.Update(context.Background(), "u1", view.ID, "free", UpdateRuleRequest{Interval: &interval})
 	assertCode(t, err, apperror.ErrInvalidRecurrence)
 }
 

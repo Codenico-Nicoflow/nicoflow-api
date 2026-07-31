@@ -614,6 +614,35 @@ func TestSetStatus_CompletingRecurringMaterializesSuccessor(t *testing.T) {
 	}
 }
 
+// The edit dialog completes a task through the plain PATCH, not the status
+// endpoint — it must spawn the successor too, or the series silently ends.
+func TestUpdate_CompletingRecurringMaterializesSuccessor(t *testing.T) {
+	m := &fakeMaterializer{}
+	svc := setStatusSvc(t, recurringStored(), m)
+
+	done := statusDone
+	if _, err := svc.Update(context.Background(), "u1", "t1", "free", UpdateTaskRequest{Status: &done}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(m.calls) != 1 || m.calls[0] != "rule-1" {
+		t.Errorf("materializer calls = %v, want [rule-1]", m.calls)
+	}
+}
+
+// Completing through the status endpoint must not double-fire now that the
+// trigger lives in the shared update path.
+func TestSetStatus_MaterializesSuccessorExactlyOnce(t *testing.T) {
+	m := &fakeMaterializer{}
+	svc := setStatusSvc(t, recurringStored(), m)
+
+	if _, err := svc.SetStatus(context.Background(), "u1", "t1", "free", statusDone); err != nil {
+		t.Fatalf("SetStatus: %v", err)
+	}
+	if len(m.calls) != 1 {
+		t.Errorf("materializer calls = %v, want exactly one", m.calls)
+	}
+}
+
 // Only completion triggers a successor, and only for recurring tasks.
 func TestSetStatus_SuccessorNotTriggered(t *testing.T) {
 	tests := []struct {

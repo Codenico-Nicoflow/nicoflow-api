@@ -283,13 +283,19 @@ func (s *service) update(ctx context.Context, userID, id, plan string, req Updat
 		return TaskView{}, err
 	}
 
+	view := TaskToView(updated)
+
 	// Real-time producers fire only on the transition INTO done, after the write
 	// commits. Best-effort — see notify.go.
 	if transition == completedAtSetNow {
 		s.emitTaskCompleted(ctx, updated)
 		s.emitProjectCompletedIfLast(ctx, updated)
+		// Here rather than in SetStatus: the edit dialog completes a task through
+		// the plain PATCH, which would otherwise leave the series with no successor
+		// until the hourly sweep.
+		s.materializeSuccessor(ctx, userID, view)
 	}
-	return TaskToView(updated), nil
+	return view, nil
 }
 
 func (s *service) Delete(ctx context.Context, userID, id string) error {
@@ -389,9 +395,6 @@ func (s *service) SetStatus(ctx context.Context, userID, id, plan, status string
 		return TaskView{}, err
 	}
 	s.emit(userID, Event{Type: EventStatusChanged, Payload: view})
-	// A completed recurring occurrence immediately spawns its successor, so the
-	// habit continues without waiting for the hourly sweep.
-	s.materializeSuccessor(ctx, userID, view)
 	return view, nil
 }
 
