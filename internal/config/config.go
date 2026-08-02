@@ -62,6 +62,29 @@ type Config struct {
 	// AIModel is the Claude model ID for the assistant. Never hardcode a model ID
 	// at the call site; it always comes from here (default claude-haiku-4-5).
 	AIModel string
+	// Google* configure the read-only Google Calendar overlay (E-052 / NIC-1838).
+	// Any of the four unset ⇒ the whole integration is a silent no-op and the
+	// calendar renders tasks only (mirrors VAPID/storage). GoogleRedirectURL must
+	// exact-match a URI registered on the OAuth client.
+	GoogleClientID     string
+	GoogleClientSecret string
+	GoogleRedirectURL  string
+	// GoogleTokenEncKey is the base64-encoded 32-byte AES-256-GCM key encrypting
+	// the stored refresh token at rest.
+	GoogleTokenEncKey string
+}
+
+// GoogleEnabled reports whether the Google Calendar integration is configured.
+//
+// All four values are required together: credentials without the encryption key
+// would mean storing a live refresh token in plaintext, and the key without
+// credentials encrypts nothing. Treating them as one unit makes a half-configured
+// environment behave as "off" rather than as a security hole.
+func (c Config) GoogleEnabled() bool {
+	return c.GoogleClientID != "" &&
+		c.GoogleClientSecret != "" &&
+		c.GoogleRedirectURL != "" &&
+		c.GoogleTokenEncKey != ""
 }
 
 // defaultAIModel is the Claude model used when AI_MODEL is unset.
@@ -130,13 +153,20 @@ func Load() Config {
 		VAPIDSubject:             os.Getenv("VAPID_SUBJECT"),
 		AnthropicAPIKey:          os.Getenv("ANTHROPIC_API_KEY"),
 		AIModel:                  aiModel,
+		GoogleClientID:           os.Getenv("GOOGLE_CLIENT_ID"),
+		GoogleClientSecret:       os.Getenv("GOOGLE_CLIENT_SECRET"),
+		GoogleRedirectURL:        os.Getenv("GOOGLE_REDIRECT_URL"),
+		GoogleTokenEncKey:        os.Getenv("GOOGLE_TOKEN_ENC_KEY"),
 	}
 }
 
 // String returns a safe representation that redacts secrets.
-// Prevents JWTSecret and LSWebhookSecret leaking into debug logs.
+// Prevents JWTSecret, LSWebhookSecret and the Google client secret / token
+// encryption key leaking into debug logs.
 func (c Config) String() string {
-	return "config{env=" + c.AppEnv + " port=" + c.Port + " jwt_secret=[REDACTED] webhook_secret=[REDACTED]}"
+	return "config{env=" + c.AppEnv + " port=" + c.Port +
+		" jwt_secret=[REDACTED] webhook_secret=[REDACTED]" +
+		" google_client_secret=[REDACTED] google_token_enc_key=[REDACTED]}"
 }
 
 func parseDuration(s string, fallback time.Duration) time.Duration {

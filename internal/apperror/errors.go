@@ -45,11 +45,17 @@ const (
 	// AI_UNAVAILABLE (503) — feature disabled (no key), provider 429·529, or first-token timeout.
 	// AI_PROVIDER_ERROR (502) — provider 400·401: our fault, logged loud with request_id.
 	// AI_STREAM_ACTIVE (409) — a stream is already in flight for the session.
-	ErrAIUnavailable    = "AI_UNAVAILABLE"
-	ErrAIProviderError  = "AI_PROVIDER_ERROR"
-	ErrAIStreamActive   = "AI_STREAM_ACTIVE"
-	ErrInvalidProjectId = "INVALID_PROJECT_ID"
-	ErrInvalidStatus    = "INVALID_STATUS"
+	ErrAIUnavailable   = "AI_UNAVAILABLE"
+	ErrAIProviderError = "AI_PROVIDER_ERROR"
+	ErrAIStreamActive  = "AI_STREAM_ACTIVE"
+	// Google Calendar (E-052 / NIC-1844):
+	// GOOGLE_NOT_CONNECTED (409) — no connection for this user; the client prompts to connect.
+	// GOOGLE_AUTH_FAILED (502) — token exchange, revoke, or stored-credential read failed.
+	// Neither ever carries token material in its message.
+	ErrGoogleNotConnected = "GOOGLE_NOT_CONNECTED"
+	ErrGoogleAuthFailed   = "GOOGLE_AUTH_FAILED"
+	ErrInvalidProjectId   = "INVALID_PROJECT_ID"
+	ErrInvalidStatus      = "INVALID_STATUS"
 	// INVALID_RECURRENCE (422) — a malformed schedule: bad freq, interval outside
 	// 1..366, weekday/monthday out of range, or a field set on the wrong freq.
 	ErrInvalidRecurrence   = "INVALID_RECURRENCE"
