@@ -93,20 +93,33 @@ func (h *Handler) Disconnect(w http.ResponseWriter, r *http.Request) {
 
 // redirect sends the browser back into the SPA with a status query param.
 //
-// `path` has already been sanitised at Connect time (same-app absolute paths
-// only); it is re-checked here because this method builds a Location header and
-// an open redirect on our own domain is a phishing primitive.
+// The destination is built by parsing the configured base URL and then
+// overwriting only its Path and RawQuery. Scheme and Host therefore always come
+// from configuration and are structurally unreachable from user input — string
+// concatenation would leave "is this an open redirect?" a question about the
+// sanitiser, which is how open redirects get shipped.
+//
+// `path` is sanitised at Connect time too; this is the second of the two checks,
+// because this is the method that actually writes a Location header.
 func (h *Handler) redirect(w http.ResponseWriter, r *http.Request, path, status string) {
-	target := h.appBaseURL + "/settings"
-	if strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "//") {
-		target = h.appBaseURL + path
+	base, err := url.Parse(h.appBaseURL)
+	if err != nil || base.Host == "" {
+		// A misconfigured base URL must not become a redirect to whatever the
+		// caller supplied. Relative Location keeps the browser on this origin.
+		http.Redirect(w, r, "/?google="+url.QueryEscape(status), http.StatusFound)
+		return
 	}
 
-	sep := "?"
-	if strings.Contains(target, "?") {
-		sep = "&"
+	target := *base
+	target.Path = "/settings"
+	if strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "//") {
+		target.Path = path
 	}
-	http.Redirect(w, r, target+sep+"google="+url.QueryEscape(status), http.StatusFound)
+	// Set, not append: the sanitised path carries no query of its own, and
+	// building the query through url.Values escapes the value for us.
+	target.RawQuery = url.Values{"google": {status}}.Encode()
+
+	http.Redirect(w, r, target.String(), http.StatusFound)
 }
 
 func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
