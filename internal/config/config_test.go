@@ -49,7 +49,9 @@ func TestLoad_GoogleConfig(t *testing.T) {
 		id       = "1234.apps.googleusercontent.com"
 		secret   = "test-client-secret"
 		redirect = "http://localhost:8080/v1/calendar/google/callback"
-		encKey   = "dGVzdC1rZXktdGhhdC1pcy0zMi1ieXRlcy1sb25nISE=" // not a real key
+		// Config only checks presence, never decodes — so this is deliberately
+		// not base64-shaped. A realistic-looking key here trips secret scanners.
+		encKey = "not-a-real-key"
 	)
 
 	// All four are required together: credentials without the encryption key
