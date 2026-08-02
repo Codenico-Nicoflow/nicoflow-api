@@ -58,15 +58,44 @@ type Service interface {
 	RegisterPushToken(ctx context.Context, userID string, req RegisterPushTokenRequest) error
 }
 
+// EraserRegistry is implemented by the concrete service. Kept off the Service
+// interface deliberately: registration happens once at wiring time, and putting
+// it on Service would force every existing auth mock to grow a method that has
+// nothing to do with what those tests exercise.
+type EraserRegistry interface {
+	RegisterEraser(e AccountEraser)
+}
+
+// AccountEraser is a side-effect run when an account is deleted — revoking a
+// third-party grant, purging linked data. Implementations must not return an
+// error: account deletion is the user's right and cannot be blocked by a
+// downstream service being unreachable.
+//
+// Declared here, in the consumer, so auth never imports the domains it erases.
+type AccountEraser interface {
+	RevokeForUser(ctx context.Context, userID string)
+}
+
 type service struct {
 	repo Repository
 	cfg  config.Config
+	// erasers run on account deletion. Registered after construction because
+	// they are built later in the wiring order than auth itself.
+	erasers []AccountEraser
 }
 
 // NewService creates a new auth service.
 func NewService(repo Repository, cfg config.Config) Service {
 	return &service{repo: repo, cfg: cfg}
 }
+
+// RegisterEraser adds a side-effect to run on account deletion.
+//
+// Third-party grants must be revoked even though deletion is a *soft* delete —
+// the user row survives, so nothing else forces the connection to be dealt with,
+// and a live Google grant outliving a deleted account is a GDPR problem as well
+// as a trust one (E-040).
+func (s *service) RegisterEraser(e AccountEraser) { s.erasers = append(s.erasers, e) }
 
 func (s *service) Register(ctx context.Context, req RegisterRequest) (AuthResponse, error) {
 	if err := validateEmail(req.Email); err != nil {
@@ -458,6 +487,12 @@ func (s *service) DeleteMe(ctx context.Context, userID string) error {
 		return err
 	}
 	_ = s.repo.DeleteAllRefreshTokens(ctx, userID)
+	// Revoke third-party grants AFTER the account is soft-deleted: if an eraser
+	// hangs, the account is already gone from the user's perspective. None of
+	// them can fail the deletion.
+	for _, e := range s.erasers {
+		e.RevokeForUser(ctx, userID)
+	}
 	return nil
 }
 
