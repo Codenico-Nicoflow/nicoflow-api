@@ -16,6 +16,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/billing"
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
 	"github.com/nicoflow/nicoflow-api/internal/domain/focus"
+	"github.com/nicoflow/nicoflow-api/internal/domain/googlecal"
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
 	"github.com/nicoflow/nicoflow-api/internal/domain/recurrence"
@@ -40,6 +41,7 @@ type Handlers struct {
 	Recurrence   *recurrence.Handler
 	Focus        *focus.Handler
 	Notification *notification.Handler
+	GoogleCal    *googlecal.Handler
 	Jobs         *jobs.Handler
 	WS           *ws.Handler
 }
@@ -82,6 +84,13 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 
 	// Billing webhook — HMAC verified inside handler, no JWT
 	r.Post("/v1/billing/webhook", h.Billing.Webhook)
+
+	// Google OAuth callback — the browser arrives here from accounts.google.com
+	// with no Authorization header, so it cannot sit behind the JWT middleware.
+	// The single-use `state` is what identifies the user and proves they started
+	// the flow; it is consumed atomically before the code is exchanged.
+	// Rate-limited per IP because it is public and does a network call to Google.
+	r.With(mw.RateLimitIP(20, 20, trustedProxies)).Get("/v1/calendar/google/callback", h.GoogleCal.Callback)
 
 	// Internal jobs — machine-to-machine, guarded solely by the shared CRON_SECRET
 	// (X-Internal-Token), outside the JWT /v1 group. Hit by the Render Cron Job.
@@ -200,6 +209,11 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 
 		// Focus timer (E-049). "current" is the user's single open segment — the
 		// one-open-per-user invariant means it needs no id. FREE on every plan.
+		// Google Calendar connection (E-052). The callback is public — see above.
+		r.Get("/calendar/google/connect", h.GoogleCal.Connect)
+		r.Get("/calendar/google/connection", h.GoogleCal.Get)
+		r.Delete("/calendar/google/connection", h.GoogleCal.Disconnect)
+
 		r.Post("/focus/sessions", h.Focus.Open)
 		r.Post("/focus/sessions/current/close", h.Focus.Close)
 		r.Post("/focus/sessions/current/heartbeat", h.Focus.Heartbeat)

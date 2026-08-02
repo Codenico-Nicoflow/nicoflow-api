@@ -66,3 +66,8 @@ func (c Connection) View() ConnectionView {
 		LastError:           c.LastError,
 	}
 }
+
+// ConnectResponse carries the Google consent URL to an authenticated caller.
+type ConnectResponse struct {
+	AuthURL string `json:"authUrl"`
+}

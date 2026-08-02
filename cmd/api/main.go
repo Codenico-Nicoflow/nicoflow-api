@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -24,15 +25,18 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/billing"
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
 	"github.com/nicoflow/nicoflow-api/internal/domain/focus"
+	"github.com/nicoflow/nicoflow-api/internal/domain/googlecal"
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
 	"github.com/nicoflow/nicoflow-api/internal/domain/recurrence"
 	"github.com/nicoflow/nicoflow-api/internal/domain/search"
 	"github.com/nicoflow/nicoflow-api/internal/domain/task"
+	"github.com/nicoflow/nicoflow-api/internal/google"
 	"github.com/nicoflow/nicoflow-api/internal/handler"
 	"github.com/nicoflow/nicoflow-api/internal/jobs"
 	"github.com/nicoflow/nicoflow-api/internal/storage"
 	"github.com/nicoflow/nicoflow-api/internal/ws"
+	"github.com/nicoflow/nicoflow-api/pkg/cryptoutil"
 	"github.com/nicoflow/nicoflow-api/pkg/pushutil"
 
 	// Generated Swagger docs (make swagger). Imported for the side-effect of
@@ -204,6 +208,11 @@ func main() {
 	// carry totalFocusSeconds (NIC-1712); the reverse seam keeps task ↛ focus.
 	taskSvc = taskSvc.WithFocusTotals(focusRepo)
 
+	// Google Calendar connection (E-052 / NIC-1844). Any credential or the
+	// encryption key missing ⇒ every endpoint returns a typed 503 and nothing
+	// else in the app notices.
+	googleCalSvc := newGoogleCalService(cfg, pool, authSvc)
+
 	// Sweep jobs — hourly, invoked by Render Cron Jobs via /internal/jobs/*.
 	jobsRepo := jobs.NewRepository(pool)
 	dueDateNotifier := jobs.NewDueDateNotifier(jobsRepo, notificationSvc, cfg.SMTPDsn)
@@ -225,6 +234,7 @@ func main() {
 		Recurrence:   recurrence.NewHandler(recurrenceSvc),
 		Focus:        focus.NewHandler(focusSvc),
 		Notification: notification.NewHandler(notificationSvc),
+		GoogleCal:    googlecal.NewHandler(googleCalSvc, cfg.AppBaseURL),
 		Jobs: jobs.NewHandler(dueDateNotifier, overdueNotifier, dayStartNotifier, inboxNotifier, summaryNotifier, attachmentGCAdapter{svc: attachmentSvc}).
 			WithRecurrence(recurrenceSweepAdapter{m: recurrenceMaterializer}).
 			WithFocusStale(focusStaleAdapter{svc: focusSvc}),
@@ -350,4 +360,39 @@ func (a attachmentGCAdapter) RunGC(ctx context.Context) (jobs.GCSummary, error) 
 		return jobs.GCSummary{}, err
 	}
 	return jobs.GCSummary{ObjectsDeleted: sum.ObjectsDeleted, RowsDeleted: sum.RowsDeleted}, nil
+}
+
+// newGoogleCalService wires the Google Calendar connection service (E-052).
+//
+// Extracted from main so the wiring reads as one decision rather than five
+// lines of plumbing. Any missing credential makes the OAuth client disabled and
+// every endpoint return a typed 503, so an environment without Google
+// configuration boots normally.
+func newGoogleCalService(cfg config.Config, pool *pgxpool.Pool, authSvc auth.Service) googlecal.Service {
+	cipher, err := cryptoutil.NewCipher(cfg.GoogleTokenEncKey)
+	if err != nil {
+		// A key that is present but malformed must not boot: silently disabling
+		// encryption would store live refresh tokens in plaintext.
+		log.Fatal().Err(err).Msg("invalid GOOGLE_TOKEN_ENC_KEY")
+	}
+	if cfg.GoogleEnabled() {
+		log.Info().Msg("google calendar: enabled")
+	} else {
+		log.Warn().Msg("google calendar: disabled (unset GOOGLE_* env) — /v1/calendar/google/* returns 503")
+	}
+
+	svc := googlecal.NewService(
+		googlecal.NewRepository(pool, cipher),
+		googlecal.NewStateRepository(pool),
+		google.New(cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleRedirectURL),
+	)
+
+	// Deleting a Nicoflow account must not leave a live Google grant behind
+	// (E-040 / GDPR). Easy to miss because deletion is a SOFT delete — the user
+	// row survives, so nothing else forces the connection to be dealt with.
+	if registry, ok := authSvc.(auth.EraserRegistry); ok {
+		registry.RegisterEraser(svc)
+	}
+
+	return svc
 }
