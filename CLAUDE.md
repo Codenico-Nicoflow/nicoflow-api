@@ -89,7 +89,7 @@ Dependency direction: Handler → Service interface → Repository interface. In
 - Never modify a deployed migration — always add a new numbered `.up.sql` / `.down.sql` pair.
 - `display_order` / `sort_order` use `INT DEFAULT 0`. Sparse ordering is intentional.
 
-### Migrations (001–043 applied)
+### Migrations (001–044 applied)
 
 ```
 001 create_users                     019 enrich_areas_projects
@@ -117,8 +117,11 @@ Dependency direction: Handler → Service interface → Repository interface. In
                                      041 create_google_calendar_connections
                                      042 create_google_oauth_states
                                      043 users_calendar_preferences
+                                     044 create_notes
 ```
 (031–035 are the notification stack: notifications table → preferences → Web Push subscriptions → per-family toggles → reminder-hours. 036 is the E-024 file-attachments table: polymorphic owner `{type,id}` (no FK), `user_id` cascade, unique `s3_key`; quota enforced by the repo's atomic guarded insert — NIC-1638.)
+
+> **044 `create_notes`** (E-053 / NIC-1880) is the Project Notes table. Three decisions worth not re-litigating: (1) `search_vector` is generated from **`content_text`, never `content`** — walking a JSONB tree is not `IMMUTABLE`, so it cannot appear in a `GENERATED ALWAYS AS` expression; `content_text` is the flattened plain text written alongside the document purely to feed it, using the same `'simple'` config as 030. (2) `project_id` is **nullable with `ON DELETE SET NULL`**, mirroring `tasks.project_id` — deleting a project **orphans** its notes rather than destroying reference material; the API still requires `projectId` on create. `user_id` does cascade. (3) Concurrent edits are optimistic: `version INT` plus a guarded `UPDATE … WHERE id = $1 AND user_id = $2 AND version = $3`, so a stale save is rejected by the database (0 rows) rather than by application code — the same "0 rows means something is wrong" idiom as refresh-token reuse detection. The repo returns rows-affected so the service can tell a stale version (409) from a missing note (404).
 
 > **043 `users_calendar_preferences`** (NIC-1890) adds `week_start`, `workdays`, `day_start_hour`, `day_end_hour` to `users`. They live here rather than in a calendar-only table because **`week_start` is not purely display** — the notification sweeps and any future "this week" grouping key off a week boundary, and a second source of truth would let the backend and the grid disagree about which week a task is in. `workdays` is a `SMALLINT[]`, not a `workdays_only` boolean: the work week is Mon–Fri across most of Europe but **Sun–Thu in Israel**, and the product ships Hebrew + RTL. `day_end_hour` is **exclusive**, ceiling 24, because "08:00 to midnight" is the case the feature exists for. Defaults reproduce the previous behaviour exactly. All four carry `CHECK` constraints, but validation lives in the **service layer** (`internal/domain/auth/calendar_prefs.go`) — a constraint violation surfaces as a 500 carrying a Postgres error string, which no client can act on.
 
