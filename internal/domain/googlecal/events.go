@@ -35,6 +35,38 @@ const maxEventRangeSpanDays = 62
 // eventDateLayout is the wire format for an all-day event's date (YYYY-MM-DD).
 const eventDateLayout = "2006-01-02"
 
+// maxDescriptionRunes caps an event description on the wire.
+//
+// Counted in runes, not bytes, so a Hebrew or Russian agenda is truncated by
+// characters rather than mid-codepoint. The overlay renders a preview and links
+// out to Google for the rest, so shipping an unbounded body would multiply the
+// payload for text no one reads in place — a 62-day window can hold hundreds of
+// events across five calendars.
+const maxDescriptionRunes = 300
+
+// ResponseStatus is the viewer's own RSVP on an event.
+//
+// Only the viewer's response travels, never the other attendees' — the overlay
+// answers "am I expected at this?", which is what changes how the block should
+// read. Values mirror Google's own vocabulary so no translation table is needed
+// on either side.
+type ResponseStatus string
+
+const (
+	// ResponseNone means the event carries no attendee list, or the viewer is
+	// not on it. A personal calendar entry, not an invitation.
+	ResponseNone ResponseStatus = ""
+	// ResponseAccepted — the viewer said yes.
+	ResponseAccepted ResponseStatus = "accepted"
+	// ResponseDeclined — the viewer said no. The event still occupies the grid
+	// because Google still returns it; the client decides how to de-emphasise it.
+	ResponseDeclined ResponseStatus = "declined"
+	// ResponseTentative — the viewer said maybe.
+	ResponseTentative ResponseStatus = "tentative"
+	// ResponseNeedsAction — invited, not yet answered.
+	ResponseNeedsAction ResponseStatus = "needsAction"
+)
+
 // Sentinel errors from the calendar client, defined here in the consumer package
 // so the service can classify a failure without importing the implementation.
 var (
@@ -60,6 +92,23 @@ type CalendarEvent struct {
 	Title      string
 	CalendarID string
 	HTMLLink   string
+	// Location is Google's free-text venue string — a room, an address, or a
+	// meeting URL. Never parsed, only displayed.
+	Location string
+	// Description is the event body. Truncated at the edge (see maxDescriptionRunes)
+	// because a meeting agenda can run to kilobytes and the overlay shows a
+	// preview, not a document.
+	Description string
+	// Organizer is the display name of whoever owns the event, falling back to
+	// their email when Google sends no name.
+	Organizer string
+	// AttendeeCount is how many people are invited, including the organizer.
+	// A count rather than the list: names and emails of other people are far
+	// more data than an at-a-glance overlay justifies holding.
+	AttendeeCount int
+	// Response is the viewer's own RSVP — see ResponseStatus. Empty when the
+	// event has no attendee list (a personal entry the user simply owns).
+	Response ResponseStatus
 	// AllDay events carry dates, not instants — see Start/End.
 	AllDay bool
 	// Start and End are absolute instants for timed events. For all-day events
@@ -97,14 +146,21 @@ type CalendarClient interface {
 
 // GoogleEventView is the wire shape (SPEC §3). IDs are strings, and there is no
 // token field in any form.
+// Detail fields are omitempty so an event with none of them costs nothing extra
+// on the wire; the client treats a missing field and an empty one identically.
 type GoogleEventView struct {
-	ID         string `json:"id"`
-	Title      string `json:"title"`
-	Start      string `json:"start"`
-	End        string `json:"end"`
-	AllDay     bool   `json:"allDay"`
-	CalendarID string `json:"calendarId"`
-	HTMLLink   string `json:"htmlLink"`
+	ID            string         `json:"id"`
+	Title         string         `json:"title"`
+	Start         string         `json:"start"`
+	End           string         `json:"end"`
+	AllDay        bool           `json:"allDay"`
+	CalendarID    string         `json:"calendarId"`
+	HTMLLink      string         `json:"htmlLink"`
+	Location      string         `json:"location,omitempty"`
+	Description   string         `json:"description,omitempty"`
+	Organizer     string         `json:"organizer,omitempty"`
+	AttendeeCount int            `json:"attendeeCount,omitempty"`
+	Response      ResponseStatus `json:"responseStatus,omitempty"`
 }
 
 // EventsResponse is what GET /v1/calendar/google-events returns.
@@ -133,14 +189,30 @@ func (e CalendarEvent) View(loc *time.Location) GoogleEventView {
 	}
 
 	return GoogleEventView{
-		ID:         e.ID,
-		Title:      e.Title,
-		Start:      start,
-		End:        end,
-		AllDay:     e.AllDay,
-		CalendarID: e.CalendarID,
-		HTMLLink:   e.HTMLLink,
+		ID:            e.ID,
+		Title:         e.Title,
+		Start:         start,
+		End:           end,
+		AllDay:        e.AllDay,
+		CalendarID:    e.CalendarID,
+		HTMLLink:      e.HTMLLink,
+		Location:      e.Location,
+		Description:   truncateRunes(e.Description, maxDescriptionRunes),
+		Organizer:     e.Organizer,
+		AttendeeCount: e.AttendeeCount,
+		Response:      e.Response,
 	}
+}
+
+// truncateRunes shortens s to at most limit runes, appending an ellipsis when it
+// actually cut something so the client can render the preview without needing to
+// know whether more text exists.
+func truncateRunes(s string, limit int) string {
+	runes := []rune(s)
+	if len(runes) <= limit {
+		return s
+	}
+	return string(runes[:limit]) + "…"
 }
 
 // CalendarView is one calendar in the picker (NIC-1857).

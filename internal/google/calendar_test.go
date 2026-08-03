@@ -97,6 +97,65 @@ func TestEventItem_ToDomain(t *testing.T) {
 	}
 }
 
+func TestEventItem_ToDomain_Detail(t *testing.T) {
+	got, ok := eventItem{
+		ID: "evt-1", Summary: "Standup", Status: "confirmed",
+		Location:    "Room 4",
+		Description: "Agenda:<br><b>ship it</b>",
+		Organizer:   eventPerson{Email: "lead@example.com", DisplayName: "Lead"},
+		Attendees: []eventPerson{
+			{Email: "lead@example.com", ResponseStatus: "accepted"},
+			{Email: "me@example.com", Self: true, ResponseStatus: "tentative"},
+		},
+		Start: eventDateTime{DateTime: "2026-08-03T09:00:00Z"},
+		End:   eventDateTime{DateTime: "2026-08-03T09:30:00Z"},
+	}.toDomain("primary")
+
+	if !ok {
+		t.Fatal("event skipped")
+	}
+	if got.Location != "Room 4" {
+		t.Errorf("location = %q", got.Location)
+	}
+	if got.Description != "Agenda: ship it" {
+		t.Errorf("description = %q, want the HTML flattened", got.Description)
+	}
+	if got.Organizer != "Lead" {
+		t.Errorf("organizer = %q, want the display name", got.Organizer)
+	}
+	if got.AttendeeCount != 2 {
+		t.Errorf("attendeeCount = %d, want 2", got.AttendeeCount)
+	}
+	// The viewer's own RSVP, not the organizer's.
+	if got.Response != googlecal.ResponseTentative {
+		t.Errorf("response = %q, want tentative", got.Response)
+	}
+}
+
+func TestEventItem_ToDomain_DetailDefaults(t *testing.T) {
+	got, ok := eventItem{
+		ID: "evt-2", Summary: "Solo work", Status: "confirmed",
+		Organizer: eventPerson{Email: "me@example.com"},
+		Start:     eventDateTime{DateTime: "2026-08-03T09:00:00Z"},
+		End:       eventDateTime{DateTime: "2026-08-03T10:00:00Z"},
+	}.toDomain("primary")
+
+	if !ok {
+		t.Fatal("event skipped")
+	}
+	// No display name from Google leaves only the address to identify them by.
+	if got.Organizer != "me@example.com" {
+		t.Errorf("organizer = %q, want the email fallback", got.Organizer)
+	}
+	// No attendee list means this is a personal entry, not an unanswered invite.
+	if got.Response != googlecal.ResponseNone {
+		t.Errorf("response = %q, want empty", got.Response)
+	}
+	if got.AttendeeCount != 0 {
+		t.Errorf("attendeeCount = %d, want 0", got.AttendeeCount)
+	}
+}
+
 // A timed event missing its end still places on the grid rather than vanishing.
 func TestEventItem_ToDomain_MissingEndFallsBackToStart(t *testing.T) {
 	got, ok := eventItem{

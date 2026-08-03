@@ -253,12 +253,48 @@ type eventDateTime struct {
 }
 
 type eventItem struct {
-	ID       string        `json:"id"`
-	Summary  string        `json:"summary"`
-	HTMLLink string        `json:"htmlLink"`
-	Status   string        `json:"status"`
-	Start    eventDateTime `json:"start"`
-	End      eventDateTime `json:"end"`
+	ID          string        `json:"id"`
+	Summary     string        `json:"summary"`
+	HTMLLink    string        `json:"htmlLink"`
+	Status      string        `json:"status"`
+	Location    string        `json:"location"`
+	Description string        `json:"description"`
+	Organizer   eventPerson   `json:"organizer"`
+	Attendees   []eventPerson `json:"attendees"`
+	Start       eventDateTime `json:"start"`
+	End         eventDateTime `json:"end"`
+}
+
+// eventPerson covers both the organizer and each attendee — Google uses the same
+// shape for both.
+type eventPerson struct {
+	Email          string `json:"email"`
+	DisplayName    string `json:"displayName"`
+	Self           bool   `json:"self"`
+	ResponseStatus string `json:"responseStatus"`
+}
+
+// label prefers the display name and falls back to the email, which is all
+// Google sends for someone outside the user's directory.
+func (p eventPerson) label() string {
+	if p.DisplayName != "" {
+		return p.DisplayName
+	}
+	return p.Email
+}
+
+// selfResponse finds the viewer's own RSVP.
+//
+// Google marks the viewer's own entry with self=true rather than making the
+// caller match on email, which matters because the calendar may be shared and
+// the viewer's address may differ from the account address (aliases, groups).
+func (e eventItem) selfResponse() googlecal.ResponseStatus {
+	for _, attendee := range e.Attendees {
+		if attendee.Self {
+			return googlecal.ResponseStatus(attendee.ResponseStatus)
+		}
+	}
+	return googlecal.ResponseNone
 }
 
 // toDomain converts one wire event, reporting false when it carries no usable
@@ -274,10 +310,15 @@ func (e eventItem) toDomain(calendarID string) (googlecal.CalendarEvent, bool) {
 	}
 
 	event := googlecal.CalendarEvent{
-		ID:         e.ID,
-		Title:      e.Summary,
-		CalendarID: calendarID,
-		HTMLLink:   e.HTMLLink,
+		ID:            e.ID,
+		Title:         e.Summary,
+		CalendarID:    calendarID,
+		HTMLLink:      e.HTMLLink,
+		Location:      e.Location,
+		Description:   plainText(e.Description),
+		Organizer:     e.Organizer.label(),
+		AttendeeCount: len(e.Attendees),
+		Response:      e.selfResponse(),
 	}
 	// Google omits the title of a private event on a shared calendar. A blank
 	// block reads as a rendering bug, so it gets an honest label instead.
