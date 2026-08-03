@@ -16,11 +16,31 @@ type User struct {
 	Status           string
 	Plan             string
 	Timezone         string
+	Calendar         CalendarPrefs
 	EmailVerified    bool
 	FailedLoginCount int
 	LockedUntil      *time.Time
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+}
+
+// CalendarPrefs is how a user wants the calendar grid drawn (NIC-1890).
+//
+// Grouped rather than four loose fields on User because they are only ever read
+// and written together, and the client renders them as one settings panel.
+type CalendarPrefs struct {
+	// WeekStart is 0=Sunday … 6=Saturday, matching JS getDay() and Go
+	// time.Weekday so no consumer needs a translation table.
+	WeekStart int
+	// Workdays are the weekdays the grid draws, same 0–6 encoding. A set rather
+	// than a "workdays only" flag: the work week is Mon–Fri in most of Europe
+	// but Sun–Thu in Israel, so a boolean cannot express both.
+	Workdays []int
+	// DayStartHour is the first hour drawn, 0–23.
+	DayStartHour int
+	// DayEndHour is the last hour drawn, EXCLUSIVE, 1–24. 24 means "through
+	// midnight" — an inclusive 23 could not express 08:00–00:00.
+	DayEndHour int
 }
 
 // RefreshToken is a stored refresh token row.
@@ -126,6 +146,12 @@ type UpdateMeRequest struct {
 	Timezone  *string `json:"timezone"`
 	Theme     *string `json:"theme"`
 	Language  *string `json:"language"`
+	// Calendar preferences are individually optional too, so a client changing
+	// only the day window never has to echo back a week_start it did not read.
+	WeekStart    *int  `json:"weekStart"`
+	Workdays     []int `json:"workdays"`
+	DayStartHour *int  `json:"dayStartHour"`
+	DayEndHour   *int  `json:"dayEndHour"`
 }
 
 // RegisterPushTokenRequest is the body for POST /v1/users/push-token.
@@ -154,9 +180,27 @@ type UserView struct {
 	Timezone  string `json:"timezone"`
 	ImageURL  string `json:"imageUrl"`
 	Status    string `json:"status"`
+	// Calendar always travels with the user: the grid needs it on first paint,
+	// and a second round trip would render one frame of the wrong week.
+	Calendar CalendarPrefsView `json:"calendar"`
+}
+
+// CalendarPrefsView is the wire shape of the calendar display preferences.
+type CalendarPrefsView struct {
+	WeekStart    int   `json:"weekStart"`
+	Workdays     []int `json:"workdays"`
+	DayStartHour int   `json:"dayStartHour"`
+	DayEndHour   int   `json:"dayEndHour"`
 }
 
 func userToView(u User) UserView {
+	// Never nil on the wire: `workdays: null` would make every client write its
+	// own fallback, and they would not agree.
+	workdays := u.Calendar.Workdays
+	if workdays == nil {
+		workdays = []int{}
+	}
+
 	return UserView{
 		ID:        u.ID,
 		Email:     u.Email,
@@ -168,5 +212,11 @@ func userToView(u User) UserView {
 		Timezone:  u.Timezone,
 		ImageURL:  u.ImageURL,
 		Status:    u.Status,
+		Calendar: CalendarPrefsView{
+			WeekStart:    u.Calendar.WeekStart,
+			Workdays:     workdays,
+			DayStartHour: u.Calendar.DayStartHour,
+			DayEndHour:   u.Calendar.DayEndHour,
+		},
 	}
 }
