@@ -35,11 +35,21 @@ const (
 	// show it and the user can tell two accounts apart.
 	userInfoEndpoint = "https://www.googleapis.com/oauth2/v2/userinfo"
 
-	// CalendarReadonlyScope is the ONLY scope this integration requests. Read-only
-	// by design (E-052 is an overlay, never a writer), and narrow enough to stay
-	// in Google's "sensitive" tier rather than "restricted", which would require
-	// a paid third-party security assessment.
+	// CalendarReadonlyScope is the calendar grant. Read-only by design (E-052 is
+	// an overlay, never a writer), and narrow enough to stay in Google's
+	// "sensitive" tier rather than "restricted", which would require a paid
+	// third-party security assessment.
 	CalendarReadonlyScope = "https://www.googleapis.com/auth/calendar.readonly"
+
+	// EmailScope is required by userInfoEndpoint: a token granted only the
+	// calendar scope gets 401 there, which failed every connect at the last step
+	// of an otherwise successful exchange. Basic tier — does not escalate the
+	// consent screen's classification.
+	EmailScope = "https://www.googleapis.com/auth/userinfo.email"
+
+	// requestedScopes is what the consent screen asks for. Space-separated per
+	// RFC 6749 §3.3; url.Values escapes the separator.
+	requestedScopes = CalendarReadonlyScope + " " + EmailScope
 
 	// requestTimeout bounds every call to Google. Without it a hung TLS handshake
 	// would occupy a request goroutine indefinitely.
@@ -89,7 +99,7 @@ func (c *Client) AuthCodeURL(state string) string {
 		"client_id":     {c.clientID},
 		"redirect_uri":  {c.redirectURL},
 		"response_type": {"code"},
-		"scope":         {CalendarReadonlyScope},
+		"scope":         {requestedScopes},
 		"access_type":   {"offline"},
 		"prompt":        {"consent"},
 		"state":         {state},
