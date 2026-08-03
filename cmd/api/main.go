@@ -211,7 +211,7 @@ func main() {
 	// Google Calendar connection (E-052 / NIC-1844). Any credential or the
 	// encryption key missing ⇒ every endpoint returns a typed 503 and nothing
 	// else in the app notices.
-	googleCalSvc, googleEventsSvc := newGoogleCalServices(cfg, pool, authSvc)
+	googleCalSvc, googleEventsSvc, googleCalendarsSvc := newGoogleCalServices(cfg, pool, authSvc)
 
 	// Sweep jobs — hourly, invoked by Render Cron Jobs via /internal/jobs/*.
 	jobsRepo := jobs.NewRepository(pool)
@@ -222,20 +222,21 @@ func main() {
 	summaryNotifier := jobs.NewSummaryNotifier(jobsRepo, notificationSvc)
 
 	handlers := handler.Handlers{
-		Auth:         auth.NewHandler(authSvc, cookieCfg),
-		Area:         area.NewHandler(areaSvc),
-		Project:      project.NewHandler(projectSvc),
-		Task:         task.NewHandler(taskSvc, subtaskSvc),
-		Bucket:       bucket.NewHandler(bucketSvc),
-		AI:           ai.NewHandler(aiSvc),
-		Billing:      billing.NewHandler(nil),
-		Search:       search.NewHandler(searchSvc),
-		Attachment:   attachment.NewHandler(attachmentSvc),
-		Recurrence:   recurrence.NewHandler(recurrenceSvc),
-		Focus:        focus.NewHandler(focusSvc),
-		Notification: notification.NewHandler(notificationSvc),
-		GoogleCal:    googlecal.NewHandler(googleCalSvc, cfg.AppBaseURL),
-		GoogleEvents: googlecal.NewEventsHandler(googleEventsSvc),
+		Auth:            auth.NewHandler(authSvc, cookieCfg),
+		Area:            area.NewHandler(areaSvc),
+		Project:         project.NewHandler(projectSvc),
+		Task:            task.NewHandler(taskSvc, subtaskSvc),
+		Bucket:          bucket.NewHandler(bucketSvc),
+		AI:              ai.NewHandler(aiSvc),
+		Billing:         billing.NewHandler(nil),
+		Search:          search.NewHandler(searchSvc),
+		Attachment:      attachment.NewHandler(attachmentSvc),
+		Recurrence:      recurrence.NewHandler(recurrenceSvc),
+		Focus:           focus.NewHandler(focusSvc),
+		Notification:    notification.NewHandler(notificationSvc),
+		GoogleCal:       googlecal.NewHandler(googleCalSvc, cfg.AppBaseURL),
+		GoogleEvents:    googlecal.NewEventsHandler(googleEventsSvc),
+		GoogleCalendars: googlecal.NewCalendarsHandler(googleCalendarsSvc),
 		Jobs: jobs.NewHandler(dueDateNotifier, overdueNotifier, dayStartNotifier, inboxNotifier, summaryNotifier, attachmentGCAdapter{svc: attachmentSvc}).
 			WithRecurrence(recurrenceSweepAdapter{m: recurrenceMaterializer}).
 			WithFocusStale(focusStaleAdapter{svc: focusSvc}),
@@ -375,7 +376,7 @@ func (a attachmentGCAdapter) RunGC(ctx context.Context) (jobs.GCSummary, error) 
 // Both services share one repository and one client: they are two views of the
 // same connection, and a second client would mean a second set of credentials to
 // keep in step.
-func newGoogleCalServices(cfg config.Config, pool *pgxpool.Pool, authSvc auth.Service) (googlecal.Service, googlecal.EventsService) {
+func newGoogleCalServices(cfg config.Config, pool *pgxpool.Pool, authSvc auth.Service) (googlecal.Service, googlecal.EventsService, googlecal.CalendarService) {
 	cipher, err := cryptoutil.NewCipher(cfg.GoogleTokenEncKey)
 	if err != nil {
 		// A key that is present but malformed must not boot: silently disabling
@@ -400,5 +401,9 @@ func newGoogleCalServices(cfg config.Config, pool *pgxpool.Pool, authSvc auth.Se
 		registry.RegisterEraser(svc)
 	}
 
-	return svc, googlecal.NewEventsService(repo, client)
+	// The events service owns the cache; the picker invalidates it on a
+	// selection change so the overlay reflects the new set immediately.
+	eventsSvc := googlecal.NewEventsService(repo, client)
+
+	return svc, eventsSvc, googlecal.NewCalendarService(repo, client, eventsSvc)
 }

@@ -2085,6 +2085,59 @@ have explicitly rejected.
 - **Auth required:** Yes
 - **Response:** `204 No Content` — idempotent
 
+#### GET /v1/calendar/google/calendars
+
+Lists the calendars the user can read, each flagged with whether it currently
+overlays the Nicoflow calendar. A Google account is not one calendar — importing
+everything would tint every day and invert the signal from "you are booked" into
+"ignore this colour".
+
+Selection state is merged server-side rather than left to the client, which would
+otherwise have to intersect two lists and get the stale case wrong.
+
+- **Auth required:** Yes
+- **Errors:** `409 GOOGLE_NOT_CONNECTED` · `502 GOOGLE_AUTH_FAILED` (Google
+  unreachable) · `503 GOOGLE_AUTH_FAILED` (integration not configured)
+
+**`CalendarView`**
+
+```jsonc
+[
+  { "id": "primary", "summary": "Personal", "backgroundColor": "#4285f4",
+    "primary": true, "selected": true }
+]
+```
+
+A connection with **no stored selection** reports the primary calendar as
+`selected`, matching the overlay's own default — the picker must show what is
+actually rendering. A selected calendar that no longer exists on Google's side
+simply **disappears** from the list rather than rendering as a phantom entry.
+
+Unlike the events endpoint, this one **does** surface a Google failure as an
+error: it is an explicit user action, and an empty list would read as "you have
+no calendars" rather than "we could not reach Google".
+
+#### PUT /v1/calendar/google/calendars
+
+Replaces the selection. Returns the full list with the new state applied, so the
+client does not need a follow-up read.
+
+- **Auth required:** Yes
+- **Body:** `{ "calendarIds": ["primary", "team@example.com"] }`
+- **Errors:** `409 GOOGLE_NOT_CONNECTED` · `422 INVALID_INPUT` (field omitted,
+  empty ID, or more than 5 calendars)
+
+**Capped at 5 calendars**, enforced in the service layer — each selected calendar
+is a separate Google API call per ranged fetch, and a disabled checkbox in the UI
+is a hint, never enforcement. Duplicates are **collapsed rather than rejected**
+(double-sending is not an attempt to exceed the cap). An explicit `[]` is valid
+and selects nothing; **omitting** the field is a `422`, so an accidental empty
+body cannot silently clear a selection.
+
+**IDs are stored, never display names** — names change, IDs do not. A successful
+update invalidates the user's cached event ranges, so the overlay reflects the
+new selection immediately rather than after the TTL.
+
 #### GET /v1/calendar/google-events
 
 The overlay for a date range. **Never returns 5xx for a Google-side failure** —
