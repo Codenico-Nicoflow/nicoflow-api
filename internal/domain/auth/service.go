@@ -475,6 +475,9 @@ func (s *service) UpdateMe(ctx context.Context, userID string, req UpdateMeReque
 			return UserView{}, err
 		}
 	}
+	if err := s.validateCalendarUpdate(ctx, userID, req); err != nil {
+		return UserView{}, err
+	}
 	user, err := s.repo.UpdateUser(ctx, userID, req)
 	if err != nil {
 		return UserView{}, err

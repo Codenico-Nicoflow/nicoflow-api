@@ -57,28 +57,54 @@ func NewRepository(db *pgxpool.Pool) Repository {
 	return &pgRepo{db: db}
 }
 
+// userColumns is the projection every user read shares, in the order userScan
+// expects. Kept in one place because five queries select the same shape and a
+// column added to four of them is a silent scan-order bug in the fifth.
+const userColumns = `id, email, COALESCE(username,''), password_hash,
+	       COALESCE(first_name,''), COALESCE(last_name,''),
+	       theme, language, COALESCE(image_url,''), status, plan, timezone,
+	       week_start, workdays, day_start_hour, day_end_hour`
+
+// workdaysArg adapts the optional slice to COALESCE's "absent means keep".
+//
+// A slice cannot use the *T-is-absent convention the other fields use: pgx
+// encodes an empty non-nil slice as an empty array, which COALESCE treats as a
+// value and would write — wiping every workday. Returning an untyped nil makes
+// absent and empty both no-ops here, and the service rejects an explicitly empty
+// set before it reaches this point.
+func workdaysArg(days []int) any {
+	if len(days) == 0 {
+		return nil
+	}
+	return days
+}
+
+// userScan returns scan targets for userColumns. Callers append their own
+// targets for whatever trailing columns their query adds.
+func userScan(u *User) []any {
+	return []any{
+		&u.ID, &u.Email, &u.Username, &u.PasswordHash,
+		&u.FirstName, &u.LastName,
+		&u.Theme, &u.Language, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
+		&u.Calendar.WeekStart, &u.Calendar.Workdays,
+		&u.Calendar.DayStartHour, &u.Calendar.DayEndHour,
+	}
+}
+
 func (r *pgRepo) CreateUser(ctx context.Context, email, username, passwordHash string) (User, error) {
 	id := uuid.New().String()
 	var u User
 	err := r.db.QueryRow(ctx, `
 		INSERT INTO users (id, email, username, password_hash, theme, language, status, plan, timezone)
 		VALUES (@id, @email, @username, @passwordHash, 'light', 'en', 'regular', 'free', 'UTC')
-		RETURNING id, email, COALESCE(username,''), password_hash,
-		          COALESCE(first_name,''), COALESCE(last_name,''),
-		          theme, language, COALESCE(image_url,''), status, plan, timezone,
-		          created_at, updated_at`,
+		RETURNING `+userColumns+`, created_at, updated_at`,
 		pgx.NamedArgs{
 			"id":           id,
 			"email":        email,
 			"username":     username,
 			"passwordHash": passwordHash,
 		},
-	).Scan(
-		&u.ID, &u.Email, &u.Username, &u.PasswordHash,
-		&u.FirstName, &u.LastName,
-		&u.Theme, &u.Language, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
-		&u.CreatedAt, &u.UpdatedAt,
-	)
+	).Scan(append(userScan(&u), &u.CreatedAt, &u.UpdatedAt)...)
 	if err != nil {
 		if name := uniqueViolationField(err); name != "" {
 			// Match on the field in the constraint/index name rather than an exact
@@ -110,21 +136,16 @@ func (r *pgRepo) GetUserByIdentifier(ctx context.Context, identifier string) (Us
 func (r *pgRepo) getUserByUsername(ctx context.Context, username string) (User, error) {
 	var u User
 	err := r.db.QueryRow(ctx, `
-		SELECT id, email, COALESCE(username,''), password_hash,
-		       COALESCE(first_name,''), COALESCE(last_name,''),
-		       theme, language, COALESCE(image_url,''), status, plan, timezone,
+		SELECT `+userColumns+`,
 		       email_verified, failed_login_count, locked_until,
 		       created_at, updated_at
 		FROM users
 		WHERE username = @username AND deleted_at IS NULL`,
 		pgx.NamedArgs{"username": username},
-	).Scan(
-		&u.ID, &u.Email, &u.Username, &u.PasswordHash,
-		&u.FirstName, &u.LastName,
-		&u.Theme, &u.Language, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
+	).Scan(append(userScan(&u),
 		&u.EmailVerified, &u.FailedLoginCount, &u.LockedUntil,
 		&u.CreatedAt, &u.UpdatedAt,
-	)
+	)...)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return User{}, apperror.New(http.StatusNotFound, apperror.ErrUserNotFound, "user not found")
@@ -137,21 +158,16 @@ func (r *pgRepo) getUserByUsername(ctx context.Context, username string) (User, 
 func (r *pgRepo) GetUserByEmail(ctx context.Context, email string) (User, error) {
 	var u User
 	err := r.db.QueryRow(ctx, `
-		SELECT id, email, COALESCE(username,''), password_hash,
-		       COALESCE(first_name,''), COALESCE(last_name,''),
-		       theme, language, COALESCE(image_url,''), status, plan, timezone,
+		SELECT `+userColumns+`,
 		       email_verified, failed_login_count, locked_until,
 		       created_at, updated_at
 		FROM users
 		WHERE email = @email AND deleted_at IS NULL`,
 		pgx.NamedArgs{"email": email},
-	).Scan(
-		&u.ID, &u.Email, &u.Username, &u.PasswordHash,
-		&u.FirstName, &u.LastName,
-		&u.Theme, &u.Language, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
+	).Scan(append(userScan(&u),
 		&u.EmailVerified, &u.FailedLoginCount, &u.LockedUntil,
 		&u.CreatedAt, &u.UpdatedAt,
-	)
+	)...)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return User{}, apperror.New(http.StatusNotFound, apperror.ErrUserNotFound, "user not found")
@@ -164,21 +180,16 @@ func (r *pgRepo) GetUserByEmail(ctx context.Context, email string) (User, error)
 func (r *pgRepo) GetUserByID(ctx context.Context, userID string) (User, error) {
 	var u User
 	err := r.db.QueryRow(ctx, `
-		SELECT id, email, COALESCE(username,''), password_hash,
-		       COALESCE(first_name,''), COALESCE(last_name,''),
-		       theme, language, COALESCE(image_url,''), status, plan, timezone,
+		SELECT `+userColumns+`,
 		       email_verified,
 		       created_at, updated_at
 		FROM users
 		WHERE id = @userID AND deleted_at IS NULL`,
 		pgx.NamedArgs{"userID": userID},
-	).Scan(
-		&u.ID, &u.Email, &u.Username, &u.PasswordHash,
-		&u.FirstName, &u.LastName,
-		&u.Theme, &u.Language, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
+	).Scan(append(userScan(&u),
 		&u.EmailVerified,
 		&u.CreatedAt, &u.UpdatedAt,
-	)
+	)...)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return User{}, apperror.New(http.StatusNotFound, apperror.ErrUserNotFound, "user not found")
@@ -197,26 +208,26 @@ func (r *pgRepo) UpdateUser(ctx context.Context, userID string, req UpdateMeRequ
 		  timezone    = COALESCE(@timezone,    timezone),
 		  theme       = COALESCE(@theme,       theme),
 		  language    = COALESCE(@language,    language),
+		  week_start     = COALESCE(@weekStart,     week_start),
+		  workdays       = COALESCE(@workdays,      workdays),
+		  day_start_hour = COALESCE(@dayStartHour,  day_start_hour),
+		  day_end_hour   = COALESCE(@dayEndHour,    day_end_hour),
 		  updated_at  = NOW()
 		WHERE id = @userID AND deleted_at IS NULL
-		RETURNING id, email, COALESCE(username,''), password_hash,
-		          COALESCE(first_name,''), COALESCE(last_name,''),
-		          theme, language, COALESCE(image_url,''), status, plan, timezone,
-		          created_at, updated_at`,
+		RETURNING `+userColumns+`, created_at, updated_at`,
 		pgx.NamedArgs{
-			"firstName": req.FirstName,
-			"lastName":  req.LastName,
-			"timezone":  req.Timezone,
-			"theme":     req.Theme,
-			"language":  req.Language,
-			"userID":    userID,
+			"firstName":    req.FirstName,
+			"lastName":     req.LastName,
+			"timezone":     req.Timezone,
+			"theme":        req.Theme,
+			"language":     req.Language,
+			"weekStart":    req.WeekStart,
+			"workdays":     workdaysArg(req.Workdays),
+			"dayStartHour": req.DayStartHour,
+			"dayEndHour":   req.DayEndHour,
+			"userID":       userID,
 		},
-	).Scan(
-		&u.ID, &u.Email, &u.Username, &u.PasswordHash,
-		&u.FirstName, &u.LastName,
-		&u.Theme, &u.Language, &u.ImageURL, &u.Status, &u.Plan, &u.Timezone,
-		&u.CreatedAt, &u.UpdatedAt,
-	)
+	).Scan(append(userScan(&u), &u.CreatedAt, &u.UpdatedAt)...)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return User{}, apperror.New(http.StatusNotFound, apperror.ErrUserNotFound, "user not found")
