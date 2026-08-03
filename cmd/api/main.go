@@ -211,7 +211,7 @@ func main() {
 	// Google Calendar connection (E-052 / NIC-1844). Any credential or the
 	// encryption key missing ⇒ every endpoint returns a typed 503 and nothing
 	// else in the app notices.
-	googleCalSvc := newGoogleCalService(cfg, pool, authSvc)
+	googleCalSvc, googleEventsSvc := newGoogleCalServices(cfg, pool, authSvc)
 
 	// Sweep jobs — hourly, invoked by Render Cron Jobs via /internal/jobs/*.
 	jobsRepo := jobs.NewRepository(pool)
@@ -235,6 +235,7 @@ func main() {
 		Focus:        focus.NewHandler(focusSvc),
 		Notification: notification.NewHandler(notificationSvc),
 		GoogleCal:    googlecal.NewHandler(googleCalSvc, cfg.AppBaseURL),
+		GoogleEvents: googlecal.NewEventsHandler(googleEventsSvc),
 		Jobs: jobs.NewHandler(dueDateNotifier, overdueNotifier, dayStartNotifier, inboxNotifier, summaryNotifier, attachmentGCAdapter{svc: attachmentSvc}).
 			WithRecurrence(recurrenceSweepAdapter{m: recurrenceMaterializer}).
 			WithFocusStale(focusStaleAdapter{svc: focusSvc}),
@@ -362,13 +363,19 @@ func (a attachmentGCAdapter) RunGC(ctx context.Context) (jobs.GCSummary, error) 
 	return jobs.GCSummary{ObjectsDeleted: sum.ObjectsDeleted, RowsDeleted: sum.RowsDeleted}, nil
 }
 
-// newGoogleCalService wires the Google Calendar connection service (E-052).
+// newGoogleCalServices wires the Google Calendar connection and events services
+// (E-052).
 //
-// Extracted from main so the wiring reads as one decision rather than five
-// lines of plumbing. Any missing credential makes the OAuth client disabled and
-// every endpoint return a typed 503, so an environment without Google
-// configuration boots normally.
-func newGoogleCalService(cfg config.Config, pool *pgxpool.Pool, authSvc auth.Service) googlecal.Service {
+// Extracted from main so the wiring reads as one decision rather than a dozen
+// lines of plumbing. Any missing credential makes the client disabled and every
+// endpoint degrade — connection endpoints return a typed 503, the events
+// endpoint returns an empty overlay with `disconnected` — so an environment
+// without Google configuration boots normally.
+//
+// Both services share one repository and one client: they are two views of the
+// same connection, and a second client would mean a second set of credentials to
+// keep in step.
+func newGoogleCalServices(cfg config.Config, pool *pgxpool.Pool, authSvc auth.Service) (googlecal.Service, googlecal.EventsService) {
 	cipher, err := cryptoutil.NewCipher(cfg.GoogleTokenEncKey)
 	if err != nil {
 		// A key that is present but malformed must not boot: silently disabling
@@ -381,11 +388,10 @@ func newGoogleCalService(cfg config.Config, pool *pgxpool.Pool, authSvc auth.Ser
 		log.Warn().Msg("google calendar: disabled (unset GOOGLE_* env) — /v1/calendar/google/* returns 503")
 	}
 
-	svc := googlecal.NewService(
-		googlecal.NewRepository(pool, cipher),
-		googlecal.NewStateRepository(pool),
-		google.New(cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleRedirectURL),
-	)
+	repo := googlecal.NewRepository(pool, cipher)
+	client := google.New(cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleRedirectURL)
+
+	svc := googlecal.NewService(repo, googlecal.NewStateRepository(pool), client)
 
 	// Deleting a Nicoflow account must not leave a live Google grant behind
 	// (E-040 / GDPR). Easy to miss because deletion is a SOFT delete — the user
@@ -394,5 +400,5 @@ func newGoogleCalService(cfg config.Config, pool *pgxpool.Pool, authSvc auth.Ser
 		registry.RegisterEraser(svc)
 	}
 
-	return svc
+	return svc, googlecal.NewEventsService(repo, client)
 }

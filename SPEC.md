@@ -2004,6 +2004,153 @@ badge rise then drives the bell animation and (Pro) the browser notification.
 
 ---
 
+### 3.16 Google Calendar Overlay — E-052
+
+A **read-only** overlay of the user's Google events on the Nicoflow calendar.
+Nicoflow never writes to Google: the only scope requested is
+`calendar.readonly`. Google is the source of truth and is called **live** — there
+is no event table, no `syncToken` and no sync engine, because those reintroduce
+staleness exactly when a meeting is rescheduled minutes before it starts.
+
+The refresh token is encrypted at rest (AES-256-GCM) and **never appears in any
+response**, encrypted or otherwise. The access token is not stored at all — it is
+short-lived and re-derived from the refresh token on demand.
+
+**Configuration:** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
+`GOOGLE_REDIRECT_URL` and `GOOGLE_TOKEN_ENC_KEY` are required **together**. Any
+unset ⇒ the integration is off: connection endpoints return a typed `503` and the
+events endpoint returns an empty overlay with `googleStatus: "disconnected"`.
+
+#### The `googleStatus` contract
+
+Every events response carries a status, because an empty list is ambiguous — a
+user with no meetings and a user whose token just died look identical, and the
+second must never be shown a clean calendar.
+
+| Status | Meaning | Client action |
+| ------ | ------- | ------------- |
+| `ok` | Fetch succeeded; the list is complete | Render the overlay |
+| `disconnected` | No usable connection — never connected, or the grant is dead and the token has been cleared | Show the reconnect prompt |
+| `error` | Connection is fine; Google could not be reached or refused the request | Show the dismissible unavailability strip |
+
+#### GET /v1/calendar/google/connect
+
+Returns the Google consent URL. Returns JSON rather than a 302 because the caller
+is an authenticated XHR — a redirect would be followed by `fetch` without the
+browser ever navigating.
+
+- **Auth required:** Yes
+- **Query:** `next` (optional) — an in-app absolute path to return to. Anything
+  with a scheme or authority is discarded (open-redirect defence).
+
+```json
+{ "data": { "authUrl": "https://accounts.google.com/o/oauth2/v2/auth?..." }, "error": null }
+```
+
+#### GET /v1/calendar/google/callback
+
+**Unauthenticated** — the browser arrives from `accounts.google.com` with no
+`Authorization` header, so the single-use `state` is what identifies the user and
+proves they started the flow. Always **redirects** back into the SPA with a
+`?google=connected|denied|failed` status; never returns JSON.
+
+Rate-limited per IP (20/min) because it is public and makes a network call.
+
+#### GET /v1/calendar/google/connection
+
+- **Auth required:** Yes
+- **Errors:** `409 GOOGLE_NOT_CONNECTED`
+
+**`ConnectionView`** — no token field in any form.
+
+```jsonc
+{
+  "googleAccountEmail": "user@example.com",
+  "selectedCalendarIds": ["primary"],
+  "scopes": ["https://www.googleapis.com/auth/calendar.readonly"],
+  "connectedAt": "2026-08-03T09:00:00Z",
+  "lastSyncAt": null,
+  "lastError": null            // human-readable; never carries token material
+}
+```
+
+#### DELETE /v1/calendar/google/connection
+
+Revokes the grant **with Google first**, then deletes the local row — deleting
+without revoking would leave a live grant the user believes they removed. A
+revoke failure is logged but does **not** abort the delete, since refusing to
+disconnect because Google is unreachable would trap the user in a connection they
+have explicitly rejected.
+
+- **Auth required:** Yes
+- **Response:** `204 No Content` — idempotent
+
+#### GET /v1/calendar/google-events
+
+The overlay for a date range. **Never returns 5xx for a Google-side failure** —
+this endpoint is context on the user's own task calendar, and a Google outage
+must not be able to break the view that shows them their work.
+
+- **Auth required:** Yes
+- **Query:** `from` (required, `YYYY-MM-DD`, inclusive) · `to` (required,
+  inclusive) · `refresh` (optional, `true` bypasses the cache)
+- **Errors:** `422 INVALID_INPUT` — missing bound, malformed date, inverted
+  range, or a span over **62 days** (matching the task calendar cap in §3.4).
+  These are the *only* errors; Google problems arrive as a status inside a `200`.
+
+**`GoogleEventView`** — all IDs are strings.
+
+```jsonc
+{
+  "id": "abc123",
+  "title": "Standup",          // "(no title)" when Google withholds it (private event)
+  "start": "2026-08-03T09:00:00+03:00",  // RFC3339 in the user's timezone…
+  "end":   "2026-08-03T09:30:00+03:00",
+  "allDay": false,
+  "calendarId": "primary",
+  "htmlLink": "https://calendar.google.com/..."
+}
+```
+
+**Times are returned in the user's `users.timezone`, not UTC.** The client places
+events on an hour grid; shipping UTC would make every consumer re-derive the
+local hour — the exact conversion that goes wrong across a DST boundary. When
+`allDay` is `true`, `start`/`end` are **plain `YYYY-MM-DD` dates** with no time:
+a birthday is the 4th everywhere, and giving it an instant would drift it across
+the day boundary for anyone in another zone. `end` is **exclusive**, matching
+Google.
+
+**Response — 200 OK**
+
+```jsonc
+{
+  "data": {
+    "events": [ /* GoogleEventView[] — always an array, never null */ ],
+    "googleStatus": "ok"
+  },
+  "error": null
+}
+```
+
+**Behaviour that the contract depends on:**
+
+- **Recurring events are pre-expanded** (`singleEvents=true`), so a response
+  never contains an RRULE — the client is not expected to implement RFC 5545.
+- **Caching:** results are cached in-process for ~3 minutes, keyed by
+  `(userId, calendarIds, from, to)`, to absorb the burst from view switching.
+  `refresh=true` bypasses it. **Failures are never cached** — a blip must not
+  force minutes of forced emptiness after Google recovers.
+- **`invalid_grant` is terminal.** It means the user revoked access or changed
+  their password; retrying is guaranteed to fail. The connection is deleted (which
+  clears the token), the status becomes `disconnected`, and there is **no retry
+  loop**. Every other failure leaves the connection intact.
+- **A stale calendar degrades, it does not fail.** A deleted or unshared calendar
+  is dropped from the results and the overall fetch still succeeds.
+- **Fan-out is bounded** by the 5-calendar selection cap; each selected calendar
+  is one Google call per ranged fetch.
+
+---
+
 ## §4 Error Code Reference
 
 All API errors return a consistent envelope:

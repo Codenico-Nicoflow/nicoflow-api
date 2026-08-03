@@ -110,6 +110,10 @@ func (m *mockRepo) Delete(_ context.Context, _ string) error {
 	return nil
 }
 
+func (m *mockRepo) UserTimezone(_ context.Context, _ string) (string, error) {
+	return "UTC", nil
+}
+
 func notConnected() error {
 	return apperror.New(http.StatusConflict, apperror.ErrGoogleNotConnected, "not connected")
 }

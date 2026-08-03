@@ -123,6 +123,12 @@ func (h *Handler) redirect(w http.ResponseWriter, r *http.Request, path, status 
 }
 
 func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
+	writeErr(w, r, err)
+}
+
+// writeErr turns a domain error into the standard envelope. Package-level so the
+// connection and events handlers cannot drift into two different error shapes.
+func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	if ae, ok := errors.AsType[*apperror.AppError](err); ok {
 		respond.Error(w, ae.Status, ae.Code, ae.Message)
 		return

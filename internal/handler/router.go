@@ -42,6 +42,7 @@ type Handlers struct {
 	Focus        *focus.Handler
 	Notification *notification.Handler
 	GoogleCal    *googlecal.Handler
+	GoogleEvents *googlecal.EventsHandler
 	Jobs         *jobs.Handler
 	WS           *ws.Handler
 }
@@ -213,6 +214,10 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		r.Get("/calendar/google/connect", h.GoogleCal.Connect)
 		r.Get("/calendar/google/connection", h.GoogleCal.Get)
 		r.Delete("/calendar/google/connection", h.GoogleCal.Disconnect)
+		// The read-only event overlay (NIC-1850). Never 5xx on a Google failure —
+		// it answers 200 with `googleStatus` so an outage cannot break the
+		// calendar view.
+		r.Get("/calendar/google-events", h.GoogleEvents.List)
 
 		r.Post("/focus/sessions", h.Focus.Open)
 		r.Post("/focus/sessions/current/close", h.Focus.Close)
