@@ -399,6 +399,47 @@ func TestEventsService_List_AllDayRendersAsDate(t *testing.T) {
 	}
 }
 
+// Detail fields reach the wire, and a long agenda is cut rather than shipped
+// whole — a 62-day window across five calendars would otherwise carry kilobytes
+// of text per event for a preview line.
+func TestCalendarEvent_View_Detail(t *testing.T) {
+	// Multi-byte so a byte-based cut would split a codepoint and corrupt it.
+	long := strings.Repeat("ש", 400)
+
+	got := googlecal.CalendarEvent{
+		ID: "evt-1", Title: "Standup",
+		Location: "Room 4", Description: long,
+		Organizer: "Lead", AttendeeCount: 3, Response: googlecal.ResponseAccepted,
+		Start: mustTime(t, "2026-08-03T09:00:00Z"),
+		End:   mustTime(t, "2026-08-03T09:30:00Z"),
+	}.View(time.UTC)
+
+	if got.Location != "Room 4" || got.Organizer != "Lead" || got.AttendeeCount != 3 {
+		t.Errorf("detail fields not carried: %+v", got)
+	}
+	if got.Response != googlecal.ResponseAccepted {
+		t.Errorf("responseStatus = %q", got.Response)
+	}
+	// 300 runes of content plus the ellipsis that signals there is more.
+	if runes := []rune(got.Description); len(runes) != 301 || runes[300] != '…' {
+		t.Errorf("description length = %d, want 300 runes + ellipsis", len(runes))
+	}
+}
+
+// A description that already fits is passed through untouched — no stray
+// ellipsis on a short note.
+func TestCalendarEvent_View_ShortDescriptionUntouched(t *testing.T) {
+	got := googlecal.CalendarEvent{
+		ID: "evt-1", Description: "short note",
+		Start: mustTime(t, "2026-08-03T09:00:00Z"),
+		End:   mustTime(t, "2026-08-03T09:30:00Z"),
+	}.View(time.UTC)
+
+	if got.Description != "short note" {
+		t.Errorf("description = %q", got.Description)
+	}
+}
+
 // The range is resolved in the user's zone, not UTC — otherwise the first hours
 // of the day are silently missing for anyone east of UTC.
 func TestEventsService_List_RangeResolvedInUserZone(t *testing.T) {
