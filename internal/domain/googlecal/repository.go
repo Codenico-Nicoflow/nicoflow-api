@@ -23,6 +23,10 @@ type Repository interface {
 	UpdateSelectedCalendars(ctx context.Context, userID string, calendarIDs []string) (Connection, error)
 	SetError(ctx context.Context, userID string, message *string) error
 	Delete(ctx context.Context, userID string) error
+	// UserTimezone reads the IANA zone events are rendered in. Read here rather
+	// than through the auth domain to keep this package's dependencies to its
+	// own tables; it is a single scalar, not a reason to import another domain.
+	UserTimezone(ctx context.Context, userID string) (string, error)
 }
 
 type pgRepo struct {
@@ -170,6 +174,30 @@ func (r *pgRepo) SetError(ctx context.Context, userID string, message *string) e
 		return fmt.Errorf("googlecal.SetError: %w", err)
 	}
 	return nil
+}
+
+// UserTimezone reads the user's IANA zone.
+//
+// A missing or blank zone yields UTC rather than an error: a user with no
+// timezone set must still see their calendar, and failing the whole fetch over a
+// display preference would be a worse outcome than an offset the user can fix in
+// Settings.
+func (r *pgRepo) UserTimezone(ctx context.Context, userID string) (string, error) {
+	var tz string
+	err := r.db.QueryRow(ctx,
+		`SELECT COALESCE(timezone, '') FROM users WHERE id = $1 AND deleted_at IS NULL`,
+		userID,
+	).Scan(&tz)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "UTC", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("googlecal.UserTimezone: %w", err)
+	}
+	if tz == "" {
+		return "UTC", nil
+	}
+	return tz, nil
 }
 
 // Delete removes the connection. Idempotent: disconnecting twice is not an error,
