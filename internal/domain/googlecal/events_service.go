@@ -23,6 +23,10 @@ type EventsService interface {
 	// It returns an error ONLY for caller mistakes (a malformed or oversized
 	// range). Google failures come back as a status with an empty list.
 	List(ctx context.Context, userID, from, to string, refresh bool) (EventsResponse, error)
+	// InvalidateUser drops a user's cached ranges. Exposed so the picker can
+	// make a selection change take effect immediately (NIC-1857) — an overlay
+	// that updates three minutes later reads as a broken picker.
+	InvalidateUser(userID string)
 }
 
 type eventsService struct {
