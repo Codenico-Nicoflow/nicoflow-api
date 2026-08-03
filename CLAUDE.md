@@ -89,7 +89,7 @@ Dependency direction: Handler → Service interface → Repository interface. In
 - Never modify a deployed migration — always add a new numbered `.up.sql` / `.down.sql` pair.
 - `display_order` / `sort_order` use `INT DEFAULT 0`. Sparse ordering is intentional.
 
-### Migrations (001–038 applied)
+### Migrations (001–043 applied)
 
 ```
 001 create_users                     019 enrich_areas_projects
@@ -112,8 +112,15 @@ Dependency direction: Handler → Service interface → Repository interface. In
 018 users_email_partial_unique       036 create_file_attachments
                                      037 create_recurrence_rules
                                      038 create_focus_sessions
+                                     039 tasks_scheduled_time
+                                     040 recurrence_rules_scheduled_time
+                                     041 create_google_calendar_connections
+                                     042 create_google_oauth_states
+                                     043 users_calendar_preferences
 ```
 (031–035 are the notification stack: notifications table → preferences → Web Push subscriptions → per-family toggles → reminder-hours. 036 is the E-024 file-attachments table: polymorphic owner `{type,id}` (no FK), `user_id` cascade, unique `s3_key`; quota enforced by the repo's atomic guarded insert — NIC-1638.)
+
+> **043 `users_calendar_preferences`** (NIC-1890) adds `week_start`, `workdays`, `day_start_hour`, `day_end_hour` to `users`. They live here rather than in a calendar-only table because **`week_start` is not purely display** — the notification sweeps and any future "this week" grouping key off a week boundary, and a second source of truth would let the backend and the grid disagree about which week a task is in. `workdays` is a `SMALLINT[]`, not a `workdays_only` boolean: the work week is Mon–Fri across most of Europe but **Sun–Thu in Israel**, and the product ships Hebrew + RTL. `day_end_hour` is **exclusive**, ceiling 24, because "08:00 to midnight" is the case the feature exists for. Defaults reproduce the previous behaviour exactly. All four carry `CHECK` constraints, but validation lives in the **service layer** (`internal/domain/auth/calendar_prefs.go`) — a constraint violation surfaces as a 500 carrying a Postgres error string, which no client can act on.
 
 > **038 `create_focus_sessions`** (E-049 / NIC-1709) is the time-on-task source of truth: one row per contiguous active run ("segment") — `id, user_id, task_id, started_at, ended_at (NULL while open), last_seen`. A task's total is **derived** as `SUM(ended_at - started_at)` over closed segments; there is deliberately no cached total on `tasks`. Every close stamps `ended_at = last_seen`, **never `NOW()`**, so an abandoned segment is credited with the time its heartbeats proved rather than the time until the sweep noticed. The one-open-per-user invariant is held by the `OpenAtomic` transaction (`SELECT … FOR UPDATE` → close prior → insert) with a partial-unique index `(user_id) WHERE ended_at IS NULL` as the safety net. `ListStaleOpen`/`CloseByID` are the only system-scope (non-user-filtered) methods — sweep-only.
 

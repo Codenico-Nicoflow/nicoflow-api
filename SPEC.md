@@ -304,11 +304,34 @@ Retrieve the authenticated user's profile.
   "language": "en",
   "timezone": "Europe/London",
   "imageUrl": "https://...",
-  "plan": "free"
+  "plan": "free",
+  "calendar": {
+    "weekStart": 1,
+    "workdays": [0, 1, 2, 3, 4, 5, 6],
+    "dayStartHour": 0,
+    "dayEndHour": 24
+  }
 }
 ```
 
 `timezone` is the user's IANA zone (drives when proactive-notification sweeps fire — see §3.12). Also echoed by `PATCH /v1/users/me`.
+
+`calendar` (NIC-1890) is how the user wants the calendar grid drawn. It travels on **every** auth response — login, register, refresh, profile — because the grid needs it on first paint; a second round trip would render one frame of the wrong week. `workdays` is always an array, never `null`.
+
+| Field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `weekStart` | `0`–`6` | `1` (Mon) | First column of the week. **0 = Sunday**, matching JS `getDay()` and Go `time.Weekday`, so no consumer needs a translation table. |
+| `workdays` | `number[]` | all seven | Which days the grid draws, same 0–6 encoding. Never empty. |
+| `dayStartHour` | `0`–`23` | `0` | First hour drawn. |
+| `dayEndHour` | `1`–`24` | `24` | Last hour drawn, **exclusive**. |
+
+Three things about this shape that are load-bearing:
+
+- **These live on `users`, not in a calendar-only table.** `weekStart` is not purely display: the notification sweeps (§3.12) and any future "this week" grouping key off a week boundary, and a second source of truth would let the backend and the grid disagree about which week a task is in.
+- **`workdays` is a set, not a `workdaysOnly` boolean.** The work week is Mon–Fri across most of Europe but **Sun–Thu in Israel**, and the product ships Hebrew + RTL (§10) — a boolean cannot express both.
+- **`dayEndHour` is exclusive with a ceiling of 24.** "08:00 to midnight" is the case the preference exists for, and an inclusive `23` cannot express it. `24` means "through midnight", not "00:00".
+
+The defaults reproduce the pre-NIC-1890 behaviour exactly, so an existing user sees no change until they choose one. The hour window is a **default view, never a filter**: clients must widen the drawn range to include anything actually scheduled outside it (tasks *and* Google events), because a display setting that silently hides scheduled work is indistinguishable from losing it.
 
 **Errors:** `UNAUTHORIZED` (401)
 
@@ -328,9 +351,16 @@ Update user profile fields.
   "lastName": "Doe",
   "timezone": "Europe/London",
   "theme": "dark",
-  "language": "he"
+  "language": "he",
+
+  "weekStart": 0,
+  "workdays": [0, 1, 2, 3, 4],
+  "dayStartHour": 8,
+  "dayEndHour": 18
 }
 ```
+
+The four calendar fields (NIC-1890) are **flat on the request**, not nested under a `calendar` object, and each is independently optional — a client changing only the day window never has to echo back a `weekStart` it did not read. They are echoed back **nested**, inside the `calendar` object of the returned `IUser`.
 
 `email` and `username` are **immutable via this path** and are ignored if sent (an unknown `email` field is silently dropped at decode). Allowing email change here is an account-takeover vector — combined with the unauthenticated forgot-password flow, an attacker with a live session could change the address to their own and reset. Correct email change (verify-new + notify-old + password re-auth) is a separate security-reviewed epic; `username` is a login credential.
 
@@ -338,7 +368,14 @@ Update user profile fields.
 
 `timezone` must be a valid IANA name resolvable by `time.LoadLocation` (e.g. `Europe/London`); an invalid value (garbage, an offset like `UTC+3`, or empty) returns `INVALID_INPUT` (422) and the stored value is left unchanged — it is **never** silently coerced to UTC, since a wrong stored zone makes every reminder fire at the wrong hour. `'UTC'` remains the column default for a brand-new row; that is distinct from overwriting explicit input. The client sends `Intl.DateTimeFormat().resolvedOptions().timeZone` on every login, so an existing `'UTC'` row self-heals on next login.
 
-**Response — 200 OK** — Updated `IUser` object (echoes `timezone`)
+**Calendar preference validation** — each rule returns `INVALID_INPUT` (422) and leaves the stored value unchanged. The columns carry matching `CHECK` constraints, but those are a backstop: a constraint violation surfaces as a 500 carrying a Postgres error string, which no client can act on.
+
+- `weekStart` outside `0`–`6`.
+- `workdays` empty, containing a value outside `0`–`6`, or containing a duplicate. Empty is rejected rather than meaning "hide everything" — a calendar with no days is a blank screen the user has no way to navigate back out of. Duplicates mean the client built the set wrongly, and collapsing them silently hides that.
+- `dayStartHour` outside `0`–`23`, or `dayEndHour` outside `1`–`24`.
+- `dayStartHour >= dayEndHour` — **including when only one end is sent**. A request carrying `dayStartHour: 20` against a stored `dayEndHour: 18` passes every per-field check and would land an empty window, so the absent end is resolved against the stored value before the comparison.
+
+**Response — 200 OK** — Updated `IUser` object (echoes `timezone` and `calendar`)
 
 ---
 
@@ -2161,9 +2198,37 @@ must not be able to break the view that shows them their work.
   "end":   "2026-08-03T09:30:00+03:00",
   "allDay": false,
   "calendarId": "primary",
-  "htmlLink": "https://calendar.google.com/..."
+  "htmlLink": "https://calendar.google.com/...",
+
+  // Detail fields (NIC-1880) — every one is `omitempty`. An event carrying none
+  // of them costs nothing extra on the wire, and the client MUST treat a missing
+  // key and an empty value identically rather than rendering a blank row.
+  "location": "Room 4",              // free text: a room, an address, a meeting URL
+  "description": "Agenda: ship it",  // plain text — see below
+  "organizer": "Ada Lovelace",       // display name, falling back to the email
+  "attendeeCount": 3,                // includes the organizer
+  "responseStatus": "accepted"       // accepted | declined | tentative | needsAction
 }
 ```
+
+**`description` is plain text, never HTML.** Google returns descriptions as HTML
+(`<br>`, `<a href>`, whatever was pasted in). The tags are stripped **server-side**
+so the browser, the mobile app and every test see the same string and no consumer
+is ever handed markup it might be tempted to render. It is a display transform,
+not a security boundary — clients must still put it in a text node. It is
+truncated to **300 runes** (not bytes, so a Hebrew or Russian agenda is never cut
+mid-codepoint) with a trailing `…`; a 62-day window across five calendars would
+otherwise carry kilobytes of agenda text per event for what renders as a preview.
+
+**`responseStatus` is the VIEWER's own RSVP**, matched on Google's `self` flag
+rather than by email — a shared calendar may carry an alias or a group address,
+so email matching returns nothing for exactly the users most likely to have
+shared calendars. It is absent when the event has no attendee list (a personal
+entry the user simply owns), which is distinct from `needsAction`.
+
+**`attendeeCount` is a count, not the list.** Names and addresses of other people
+are considerably more personal data than an at-a-glance overlay justifies
+fetching, caching and shipping. A count of `1` means the organizer alone.
 
 **Times are returned in the user's `users.timezone`, not UTC.** The client places
 events on an hour grid; shipping UTC would make every consumer re-derive the
