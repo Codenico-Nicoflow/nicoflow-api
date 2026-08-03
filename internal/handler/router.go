@@ -29,22 +29,23 @@ import (
 
 // Handlers groups all domain handler pointers.
 type Handlers struct {
-	Auth         *auth.Handler
-	Area         *area.Handler
-	Project      *project.Handler
-	Task         *task.Handler
-	Bucket       *bucket.Handler
-	AI           *ai.Handler
-	Billing      *billing.Handler
-	Search       *search.Handler
-	Attachment   *attachment.Handler
-	Recurrence   *recurrence.Handler
-	Focus        *focus.Handler
-	Notification *notification.Handler
-	GoogleCal    *googlecal.Handler
-	GoogleEvents *googlecal.EventsHandler
-	Jobs         *jobs.Handler
-	WS           *ws.Handler
+	Auth            *auth.Handler
+	Area            *area.Handler
+	Project         *project.Handler
+	Task            *task.Handler
+	Bucket          *bucket.Handler
+	AI              *ai.Handler
+	Billing         *billing.Handler
+	Search          *search.Handler
+	Attachment      *attachment.Handler
+	Recurrence      *recurrence.Handler
+	Focus           *focus.Handler
+	Notification    *notification.Handler
+	GoogleCal       *googlecal.Handler
+	GoogleEvents    *googlecal.EventsHandler
+	GoogleCalendars *googlecal.CalendarsHandler
+	Jobs            *jobs.Handler
+	WS              *ws.Handler
 }
 
 // New builds and returns the fully-wired Chi router.
@@ -218,6 +219,10 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		// it answers 200 with `googleStatus` so an outage cannot break the
 		// calendar view.
 		r.Get("/calendar/google-events", h.GoogleEvents.List)
+		// Calendar picker (NIC-1857). The 5-calendar cap is enforced in the
+		// service — a disabled checkbox is a hint, not enforcement.
+		r.Get("/calendar/google/calendars", h.GoogleCalendars.List)
+		r.Put("/calendar/google/calendars", h.GoogleCalendars.UpdateSelection)
 
 		r.Post("/focus/sessions", h.Focus.Open)
 		r.Post("/focus/sessions/current/close", h.Focus.Close)
