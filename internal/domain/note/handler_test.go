@@ -51,6 +51,9 @@ func (m *mockService) Delete(ctx context.Context, userID, id string) error {
 	return m.deleteFn(ctx, userID, id)
 }
 
+// WithCleaner is wire-up only; the handler never calls it.
+func (m *mockService) WithCleaner(note.AttachmentCleaner) note.Service { return m }
+
 // serve routes the request through a chi mux so {id} URL params resolve exactly
 // as they do in the real router.
 func serve(t *testing.T, svc note.Service, method, target string, body string) *httptest.ResponseRecorder {

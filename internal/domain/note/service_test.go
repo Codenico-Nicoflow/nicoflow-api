@@ -23,6 +23,7 @@ type mockRepo struct {
 	update        func(ctx context.Context, p note.UpdateParams) (note.Note, bool, error)
 	deleteFn      func(ctx context.Context, userID, id string) (bool, error)
 	existsForUser func(ctx context.Context, userID, noteID string) (bool, error)
+	existsByID    func(ctx context.Context, id string) (bool, error)
 }
 
 func (m *mockRepo) ListByProject(ctx context.Context, userID, projectID string) ([]note.Note, error) {
@@ -45,6 +46,12 @@ func (m *mockRepo) ExistsForUser(ctx context.Context, userID, noteID string) (bo
 		return true, nil
 	}
 	return m.existsForUser(ctx, userID, noteID)
+}
+func (m *mockRepo) ExistsByID(ctx context.Context, id string) (bool, error) {
+	if m.existsByID == nil {
+		return true, nil
+	}
+	return m.existsByID(ctx, id)
 }
 
 type mockProjects struct {
@@ -112,7 +119,7 @@ func TestServiceCreate(t *testing.T) {
 		saved = n
 		return echoCreate(ctx, n)
 	}}
-	svc := note.NewService(repo, &mockProjects{})
+	svc := note.NewService(repo, &mockProjects{}, nil)
 
 	content := json.RawMessage(`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"GTD thread"}]}]}`)
 	view, err := svc.Create(context.Background(), testUser, note.CreateNoteRequest{
@@ -146,7 +153,7 @@ func TestCreateDefaultsContentToEmptyDoc(t *testing.T) {
 		saved = n
 		return echoCreate(ctx, n)
 	}}
-	svc := note.NewService(repo, &mockProjects{})
+	svc := note.NewService(repo, &mockProjects{}, nil)
 
 	if _, err := svc.Create(context.Background(), testUser, note.CreateNoteRequest{
 		ProjectID: testProject, Title: "no body",
@@ -178,7 +185,7 @@ func TestCreateForeignProjectDoesNotLeak(t *testing.T) {
 	}}
 	svc := note.NewService(repo, &mockProjects{
 		verify: func(ctx context.Context, userID, projectID string) error { return notFound },
-	})
+	}, nil)
 
 	_, err := svc.Create(context.Background(), testUser, note.CreateNoteRequest{
 		ProjectID: "p_someone_else", Title: "trespass",
@@ -225,7 +232,7 @@ func TestCreateValidation(t *testing.T) {
 				created = true
 				return echoCreate(ctx, n)
 			}}
-			svc := note.NewService(repo, &mockProjects{})
+			svc := note.NewService(repo, &mockProjects{}, nil)
 
 			_, err := svc.Create(context.Background(), testUser, tt.req)
 
@@ -239,7 +246,7 @@ func TestCreateValidation(t *testing.T) {
 
 func TestCreateTitleAtLimitIsAccepted(t *testing.T) {
 	repo := &mockRepo{create: echoCreate}
-	svc := note.NewService(repo, &mockProjects{})
+	svc := note.NewService(repo, &mockProjects{}, nil)
 
 	// 255 multi-byte runes: within the column, but 510 bytes — a byte-based
 	// length check would wrongly reject this.
@@ -258,7 +265,7 @@ func TestCreateIsNotPlanGated(t *testing.T) {
 		count++
 		return echoCreate(ctx, n)
 	}}
-	svc := note.NewService(repo, &mockProjects{})
+	svc := note.NewService(repo, &mockProjects{}, nil)
 
 	for i := range 50 {
 		if _, err := svc.Create(context.Background(), testUser, note.CreateNoteRequest{
@@ -288,7 +295,7 @@ func TestUpdateBumpsVersion(t *testing.T) {
 			return n, true, nil
 		},
 	}
-	svc := note.NewService(repo, &mockProjects{})
+	svc := note.NewService(repo, &mockProjects{}, nil)
 
 	title := "renamed"
 	content := json.RawMessage(`{"type":"doc","content":[{"type":"text","text":"new body"}]}`)
@@ -321,7 +328,7 @@ func TestUpdateStaleVersionConflicts(t *testing.T) {
 			return note.Note{}, false, nil
 		},
 	}
-	svc := note.NewService(repo, &mockProjects{})
+	svc := note.NewService(repo, &mockProjects{}, nil)
 
 	title := "stale write"
 	_, err := svc.Update(context.Background(), testUser, testNoteID, note.UpdateNoteRequest{
@@ -339,7 +346,7 @@ func TestUpdateForeignNoteIsNotFound(t *testing.T) {
 			return note.Note{}, notFound
 		},
 	}
-	svc := note.NewService(repo, &mockProjects{})
+	svc := note.NewService(repo, &mockProjects{}, nil)
 
 	title := "hijack"
 	_, err := svc.Update(context.Background(), testUser, testNoteID, note.UpdateNoteRequest{
@@ -368,7 +375,7 @@ func TestUpdateVersionValidation(t *testing.T) {
 					return storedNote(1), nil
 				},
 			}
-			svc := note.NewService(repo, &mockProjects{})
+			svc := note.NewService(repo, &mockProjects{}, nil)
 
 			_, err := svc.Update(context.Background(), testUser, testNoteID, tt.req)
 
@@ -391,7 +398,7 @@ func TestUpdatePreservesOmittedFields(t *testing.T) {
 			return stored, true, nil
 		},
 	}
-	svc := note.NewService(repo, &mockProjects{})
+	svc := note.NewService(repo, &mockProjects{}, nil)
 
 	title := "only the title changes"
 	if _, err := svc.Update(context.Background(), testUser, testNoteID, note.UpdateNoteRequest{
@@ -437,7 +444,7 @@ func TestUpdateValidatesTitleAndContent(t *testing.T) {
 					return storedNote(2), true, nil
 				},
 			}
-			svc := note.NewService(repo, &mockProjects{})
+			svc := note.NewService(repo, &mockProjects{}, nil)
 
 			_, err := svc.Update(context.Background(), testUser, testNoteID, tt.req)
 
@@ -461,7 +468,7 @@ func TestListReturnsExcerptsOnly(t *testing.T) {
 			{ID: "n_2", ProjectID: &pid, Title: "small", ContentText: "short text", Version: 1},
 		}, nil
 	}}
-	svc := note.NewService(repo, &mockProjects{})
+	svc := note.NewService(repo, &mockProjects{}, nil)
 
 	list, err := svc.ListByProject(context.Background(), testUser, testProject)
 	if err != nil {
@@ -497,7 +504,7 @@ func TestListReturnsExcerptsOnly(t *testing.T) {
 }
 
 func TestListRequiresProjectID(t *testing.T) {
-	svc := note.NewService(&mockRepo{}, &mockProjects{})
+	svc := note.NewService(&mockRepo{}, &mockProjects{}, nil)
 
 	_, err := svc.ListByProject(context.Background(), testUser, "  ")
 
@@ -514,7 +521,7 @@ func TestListForeignProjectIsNotFound(t *testing.T) {
 	}}
 	svc := note.NewService(repo, &mockProjects{
 		verify: func(ctx context.Context, userID, projectID string) error { return notFound },
-	})
+	}, nil)
 
 	_, err := svc.ListByProject(context.Background(), testUser, "p_someone_else")
 
@@ -528,7 +535,7 @@ func TestListEmptyProjectReturnsEmptySlice(t *testing.T) {
 	repo := &mockRepo{listByProject: func(ctx context.Context, userID, projectID string) ([]note.Note, error) {
 		return nil, nil
 	}}
-	svc := note.NewService(repo, &mockProjects{})
+	svc := note.NewService(repo, &mockProjects{}, nil)
 
 	list, err := svc.ListByProject(context.Background(), testUser, testProject)
 	if err != nil {
@@ -550,7 +557,7 @@ func TestGetReturnsFullDocument(t *testing.T) {
 	repo := &mockRepo{getByID: func(ctx context.Context, userID, id string) (note.Note, error) {
 		return stored, nil
 	}}
-	svc := note.NewService(repo, &mockProjects{})
+	svc := note.NewService(repo, &mockProjects{}, nil)
 
 	view, err := svc.Get(context.Background(), testUser, testNoteID)
 	if err != nil {
@@ -568,7 +575,7 @@ func TestGetMissingNoteIsNotFound(t *testing.T) {
 	repo := &mockRepo{getByID: func(ctx context.Context, userID, id string) (note.Note, error) {
 		return note.Note{}, notFound
 	}}
-	svc := note.NewService(repo, &mockProjects{})
+	svc := note.NewService(repo, &mockProjects{}, nil)
 
 	_, err := svc.Get(context.Background(), testUser, "n_missing")
 
@@ -579,7 +586,7 @@ func TestServiceDelete(t *testing.T) {
 	repo := &mockRepo{deleteFn: func(ctx context.Context, userID, id string) (bool, error) {
 		return true, nil
 	}}
-	svc := note.NewService(repo, &mockProjects{})
+	svc := note.NewService(repo, &mockProjects{}, nil)
 
 	if err := svc.Delete(context.Background(), testUser, testNoteID); err != nil {
 		t.Fatalf("Delete: %v", err)
@@ -590,7 +597,7 @@ func TestServiceDeleteMissingNoteIsNotFound(t *testing.T) {
 	repo := &mockRepo{deleteFn: func(ctx context.Context, userID, id string) (bool, error) {
 		return false, nil
 	}}
-	svc := note.NewService(repo, &mockProjects{})
+	svc := note.NewService(repo, &mockProjects{}, nil)
 
 	err := svc.Delete(context.Background(), testUser, "n_missing")
 
@@ -598,3 +605,213 @@ func TestServiceDeleteMissingNoteIsNotFound(t *testing.T) {
 }
 
 func intPtr(v int) *int { return &v }
+
+// ── real-time events + attachment cleanup (E-053 / NIC-1897) ─────────────────
+
+type spyBroadcaster struct{ events []note.Event }
+
+func (s *spyBroadcaster) Broadcast(_ string, ev note.Event) { s.events = append(s.events, ev) }
+
+type spyCleaner struct {
+	calls []string // "ownerType:ownerID"
+	err   error
+}
+
+func (s *spyCleaner) DeleteAllForOwner(_ context.Context, _, ownerType, ownerID string) error {
+	s.calls = append(s.calls, ownerType+":"+ownerID)
+	return s.err
+}
+
+// AC2 — note.created carries the full list-shaped view.
+func TestCreateBroadcastsCreated(t *testing.T) {
+	bc := &spyBroadcaster{}
+	svc := note.NewService(&mockRepo{create: echoCreate}, &mockProjects{}, bc)
+
+	if _, err := svc.Create(context.Background(), testUser, note.CreateNoteRequest{
+		ProjectID: testProject, Title: "t",
+		Content: json.RawMessage(`{"type":"doc","content":[{"type":"text","text":"body"}]}`),
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if len(bc.events) != 1 {
+		t.Fatalf("emitted %d events, want 1", len(bc.events))
+	}
+	if bc.events[0].Type != note.EventCreated {
+		t.Errorf("type = %q, want %q", bc.events[0].Type, note.EventCreated)
+	}
+	view, ok := bc.events[0].Payload.(note.NoteView)
+	if !ok {
+		t.Fatalf("payload = %T, want note.NoteView", bc.events[0].Payload)
+	}
+	if view.Excerpt != "body" {
+		t.Errorf("excerpt = %q, want the flattened text", view.Excerpt)
+	}
+}
+
+// AC1 — note.updated must never carry the document body. Autosave fires every
+// ~1–2s, so a full rich-text payload per save would be wasteful and racy.
+func TestUpdateBroadcastsWithoutContent(t *testing.T) {
+	bc := &spyBroadcaster{}
+	repo := &mockRepo{
+		getByID: func(ctx context.Context, userID, id string) (note.Note, error) { return storedNote(1), nil },
+		update: func(ctx context.Context, p note.UpdateParams) (note.Note, bool, error) {
+			n := storedNote(2)
+			n.ContentText = p.ContentText
+			return n, true, nil
+		},
+	}
+	svc := note.NewService(repo, &mockProjects{}, bc)
+
+	content := json.RawMessage(`{"type":"doc","content":[{"type":"text","text":"fresh"}]}`)
+	if _, err := svc.Update(context.Background(), testUser, testNoteID, note.UpdateNoteRequest{
+		Content: &content, Version: intPtr(1),
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	if len(bc.events) != 1 || bc.events[0].Type != note.EventUpdated {
+		t.Fatalf("events = %+v, want one note.updated", bc.events)
+	}
+
+	// Marshal the payload: the guarantee is about the wire shape, so assert there
+	// rather than on the Go type alone.
+	raw, err := json.Marshal(bc.events[0].Payload)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, present := fields["content"]; present {
+		t.Errorf("note.updated carries content: %s", raw)
+	}
+	if _, present := fields["excerpt"]; !present {
+		t.Errorf("note.updated has no excerpt: %s", raw)
+	}
+}
+
+// AC2 — note.deleted carries only { id }.
+func TestDeleteBroadcastsID(t *testing.T) {
+	bc := &spyBroadcaster{}
+	repo := &mockRepo{deleteFn: func(ctx context.Context, userID, id string) (bool, error) { return true, nil }}
+	svc := note.NewService(repo, &mockProjects{}, bc)
+
+	if err := svc.Delete(context.Background(), testUser, testNoteID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	if len(bc.events) != 1 || bc.events[0].Type != note.EventDeleted {
+		t.Fatalf("events = %+v, want one note.deleted", bc.events)
+	}
+	payload, ok := bc.events[0].Payload.(note.DeletedPayload)
+	if !ok {
+		t.Fatalf("payload = %T, want note.DeletedPayload", bc.events[0].Payload)
+	}
+	if payload.ID != testNoteID {
+		t.Errorf("id = %q, want %q", payload.ID, testNoteID)
+	}
+}
+
+// A failed mutation must not announce itself.
+func TestFailedMutationsDoNotBroadcast(t *testing.T) {
+	t.Run("stale update", func(t *testing.T) {
+		bc := &spyBroadcaster{}
+		repo := &mockRepo{
+			getByID: func(ctx context.Context, userID, id string) (note.Note, error) { return storedNote(7), nil },
+			update: func(ctx context.Context, p note.UpdateParams) (note.Note, bool, error) {
+				return note.Note{}, false, nil
+			},
+		}
+		svc := note.NewService(repo, &mockProjects{}, bc)
+
+		title := "stale"
+		if _, err := svc.Update(context.Background(), testUser, testNoteID, note.UpdateNoteRequest{
+			Title: &title, Version: intPtr(6),
+		}); err == nil {
+			t.Fatal("expected a conflict")
+		}
+		if len(bc.events) != 0 {
+			t.Errorf("a rejected save broadcast %+v", bc.events)
+		}
+	})
+
+	t.Run("missing delete", func(t *testing.T) {
+		bc := &spyBroadcaster{}
+		repo := &mockRepo{deleteFn: func(ctx context.Context, userID, id string) (bool, error) { return false, nil }}
+		svc := note.NewService(repo, &mockProjects{}, bc)
+
+		if err := svc.Delete(context.Background(), testUser, "n_missing"); err == nil {
+			t.Fatal("expected a not-found")
+		}
+		if len(bc.events) != 0 {
+			t.Errorf("a no-op delete broadcast %+v", bc.events)
+		}
+	})
+}
+
+// A nil broadcaster is a valid no-op seam, not a panic.
+func TestNilBroadcasterIsSafe(t *testing.T) {
+	svc := note.NewService(&mockRepo{create: echoCreate}, &mockProjects{}, nil)
+
+	if _, err := svc.Create(context.Background(), testUser, note.CreateNoteRequest{
+		ProjectID: testProject, Title: "t",
+	}); err != nil {
+		t.Fatalf("Create with a nil broadcaster: %v", err)
+	}
+}
+
+func TestDeleteCleansAttachments(t *testing.T) {
+	cleaner := &spyCleaner{}
+	repo := &mockRepo{deleteFn: func(ctx context.Context, userID, id string) (bool, error) { return true, nil }}
+	svc := note.NewService(repo, &mockProjects{}, nil).WithCleaner(cleaner)
+
+	if err := svc.Delete(context.Background(), testUser, testNoteID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	if len(cleaner.calls) != 1 || cleaner.calls[0] != "note:"+testNoteID {
+		t.Errorf("cleaner calls = %v, want one note:%s", cleaner.calls, testNoteID)
+	}
+}
+
+// AC7 — cleanup is best-effort: a failure never fails the delete that already
+// committed, so the caller still sees 204.
+func TestDeleteSucceedsWhenCleanupFails(t *testing.T) {
+	cleaner := &spyCleaner{err: errors.New("s3 unreachable")}
+	bc := &spyBroadcaster{}
+	repo := &mockRepo{deleteFn: func(ctx context.Context, userID, id string) (bool, error) { return true, nil }}
+	svc := note.NewService(repo, &mockProjects{}, bc).WithCleaner(cleaner)
+
+	if err := svc.Delete(context.Background(), testUser, testNoteID); err != nil {
+		t.Fatalf("a failed cleanup blocked the delete: %v", err)
+	}
+	if len(bc.events) != 1 {
+		t.Errorf("the delete did not broadcast: %+v", bc.events)
+	}
+}
+
+// A note with no attachment feature wired must still delete.
+func TestDeleteWithNilCleaner(t *testing.T) {
+	repo := &mockRepo{deleteFn: func(ctx context.Context, userID, id string) (bool, error) { return true, nil }}
+	svc := note.NewService(repo, &mockProjects{}, nil)
+
+	if err := svc.Delete(context.Background(), testUser, testNoteID); err != nil {
+		t.Fatalf("Delete with a nil cleaner: %v", err)
+	}
+}
+
+// A missing note must not trigger cleanup — there is no owner to clean.
+func TestMissingDeleteSkipsCleanup(t *testing.T) {
+	cleaner := &spyCleaner{}
+	repo := &mockRepo{deleteFn: func(ctx context.Context, userID, id string) (bool, error) { return false, nil }}
+	svc := note.NewService(repo, &mockProjects{}, nil).WithCleaner(cleaner)
+
+	if err := svc.Delete(context.Background(), testUser, "n_missing"); err == nil {
+		t.Fatal("expected a not-found")
+	}
+	if len(cleaner.calls) != 0 {
+		t.Errorf("cleanup ran for a missing note: %v", cleaner.calls)
+	}
+}

@@ -15,7 +15,15 @@ import (
 // drift into free-form values.
 const (
 	OwnerTypeTask = "task"
+	OwnerTypeNote = "note"
 )
+
+// isKnownOwnerType reports whether a polymorphic owner type is one this domain
+// serves. Adding an entry here plus a verifier branch is the whole cost of
+// onboarding a new owner — the table, quotas and GC are already owner-agnostic.
+func isKnownOwnerType(ownerType string) bool {
+	return ownerType == OwnerTypeTask || ownerType == OwnerTypeNote
+}
 
 // Domain event types emitted on mutation. Equal to the wire names by convention;
 // the ws adapter maps them through an explicit table (never a cast).
