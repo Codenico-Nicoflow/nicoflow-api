@@ -2321,7 +2321,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Comma-separated groups: task,project,area (omit for all)",
+                        "description": "Comma-separated groups: task,project,area,note (omit for all)",
                         "name": "types",
                         "in": "query"
                     },
@@ -4305,6 +4305,26 @@ const docTemplate = `{
                 }
             }
         },
+        "search.NoteResult": {
+            "type": "object",
+            "properties": {
+                "excerpt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "projectName": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
         "search.ProjectResult": {
             "type": "object",
             "properties": {
@@ -4326,6 +4346,12 @@ const docTemplate = `{
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/search.AreaResult"
+                    }
+                },
+                "notes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/search.NoteResult"
                     }
                 },
                 "projects": {

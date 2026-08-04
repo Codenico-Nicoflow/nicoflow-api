@@ -16,6 +16,7 @@ type mockRepo struct {
 	searchTasks    func(ctx context.Context, userID, term string, limit int) ([]search.TaskResult, error)
 	searchProjects func(ctx context.Context, userID, term string, limit int) ([]search.ProjectResult, error)
 	searchAreas    func(ctx context.Context, userID, term string, limit int) ([]search.AreaResult, error)
+	searchNotes    func(ctx context.Context, userID, term string, limit int) ([]search.NoteResult, error)
 }
 
 func (m *mockRepo) SearchTasks(ctx context.Context, userID, term string, limit int) ([]search.TaskResult, error) {
@@ -26,6 +27,12 @@ func (m *mockRepo) SearchProjects(ctx context.Context, userID, term string, limi
 }
 func (m *mockRepo) SearchAreas(ctx context.Context, userID, term string, limit int) ([]search.AreaResult, error) {
 	return m.searchAreas(ctx, userID, term, limit)
+}
+func (m *mockRepo) SearchNotes(ctx context.Context, userID, term string, limit int) ([]search.NoteResult, error) {
+	if m.searchNotes == nil {
+		return nil, nil
+	}
+	return m.searchNotes(ctx, userID, term, limit)
 }
 
 func appErr(err error) *apperror.AppError {
@@ -93,12 +100,25 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+// assertGroup checks one result group's size and that the repository was only
+// consulted when the group was requested.
+func assertGroup(t *testing.T, name string, got, want int, called bool) {
+	t.Helper()
+	if got != want {
+		t.Errorf("%s: want %d, got %d", name, want, got)
+	}
+	if want == 0 && called {
+		t.Errorf("%s: repository queried for an unrequested group", name)
+	}
+}
+
 // ── Search ────────────────────────────────────────────────────────────────────
 
 func TestService_Search(t *testing.T) {
 	sampleTasks := []search.TaskResult{{ID: "t1", Title: "Ship the bucket page", ProjectID: "p1", ProjectName: "Bucket cleanup"}}
 	sampleProjects := []search.ProjectResult{{ID: "p1", Name: "Bucket cleanup", AreaName: "Work"}}
 	sampleAreas := []search.AreaResult{{ID: "a1", Name: "Bucket area"}}
+	sampleNotes := []search.NoteResult{{ID: "n1", Title: "Bucket notes", ProjectID: "p1", ProjectName: "Bucket cleanup"}}
 
 	tests := []struct {
 		name         string
@@ -106,16 +126,20 @@ func TestService_Search(t *testing.T) {
 		wantTasks    int
 		wantProjects int
 		wantAreas    int
+		wantNotes    int
 	}{
-		{name: "all groups when types omitted", types: nil, wantTasks: 1, wantProjects: 1, wantAreas: 1},
-		{name: "only tasks requested", types: []string{"task"}, wantTasks: 1, wantProjects: 0, wantAreas: 0},
-		{name: "tasks and areas requested", types: []string{"task", "area"}, wantTasks: 1, wantProjects: 0, wantAreas: 1},
-		{name: "only projects requested", types: []string{"project"}, wantTasks: 0, wantProjects: 1, wantAreas: 0},
+		{name: "all groups when types omitted", types: nil, wantTasks: 1, wantProjects: 1, wantAreas: 1, wantNotes: 1},
+		{name: "only tasks requested", types: []string{"task"}, wantTasks: 1, wantProjects: 0, wantAreas: 0, wantNotes: 0},
+		{name: "tasks and areas requested", types: []string{"task", "area"}, wantTasks: 1, wantProjects: 0, wantAreas: 1, wantNotes: 0},
+		{name: "only projects requested", types: []string{"project"}, wantTasks: 0, wantProjects: 1, wantAreas: 0, wantNotes: 0},
+		// AC4 — types=note narrows the response to the notes group alone.
+		{name: "only notes requested", types: []string{"note"}, wantTasks: 0, wantProjects: 0, wantAreas: 0, wantNotes: 1},
+		{name: "notes alongside tasks", types: []string{"task", "note"}, wantTasks: 1, wantProjects: 0, wantAreas: 0, wantNotes: 1},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var tasksCalled, projectsCalled, areasCalled bool
+			var tasksCalled, projectsCalled, areasCalled, notesCalled bool
 			repo := &mockRepo{
 				searchTasks: func(_ context.Context, _, _ string, _ int) ([]search.TaskResult, error) {
 					tasksCalled = true
@@ -129,6 +153,10 @@ func TestService_Search(t *testing.T) {
 					areasCalled = true
 					return sampleAreas, nil
 				},
+				searchNotes: func(_ context.Context, _, _ string, _ int) ([]search.NoteResult, error) {
+					notesCalled = true
+					return sampleNotes, nil
+				},
 			}
 			svc := search.NewService(repo)
 
@@ -141,25 +169,13 @@ func TestService_Search(t *testing.T) {
 				t.Fatalf("search: %v", err)
 			}
 
-			if len(resp.Tasks) != tt.wantTasks {
-				t.Errorf("tasks: want %d, got %d", tt.wantTasks, len(resp.Tasks))
-			}
-			if len(resp.Projects) != tt.wantProjects {
-				t.Errorf("projects: want %d, got %d", tt.wantProjects, len(resp.Projects))
-			}
-			if len(resp.Areas) != tt.wantAreas {
-				t.Errorf("areas: want %d, got %d", tt.wantAreas, len(resp.Areas))
-			}
-			// Unrequested groups must not hit the repository (no wasted queries).
-			if tt.wantTasks == 0 && tasksCalled {
-				t.Error("SearchTasks called for unrequested group")
-			}
-			if tt.wantProjects == 0 && projectsCalled {
-				t.Error("SearchProjects called for unrequested group")
-			}
-			if tt.wantAreas == 0 && areasCalled {
-				t.Error("SearchAreas called for unrequested group")
-			}
+			// An unrequested group must be empty AND must not have hit the
+			// repository — a populated group is a filter bug, a wasted query is a
+			// performance one.
+			assertGroup(t, "tasks", len(resp.Tasks), tt.wantTasks, tasksCalled)
+			assertGroup(t, "projects", len(resp.Projects), tt.wantProjects, projectsCalled)
+			assertGroup(t, "areas", len(resp.Areas), tt.wantAreas, areasCalled)
+			assertGroup(t, "notes", len(resp.Notes), tt.wantNotes, notesCalled)
 		})
 	}
 }

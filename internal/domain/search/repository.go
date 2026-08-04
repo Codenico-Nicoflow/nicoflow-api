@@ -18,6 +18,7 @@ type Repository interface {
 	SearchTasks(ctx context.Context, userID, term string, limit int) ([]TaskResult, error)
 	SearchProjects(ctx context.Context, userID, term string, limit int) ([]ProjectResult, error)
 	SearchAreas(ctx context.Context, userID, term string, limit int) ([]AreaResult, error)
+	SearchNotes(ctx context.Context, userID, term string, limit int) ([]NoteResult, error)
 }
 
 type pgRepository struct {
@@ -171,6 +172,49 @@ func (r *pgRepository) SearchAreas(ctx context.Context, userID, term string, lim
 	}
 	if err := rows.Err(); err != nil {
 		return nil, dbError("areas rows", err)
+	}
+	return results, nil
+}
+
+// SearchNotes matches against the notes_search_idx GIN column, which is generated
+// from title || content_text — so a hit on the body text works exactly like a hit
+// on the title. The join is LEFT: an orphaned note (project_id NULL after its
+// project was deleted) must still be returned, with empty project fields.
+func (r *pgRepository) SearchNotes(ctx context.Context, userID, term string, limit int) ([]NoteResult, error) {
+	const q = `
+		SELECT n.id,
+		       n.title,
+		       left(n.content_text, $4)   AS excerpt,
+		       coalesce(n.project_id, '') AS project_id,
+		       coalesce(p.name, '')       AS project_name
+		FROM notes n
+		LEFT JOIN projects p ON p.id = n.project_id
+		WHERE n.user_id = $1
+		  AND n.search_vector @@ to_tsquery('simple', $2)
+		ORDER BY ts_rank(n.search_vector, to_tsquery('simple', $2)) DESC, n.updated_at DESC
+		LIMIT $3`
+
+	tsq := toPrefixTSQuery(term)
+	if tsq == "" {
+		return []NoteResult{}, nil
+	}
+
+	rows, err := r.db.Query(ctx, q, userID, tsq, limit, excerptLen)
+	if err != nil {
+		return nil, dbError("notes query", err)
+	}
+	defer rows.Close()
+
+	results := make([]NoteResult, 0, limit)
+	for rows.Next() {
+		var n NoteResult
+		if err := rows.Scan(&n.ID, &n.Title, &n.Excerpt, &n.ProjectID, &n.ProjectName); err != nil {
+			return nil, dbError("notes scan", err)
+		}
+		results = append(results, n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, dbError("notes rows", err)
 	}
 	return results, nil
 }
