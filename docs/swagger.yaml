@@ -336,12 +336,21 @@ definitions:
     type: object
   bucket.ProcessBucketRequest:
     properties:
+      noteDetails:
+        $ref: '#/definitions/bucket.ProcessNoteDetails'
       processingResult:
         type: string
       projectId:
         type: string
       taskDetails:
         $ref: '#/definitions/bucket.ProcessTaskDetails'
+    type: object
+  bucket.ProcessNoteDetails:
+    properties:
+      content:
+        type: object
+      title:
+        type: string
     type: object
   bucket.ProcessTaskDetails:
     properties:

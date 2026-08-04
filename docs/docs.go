@@ -3585,6 +3585,9 @@ const docTemplate = `{
         "bucket.ProcessBucketRequest": {
             "type": "object",
             "properties": {
+                "noteDetails": {
+                    "$ref": "#/definitions/bucket.ProcessNoteDetails"
+                },
                 "processingResult": {
                     "type": "string"
                 },
@@ -3593,6 +3596,17 @@ const docTemplate = `{
                 },
                 "taskDetails": {
                     "$ref": "#/definitions/bucket.ProcessTaskDetails"
+                }
+            }
+        },
+        "bucket.ProcessNoteDetails": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "object"
+                },
+                "title": {
+                    "type": "string"
                 }
             }
         },

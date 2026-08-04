@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,12 +16,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/nicoflow/nicoflow-api/internal/apperror"
 	"github.com/nicoflow/nicoflow-api/internal/config"
 	"github.com/nicoflow/nicoflow-api/internal/domain/ai"
 	"github.com/nicoflow/nicoflow-api/internal/domain/area"
 	"github.com/nicoflow/nicoflow-api/internal/domain/auth"
 	"github.com/nicoflow/nicoflow-api/internal/domain/billing"
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
+	"github.com/nicoflow/nicoflow-api/internal/domain/note"
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
 	"github.com/nicoflow/nicoflow-api/internal/domain/task"
@@ -46,6 +49,7 @@ func cleanBucketTestData(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	queries := []string{
 		`DELETE FROM notifications WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%` + testEmailDomain + `')`,
+		`DELETE FROM notes    WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%` + testEmailDomain + `')`,
 		`DELETE FROM bucket   WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%` + testEmailDomain + `')`,
 		`DELETE FROM tasks    WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%` + testEmailDomain + `')`,
 		`DELETE FROM projects WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%` + testEmailDomain + `')`,
@@ -96,12 +100,16 @@ func newBucketServer(t *testing.T, plan string) bucketEnv {
 	// runs end-to-end; broadcaster nil (poll-only in this epic).
 	notifSvc := notification.NewService(notification.NewRepository(pool), nil)
 	taskSvc := task.NewService(task.NewRepository(pool), notifSvc, nil)
+	// Real note service so the bucket→note path runs end-to-end (E-053).
+	projectSvc := project.NewService(project.NewRepository(pool), nil)
+	noteSvc := note.NewService(note.NewRepository(pool), noteProjectVerifier{projects: projectSvc}, nil)
 	h := handler.Handlers{
 		Auth:    auth.NewHandler(auth.NewService(auth.NewRepository(pool), cfg), auth.HandlerConfig{}),
 		Area:    area.NewHandler(area.NewService(area.NewRepository(pool), nil)),
-		Project: project.NewHandler(project.NewService(project.NewRepository(pool), nil)),
+		Project: project.NewHandler(projectSvc),
 		Task:    task.NewHandler(taskSvc, task.NewSubtaskService(task.NewSubtaskRepository(pool), nil)),
-		Bucket:  bucket.NewHandler(bucket.NewService(bucket.NewRepository(pool), taskSvc, notifSvc, nil)),
+		Bucket:  bucket.NewHandler(bucket.NewService(bucket.NewRepository(pool), taskSvc, notifSvc, nil).WithNoteCreator(noteSvc)),
+		Note:    note.NewHandler(noteSvc),
 		AI:      ai.NewHandler(ai.NewService(ai.NewRepository(pool), nil, "", nil)),
 		Billing: billing.NewHandler(billing.NewService(billing.NewRepository(pool))),
 	}
@@ -111,6 +119,20 @@ func newBucketServer(t *testing.T, plan string) bucketEnv {
 	areaID := createArea(t, srv, token)
 	projectID := createProject(t, srv, token, areaID)
 	return bucketEnv{srv: srv, pool: pool, token: token, userID: userID, projectID: projectID}
+}
+
+// noteProjectVerifier mirrors main.go's adapter: a user-scoped project lookup
+// with any not-found normalized so a foreign project never leaks.
+type noteProjectVerifier struct{ projects project.Service }
+
+func (v noteProjectVerifier) VerifyProjectOwner(ctx context.Context, userID, projectID string) error {
+	if _, err := v.projects.Get(ctx, userID, projectID); err != nil {
+		if ae, ok := errors.AsType[*apperror.AppError](err); ok && ae.Status == http.StatusNotFound {
+			return apperror.New(http.StatusNotFound, apperror.ErrResourceNotFound, "resource not found")
+		}
+		return err
+	}
+	return nil
 }
 
 func sanitizeEmail(name string) string {
@@ -325,11 +347,20 @@ func TestBucket_DeleteProcessed_204(t *testing.T) {
 	resp.Body.Close()
 }
 
-func TestBucket_ProcessNote_501(t *testing.T) {
+// AC2 — the note result no longer 501s. A bare request (no projectId /
+// noteDetails) is now a validation error, which is what this used to assert as
+// "not implemented".
+func TestBucket_ProcessNote_NoLonger501(t *testing.T) {
 	env := newBucketServer(t, "free")
 	id := createBucket(t, env, "someday idea")
+
 	resp := do(t, env.srv, http.MethodPost, "/v1/bucket/"+id+"/process", map[string]any{"processingResult": "note"}, env.token)
-	assertStatus(t, resp, http.StatusNotImplemented)
+
+	if resp.StatusCode == http.StatusNotImplemented {
+		t.Fatal("the note path still returns 501")
+	}
+	assertStatus(t, resp, http.StatusUnprocessableEntity)
+	assertErrCode(t, resp, apperror.ErrInvalidInput)
 }
 
 // The NFR under real HTTP: at the free 50-live-task cap, processing to a task
@@ -385,5 +416,164 @@ func TestBucket_InboxZero_ProOnly(t *testing.T) {
 		map[string]any{"processingResult": "trash"}, free.token).Body.Close()
 	if got := countNotifications(t, free, notification.TypeInboxZero); got != 0 {
 		t.Fatalf("free inbox_zero count = %d, want 0 (Pro-only)", got)
+	}
+}
+
+// ── bucket → note, end to end (E-053 / NIC-1903 / NIC-1908) ──────────────────
+
+// The full capture→process→reference loop: a captured thought becomes a real
+// note in the project, and the bucket row records what it became.
+func TestIntegration_ProcessBucketIntoNote(t *testing.T) {
+	env := newBucketServer(t, "free")
+	bucketID := createBucket(t, env, "read the GTD chapter on reference material")
+
+	body := map[string]any{
+		"processingResult": "note",
+		"projectId":        env.projectID,
+		"noteDetails": map[string]any{
+			"title": "GTD reference material",
+			"content": map[string]any{
+				"type": "doc",
+				"content": []any{
+					map[string]any{
+						"type":    "paragraph",
+						"content": []any{map[string]any{"type": "text", "text": "filing beats piling"}},
+					},
+				},
+			},
+		},
+	}
+	resp := do(t, env.srv, http.MethodPost, "/v1/bucket/"+bucketID+"/process", body, env.token)
+	assertStatus(t, resp, http.StatusOK)
+
+	var env1 struct {
+		Data struct {
+			ProcessingResult *string `json:"processingResult"`
+			CreatedNoteID    *string `json:"createdNoteId"`
+			CreatedTaskID    *string `json:"createdTaskId"`
+			ProcessedAt      *string `json:"processedAt"`
+		} `json:"data"`
+	}
+	decode(t, resp, &env1)
+
+	if env1.Data.ProcessingResult == nil || *env1.Data.ProcessingResult != "note" {
+		t.Fatalf("processingResult = %v, want note", env1.Data.ProcessingResult)
+	}
+	// AC1 — the view exposes the link back to what the thought became.
+	if env1.Data.CreatedNoteID == nil || *env1.Data.CreatedNoteID == "" {
+		t.Fatal("createdNoteId is empty on the processed view")
+	}
+	if env1.Data.CreatedTaskID != nil {
+		t.Errorf("createdTaskId = %v, want nil on the note path", env1.Data.CreatedTaskID)
+	}
+	if env1.Data.ProcessedAt == nil {
+		t.Error("processedAt is nil on a processed item")
+	}
+	noteID := *env1.Data.CreatedNoteID
+
+	// The note really exists, in the right project, with the submitted body.
+	resp = do(t, env.srv, http.MethodGet, "/v1/notes/"+noteID, nil, env.token)
+	assertStatus(t, resp, http.StatusOK)
+	var noteEnv struct {
+		Data struct {
+			ID        string          `json:"id"`
+			ProjectID *string         `json:"projectId"`
+			Title     string          `json:"title"`
+			Content   json.RawMessage `json:"content"`
+			Version   int             `json:"version"`
+		} `json:"data"`
+	}
+	decode(t, resp, &noteEnv)
+
+	if noteEnv.Data.Title != "GTD reference material" {
+		t.Errorf("title = %q", noteEnv.Data.Title)
+	}
+	if noteEnv.Data.ProjectID == nil || *noteEnv.Data.ProjectID != env.projectID {
+		t.Errorf("projectId = %v, want %q", noteEnv.Data.ProjectID, env.projectID)
+	}
+	if noteEnv.Data.Version != 1 {
+		t.Errorf("version = %d, want 1", noteEnv.Data.Version)
+	}
+	if !strings.Contains(string(noteEnv.Data.Content), "filing beats piling") {
+		t.Errorf("content = %s, want the submitted document", noteEnv.Data.Content)
+	}
+
+	// The search mirror was derived server-side from the document.
+	var contentText string
+	if err := env.pool.QueryRow(context.Background(),
+		`SELECT content_text FROM notes WHERE id = $1`, noteID,
+	).Scan(&contentText); err != nil {
+		t.Fatalf("read content_text: %v", err)
+	}
+	if !strings.Contains(contentText, "filing beats piling") {
+		t.Errorf("content_text = %q, want it derived by flattenDoc", contentText)
+	}
+
+	// The bucket row itself carries the link, not just the response.
+	var storedNoteID *string
+	if err := env.pool.QueryRow(context.Background(),
+		`SELECT created_note_id FROM bucket WHERE id = $1`, bucketID,
+	).Scan(&storedNoteID); err != nil {
+		t.Fatalf("read created_note_id: %v", err)
+	}
+	if storedNoteID == nil || *storedNoteID != noteID {
+		t.Errorf("bucket.created_note_id = %v, want %q", storedNoteID, noteID)
+	}
+
+	// AC4 — reprocessing the same item is a conflict.
+	resp = do(t, env.srv, http.MethodPost, "/v1/bucket/"+bucketID+"/process", body, env.token)
+	assertStatus(t, resp, http.StatusConflict)
+	assertErrCode(t, resp, apperror.ErrConflict)
+}
+
+// AC5 — a note create that fails leaves the item unprocessed, so the inbox entry
+// is never silently emptied.
+func TestIntegration_ProcessIntoNote_ForeignProjectLeavesItemUnprocessed(t *testing.T) {
+	env := newBucketServer(t, "free")
+	bucketID := createBucket(t, env, "should stay in the inbox")
+
+	resp := do(t, env.srv, http.MethodPost, "/v1/bucket/"+bucketID+"/process", map[string]any{
+		"processingResult": "note",
+		"projectId":        uuid.New().String(), // a project this user does not own
+		"noteDetails":      map[string]any{"title": "trespass"},
+	}, env.token)
+	assertStatus(t, resp, http.StatusNotFound)
+	assertErrCode(t, resp, apperror.ErrResourceNotFound)
+
+	var processedAt *time.Time
+	var noteID *string
+	if err := env.pool.QueryRow(context.Background(),
+		`SELECT processed_at, created_note_id FROM bucket WHERE id = $1`, bucketID,
+	).Scan(&processedAt, &noteID); err != nil {
+		t.Fatalf("read bucket row: %v", err)
+	}
+	if processedAt != nil {
+		t.Errorf("processed_at = %v, want NULL — the item must stay unprocessed", processedAt)
+	}
+	if noteID != nil {
+		t.Errorf("created_note_id = %v, want NULL", noteID)
+	}
+}
+
+// AC3 — missing noteDetails is refused before anything is written.
+func TestIntegration_ProcessIntoNote_MissingDetails(t *testing.T) {
+	env := newBucketServer(t, "free")
+	bucketID := createBucket(t, env, "incomplete request")
+
+	resp := do(t, env.srv, http.MethodPost, "/v1/bucket/"+bucketID+"/process", map[string]any{
+		"processingResult": "note",
+		"projectId":        env.projectID,
+	}, env.token)
+	assertStatus(t, resp, http.StatusUnprocessableEntity)
+	assertErrCode(t, resp, apperror.ErrInvalidInput)
+
+	var processedAt *time.Time
+	if err := env.pool.QueryRow(context.Background(),
+		`SELECT processed_at FROM bucket WHERE id = $1`, bucketID,
+	).Scan(&processedAt); err != nil {
+		t.Fatalf("read bucket row: %v", err)
+	}
+	if processedAt != nil {
+		t.Errorf("processed_at = %v, want NULL", processedAt)
 	}
 }

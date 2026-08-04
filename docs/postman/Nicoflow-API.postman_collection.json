@@ -1745,6 +1745,44 @@
           }
         },
         {
+          "name": "Process Bucket Item \u2192 Note",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/bucket/{{bucketId}}/process",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "bucket",
+                "{{bucketId}}",
+                "process"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"processingResult\": \"note\",\n  \"projectId\": \"{{projectId}}\",\n  \"noteDetails\": {\n    \"title\": \"Reference material from inbox\",\n    \"content\": {\n      \"type\": \"doc\",\n      \"content\": [\n        {\n          \"type\": \"paragraph\",\n          \"content\": [\n            {\n              \"type\": \"text\",\n              \"text\": \"Captured thought, expanded.\"\n            }\n          ]\n        }\n      ]\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Processes an inbox item into a NOTE (E-053). `projectId` + `noteDetails` are required; omitting either is 422. Ordered, not transactional: the note is created first, so a failure leaves the item unprocessed rather than silently emptying it. Response carries `createdNoteId`. `content` is optional \u2014 omit it for the empty-doc default."
+          }
+        },
+        {
           "name": "Delete Bucket Item",
           "request": {
             "method": "DELETE",
@@ -1768,7 +1806,7 @@
           }
         }
       ],
-      "description": "Inbox capture + processing. Live \u2014 verified against handlers (NIC-1453..). Process body: `processingResult` \u2208 {task, note, trash}; `projectId` + `taskDetails` required only when processing to a task."
+      "description": "Inbox capture + processing. Live \u2014 verified against handlers (NIC-1453..). Process body: `processingResult` \u2208 {task, note, trash}; `projectId` + `taskDetails` required when processing to a task; `projectId` + `noteDetails` when processing to a note (E-053). The response's `createdTaskId` / `createdNoteId` link back to whatever the thought became."
     },
     {
       "name": "Search",
