@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
+	"github.com/nicoflow/nicoflow-api/internal/domain/note"
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 )
 
@@ -28,7 +29,7 @@ func (f *fakeNotifier) Create(_ context.Context, n notification.Notification) (n
 // unprocessed count returns `remaining`, wired to the given notifier.
 func trashSvc(remaining int, fn *fakeNotifier) bucket.Service {
 	repo := &mockRepo{
-		markProcessed: func(_ context.Context, _, id, result string, _, _ *string) (bucket.Bucket, error) {
+		markProcessed: func(_ context.Context, _, id, result string, _ bucket.ProcessedRefs) (bucket.Bucket, error) {
 			b := unprocessed(id)
 			b.ProcessingResult = &result
 			return b, nil
@@ -104,7 +105,7 @@ func TestInboxZero_NotifyErrorDoesNotFailMutation(t *testing.T) {
 func TestInboxZero_CountErrorSwallowed(t *testing.T) {
 	fn := &fakeNotifier{}
 	repo := &mockRepo{
-		markProcessed: func(_ context.Context, _, id, result string, _, _ *string) (bucket.Bucket, error) {
+		markProcessed: func(_ context.Context, _, id, result string, _ bucket.ProcessedRefs) (bucket.Bucket, error) {
 			b := unprocessed(id)
 			b.ProcessingResult = &result
 			return b, nil
@@ -134,5 +135,38 @@ func TestInboxZero_DeleteErrorReturned(t *testing.T) {
 	}
 	if len(fn.calls) != 0 {
 		t.Fatalf("no emission when delete fails, got %d", len(fn.calls))
+	}
+}
+
+// AC7 — the note path fires bucket.processed and runs the inbox-zero path just
+// as the task and trash results do.
+func TestInboxZero_FiresOnNoteResult(t *testing.T) {
+	pid := "p1"
+	fn := &fakeNotifier{}
+	repo := &mockRepo{
+		getByID: func(_ context.Context, _, id string) (bucket.Bucket, error) { return unprocessed(id), nil },
+		markProcessed: func(_ context.Context, _, id, result string, refs bucket.ProcessedRefs) (bucket.Bucket, error) {
+			b := unprocessed(id)
+			b.ProcessingResult, b.CreatedNoteID = &result, refs.NoteID
+			return b, nil
+		},
+		// Last unprocessed item just went — the inbox is now empty.
+		countUnprocessed: func(context.Context, string) (int, error) { return 0, nil },
+	}
+	nc := &mockNoteCreator{create: func(context.Context, string, note.CreateNoteRequest) (note.NoteDetailView, error) {
+		return note.NoteDetailView{ID: "note-1"}, nil
+	}}
+	svc := bucket.NewService(repo, &mockTaskCreator{}, fn, nil).WithNoteCreator(nc)
+
+	if _, err := svc.Process(context.Background(), "u1", "b1", "pro", bucket.ProcessBucketRequest{
+		ProcessingResult: bucket.ResultNote,
+		ProjectID:        &pid,
+		NoteDetails:      &bucket.ProcessNoteDetails{Title: "t"},
+	}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+
+	if len(fn.calls) != 1 {
+		t.Fatalf("inbox-zero fired %d times on the note path, want 1", len(fn.calls))
 	}
 }

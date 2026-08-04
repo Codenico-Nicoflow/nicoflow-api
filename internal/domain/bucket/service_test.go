@@ -2,6 +2,7 @@ package bucket_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
+	"github.com/nicoflow/nicoflow-api/internal/domain/note"
 	"github.com/nicoflow/nicoflow-api/internal/domain/task"
 )
 
@@ -22,7 +24,7 @@ type mockRepo struct {
 	updateContent    func(ctx context.Context, userID, id, content string) (bucket.Bucket, error)
 	delete           func(ctx context.Context, userID, id string) error
 	countUnprocessed func(ctx context.Context, userID string) (int, error)
-	markProcessed    func(ctx context.Context, userID, id, result string, taskID, projectID *string) (bucket.Bucket, error)
+	markProcessed    func(ctx context.Context, userID, id, result string, refs bucket.ProcessedRefs) (bucket.Bucket, error)
 }
 
 func (m *mockRepo) Create(ctx context.Context, b bucket.Bucket) (bucket.Bucket, error) {
@@ -46,8 +48,8 @@ func (m *mockRepo) CountUnprocessed(ctx context.Context, userID string) (int, er
 	}
 	return m.countUnprocessed(ctx, userID)
 }
-func (m *mockRepo) MarkProcessed(ctx context.Context, userID, id, result string, taskID, projectID *string) (bucket.Bucket, error) {
-	return m.markProcessed(ctx, userID, id, result, taskID, projectID)
+func (m *mockRepo) MarkProcessed(ctx context.Context, userID, id, result string, refs bucket.ProcessedRefs) (bucket.Bucket, error) {
+	return m.markProcessed(ctx, userID, id, result, refs)
 }
 
 type mockTaskCreator struct {
@@ -173,10 +175,10 @@ func TestService_Update(t *testing.T) {
 func TestService_Process_Trash(t *testing.T) {
 	var gotResult string
 	repo := &mockRepo{
-		markProcessed: func(_ context.Context, _, id, result string, taskID, projectID *string) (bucket.Bucket, error) {
+		markProcessed: func(_ context.Context, _, id, result string, refs bucket.ProcessedRefs) (bucket.Bucket, error) {
 			gotResult = result
-			if taskID != nil || projectID != nil {
-				t.Errorf("trash must not set taskID/projectID, got %v/%v", taskID, projectID)
+			if refs.TaskID != nil || refs.NoteID != nil || refs.ProjectID != nil {
+				t.Errorf("trash must not set any refs, got %+v", refs)
 			}
 			b := unprocessed(id)
 			b.ProcessingResult = &result
@@ -193,12 +195,22 @@ func TestService_Process_Trash(t *testing.T) {
 	}
 }
 
-func TestService_Process_Note_NotImplemented(t *testing.T) {
+// AC2 — the 501 stub is gone. Without a wired NoteCreator the path is still
+// reported unavailable, but a wired one must never return 501 (see the note
+// tests below).
+func TestService_Process_Note_UnavailableWithoutCreator(t *testing.T) {
+	pid := "p1"
 	svc := bucket.NewService(&mockRepo{}, &mockTaskCreator{}, nil, nil)
-	_, err := svc.Process(context.Background(), "u1", "b1", "free", bucket.ProcessBucketRequest{ProcessingResult: bucket.ResultNote})
+
+	_, err := svc.Process(context.Background(), "u1", "b1", "free", bucket.ProcessBucketRequest{
+		ProcessingResult: bucket.ResultNote,
+		ProjectID:        &pid,
+		NoteDetails:      &bucket.ProcessNoteDetails{Title: "t"},
+	})
+
 	ae := appErr(err)
 	if ae == nil || ae.Status != http.StatusNotImplemented {
-		t.Fatalf("want 501, got %v", err)
+		t.Fatalf("want 501 with no creator wired, got %v", err)
 	}
 }
 
@@ -266,7 +278,7 @@ func TestService_Process_Task_PlanLimitAbortsBeforeMark(t *testing.T) {
 	marked := false
 	repo := &mockRepo{
 		getByID: func(_ context.Context, _, id string) (bucket.Bucket, error) { return unprocessed(id), nil },
-		markProcessed: func(context.Context, string, string, string, *string, *string) (bucket.Bucket, error) {
+		markProcessed: func(context.Context, string, string, string, bucket.ProcessedRefs) (bucket.Bucket, error) {
 			marked = true
 			return bucket.Bucket{}, nil
 		},
@@ -294,10 +306,10 @@ func TestService_Process_Task_HappyPath_MapsDetailsAndMarks(t *testing.T) {
 	var gotTaskID, gotProjectID *string
 	repo := &mockRepo{
 		getByID: func(_ context.Context, _, id string) (bucket.Bucket, error) { return unprocessed(id), nil },
-		markProcessed: func(_ context.Context, _, id, result string, taskID, projectID *string) (bucket.Bucket, error) {
-			gotResult, gotTaskID, gotProjectID = result, taskID, projectID
+		markProcessed: func(_ context.Context, _, id, result string, refs bucket.ProcessedRefs) (bucket.Bucket, error) {
+			gotResult, gotTaskID, gotProjectID = result, refs.TaskID, refs.ProjectID
 			b := unprocessed(id)
-			b.ProcessingResult, b.CreatedTaskID, b.ProjectID = &result, taskID, projectID
+			b.ProcessingResult, b.CreatedTaskID, b.ProjectID = &result, refs.TaskID, refs.ProjectID
 			return b, nil
 		},
 	}
@@ -330,7 +342,7 @@ func TestService_Process_Task_OmittedFieldsFallThroughToDefaults(t *testing.T) {
 	var gotReq task.CreateTaskRequest
 	repo := &mockRepo{
 		getByID: func(_ context.Context, _, id string) (bucket.Bucket, error) { return unprocessed(id), nil },
-		markProcessed: func(_ context.Context, _, id, _ string, _, _ *string) (bucket.Bucket, error) {
+		markProcessed: func(_ context.Context, _, id, _ string, _ bucket.ProcessedRefs) (bucket.Bucket, error) {
 			return unprocessed(id), nil
 		},
 	}
@@ -378,5 +390,221 @@ func assertMarkArgs(t *testing.T, result string, taskID, projectID *string) {
 	t.Helper()
 	if result != bucket.ResultTask || taskID == nil || *taskID != "task-123" || projectID == nil || *projectID != "p1" {
 		t.Errorf("mark args wrong: result=%s taskID=%v projectID=%v", result, taskID, projectID)
+	}
+}
+
+// ── Process → Note (E-053 / NIC-1903) ────────────────────────────────────────
+
+type mockNoteCreator struct {
+	create func(ctx context.Context, userID string, req note.CreateNoteRequest) (note.NoteDetailView, error)
+}
+
+func (m *mockNoteCreator) Create(ctx context.Context, userID string, req note.CreateNoteRequest) (note.NoteDetailView, error) {
+	return m.create(ctx, userID, req)
+}
+
+func noteSvcWith(repo bucket.Repository, nc bucket.NoteCreator) bucket.Service {
+	return bucket.NewService(repo, &mockTaskCreator{}, nil, nil).WithNoteCreator(nc)
+}
+
+// AC1 — happy path: the note is created, the item is marked with created_note_id,
+// and the view exposes createdNoteId.
+func TestService_Process_Note_HappyPath(t *testing.T) {
+	pid := "p1"
+	var gotReq note.CreateNoteRequest
+	var gotRefs bucket.ProcessedRefs
+	var gotResult string
+
+	repo := &mockRepo{
+		getByID: func(_ context.Context, _, id string) (bucket.Bucket, error) { return unprocessed(id), nil },
+		markProcessed: func(_ context.Context, _, id, result string, refs bucket.ProcessedRefs) (bucket.Bucket, error) {
+			gotResult, gotRefs = result, refs
+			b := unprocessed(id)
+			b.ProcessingResult, b.CreatedNoteID, b.ProjectID = &result, refs.NoteID, refs.ProjectID
+			return b, nil
+		},
+	}
+	nc := &mockNoteCreator{create: func(_ context.Context, _ string, req note.CreateNoteRequest) (note.NoteDetailView, error) {
+		gotReq = req
+		return note.NoteDetailView{ID: "note-123", Title: req.Title}, nil
+	}}
+
+	body := json.RawMessage(`{"type":"doc","content":[{"type":"text","text":"captured"}]}`)
+	view, err := noteSvcWith(repo, nc).Process(context.Background(), "u1", "b1", "free", bucket.ProcessBucketRequest{
+		ProcessingResult: bucket.ResultNote,
+		ProjectID:        &pid,
+		NoteDetails:      &bucket.ProcessNoteDetails{Title: "captured thought", Content: &body},
+	})
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+
+	// Details mapping.
+	if gotReq.ProjectID != pid || gotReq.Title != "captured thought" {
+		t.Errorf("note create req = %+v, want the project and title carried through", gotReq)
+	}
+	if string(gotReq.Content) != string(body) {
+		t.Errorf("content = %s, want the submitted document", gotReq.Content)
+	}
+	// Marked with the note id, never a task id.
+	if gotResult != bucket.ResultNote {
+		t.Errorf("result = %q, want %q", gotResult, bucket.ResultNote)
+	}
+	if gotRefs.NoteID == nil || *gotRefs.NoteID != "note-123" {
+		t.Errorf("refs.NoteID = %v, want note-123", gotRefs.NoteID)
+	}
+	if gotRefs.TaskID != nil {
+		t.Errorf("refs.TaskID = %v, want nil on the note path", gotRefs.TaskID)
+	}
+	// AC1 — the view exposes it.
+	if view.CreatedNoteID == nil || *view.CreatedNoteID != "note-123" {
+		t.Errorf("view.CreatedNoteID = %v, want note-123", view.CreatedNoteID)
+	}
+}
+
+// AC6 — omitted content falls through to the note service default rather than
+// being forced to an explicit value here.
+func TestService_Process_Note_NilContentFallsThrough(t *testing.T) {
+	pid := "p1"
+	var gotReq note.CreateNoteRequest
+	repo := &mockRepo{
+		getByID: func(_ context.Context, _, id string) (bucket.Bucket, error) { return unprocessed(id), nil },
+		markProcessed: func(_ context.Context, _, id, result string, refs bucket.ProcessedRefs) (bucket.Bucket, error) {
+			b := unprocessed(id)
+			b.ProcessingResult, b.CreatedNoteID = &result, refs.NoteID
+			return b, nil
+		},
+	}
+	nc := &mockNoteCreator{create: func(_ context.Context, _ string, req note.CreateNoteRequest) (note.NoteDetailView, error) {
+		gotReq = req
+		return note.NoteDetailView{ID: "note-1"}, nil
+	}}
+
+	if _, err := noteSvcWith(repo, nc).Process(context.Background(), "u1", "b1", "free", bucket.ProcessBucketRequest{
+		ProcessingResult: bucket.ResultNote,
+		ProjectID:        &pid,
+		NoteDetails:      &bucket.ProcessNoteDetails{Title: "no body"},
+	}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+
+	if gotReq.Content != nil {
+		t.Errorf("content = %s, want nil so the note service applies its default", gotReq.Content)
+	}
+}
+
+// AC3 — missing inputs are rejected before anything is written.
+func TestService_Process_Note_Validation(t *testing.T) {
+	pid := "p1"
+	empty := ""
+
+	tests := []struct {
+		name string
+		req  bucket.ProcessBucketRequest
+	}{
+		{
+			name: "missing projectId",
+			req:  bucket.ProcessBucketRequest{ProcessingResult: bucket.ResultNote, NoteDetails: &bucket.ProcessNoteDetails{Title: "t"}},
+		},
+		{
+			name: "blank projectId",
+			req:  bucket.ProcessBucketRequest{ProcessingResult: bucket.ResultNote, ProjectID: &empty, NoteDetails: &bucket.ProcessNoteDetails{Title: "t"}},
+		},
+		{
+			name: "missing noteDetails",
+			req:  bucket.ProcessBucketRequest{ProcessingResult: bucket.ResultNote, ProjectID: &pid},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			created, marked := false, false
+			repo := &mockRepo{
+				getByID: func(_ context.Context, _, id string) (bucket.Bucket, error) { return unprocessed(id), nil },
+				markProcessed: func(_ context.Context, _, id, result string, _ bucket.ProcessedRefs) (bucket.Bucket, error) {
+					marked = true
+					return unprocessed(id), nil
+				},
+			}
+			nc := &mockNoteCreator{create: func(context.Context, string, note.CreateNoteRequest) (note.NoteDetailView, error) {
+				created = true
+				return note.NoteDetailView{}, nil
+			}}
+
+			_, err := noteSvcWith(repo, nc).Process(context.Background(), "u1", "b1", "free", tt.req)
+
+			ae := appErr(err)
+			if ae == nil || ae.Code != apperror.ErrInvalidInput || ae.Status != http.StatusUnprocessableEntity {
+				t.Fatalf("want INVALID_INPUT/422, got %v", err)
+			}
+			if created || marked {
+				t.Errorf("an invalid request wrote something: created=%v marked=%v", created, marked)
+			}
+		})
+	}
+}
+
+// AC4 — an already-processed item is a conflict and creates no second note.
+func TestService_Process_Note_AlreadyProcessed(t *testing.T) {
+	pid := "p1"
+	created := false
+	processed := time.Now()
+	repo := &mockRepo{
+		getByID: func(_ context.Context, _, id string) (bucket.Bucket, error) {
+			b := unprocessed(id)
+			b.ProcessedAt = &processed
+			return b, nil
+		},
+	}
+	nc := &mockNoteCreator{create: func(context.Context, string, note.CreateNoteRequest) (note.NoteDetailView, error) {
+		created = true
+		return note.NoteDetailView{}, nil
+	}}
+
+	_, err := noteSvcWith(repo, nc).Process(context.Background(), "u1", "b1", "free", bucket.ProcessBucketRequest{
+		ProcessingResult: bucket.ResultNote,
+		ProjectID:        &pid,
+		NoteDetails:      &bucket.ProcessNoteDetails{Title: "t"},
+	})
+
+	ae := appErr(err)
+	if ae == nil || ae.Code != apperror.ErrConflict || ae.Status != http.StatusConflict {
+		t.Fatalf("want CONFLICT/409, got %v", err)
+	}
+	if created {
+		t.Error("a second note was created for an already-processed item")
+	}
+}
+
+// AC5 — the ordering guarantee: a failed note create must leave the bucket item
+// unprocessed. A processed item with no note is a silently emptied inbox entry.
+func TestService_Process_Note_CreateFailureLeavesItemUnprocessed(t *testing.T) {
+	pid := "p1"
+	noteErr := apperror.New(http.StatusNotFound, apperror.ErrResourceNotFound, "resource not found")
+
+	marked := false
+	repo := &mockRepo{
+		getByID: func(_ context.Context, _, id string) (bucket.Bucket, error) { return unprocessed(id), nil },
+		markProcessed: func(_ context.Context, _, id, result string, _ bucket.ProcessedRefs) (bucket.Bucket, error) {
+			marked = true
+			return unprocessed(id), nil
+		},
+	}
+	nc := &mockNoteCreator{create: func(context.Context, string, note.CreateNoteRequest) (note.NoteDetailView, error) {
+		return note.NoteDetailView{}, noteErr
+	}}
+
+	_, err := noteSvcWith(repo, nc).Process(context.Background(), "u1", "b1", "free", bucket.ProcessBucketRequest{
+		ProcessingResult: bucket.ResultNote,
+		ProjectID:        &pid,
+		NoteDetails:      &bucket.ProcessNoteDetails{Title: "t"},
+	})
+
+	ae := appErr(err)
+	if ae == nil || ae.Code != apperror.ErrResourceNotFound {
+		t.Fatalf("want the note error surfaced, got %v", err)
+	}
+	if marked {
+		t.Error("the bucket item was marked processed despite the note create failing")
 	}
 }

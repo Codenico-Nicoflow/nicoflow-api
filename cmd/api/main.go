@@ -219,6 +219,11 @@ func main() {
 	noteSvc := note.NewService(noteRepo, projectOwnerVerifier{projects: projectSvc}, ws.NewNoteBroadcaster(wsHub)).
 		WithCleaner(attachmentSvc)
 
+	// Close the bucket→note seam now that the note service exists (E-053 /
+	// NIC-1903). Post-construction for the same reason as the task cleaner: the
+	// concretes meet only here in wiring.
+	bucketSvc = bucketSvc.WithNoteCreator(noteSvc)
+
 	// Google Calendar connection (E-052 / NIC-1844). Any credential or the
 	// encryption key missing ⇒ every endpoint returns a typed 503 and nothing
 	// else in the app notices.

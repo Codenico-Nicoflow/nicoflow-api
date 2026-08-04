@@ -33,6 +33,7 @@ var validTypes = map[string]struct{}{
 	TypeTask:    {},
 	TypeProject: {},
 	TypeArea:    {},
+	TypeNote:    {},
 }
 
 // Validate normalises and checks a raw query. It trims the term, enforces the
@@ -55,7 +56,7 @@ func Validate(rawTerm string, rawTypes []string, limit int) (Query, error) {
 		}
 		if _, ok := validTypes[t]; !ok {
 			return Query{}, apperror.New(http.StatusBadRequest, apperror.ErrInvalidInput,
-				"types must be a comma-separated subset of task,project,area")
+				"types must be a comma-separated subset of task,project,area,note")
 		}
 		types = append(types, t)
 	}
@@ -83,12 +84,13 @@ func (q Query) wants(group string) bool {
 }
 
 // Search runs the requested per-type queries and returns grouped results.
-// Only the requested groups are populated; omitted `types` searches all three.
+// Only the requested groups are populated; omitted `types` searches all four.
 func (s *service) Search(ctx context.Context, userID string, q Query) (Response, error) {
 	resp := Response{
 		Tasks:    []TaskResult{},
 		Projects: []ProjectResult{},
 		Areas:    []AreaResult{},
+		Notes:    []NoteResult{},
 	}
 
 	if q.wants(TypeTask) {
@@ -116,6 +118,16 @@ func (s *service) Search(ctx context.Context, userID string, q Query) (Response,
 		}
 		if areas != nil {
 			resp.Areas = areas
+		}
+	}
+
+	if q.wants(TypeNote) {
+		notes, err := s.repo.SearchNotes(ctx, userID, q.Term, q.Limit)
+		if err != nil {
+			return Response{}, err
+		}
+		if notes != nil {
+			resp.Notes = notes
 		}
 	}
 
