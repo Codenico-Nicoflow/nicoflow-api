@@ -3,6 +3,7 @@ package attachment
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
@@ -133,9 +134,15 @@ func TestUploadURL_GateOrder(t *testing.T) {
 			wantCode: apperror.ErrResourceNotFound,
 		},
 		{
+			name: "foreign note owner rejected as not-found",
+			plan: planPro, enabled: true, ownerErr: apperror.New(404, apperror.ErrResourceNotFound, "x"),
+			req:      UploadURLRequest{OwnerType: "note", OwnerID: "n1", FileName: "f.pdf", MimeType: "application/pdf"},
+			wantCode: apperror.ErrResourceNotFound,
+		},
+		{
 			name: "unknown owner type is invalid input",
 			plan: planPro, enabled: true,
-			req:      UploadURLRequest{OwnerType: "note", OwnerID: "n1", FileName: "f.pdf", MimeType: "application/pdf"},
+			req:      UploadURLRequest{OwnerType: "comment", OwnerID: "c1", FileName: "f.pdf", MimeType: "application/pdf"},
 			wantCode: apperror.ErrInvalidInput,
 		},
 		{
@@ -159,6 +166,24 @@ func TestUploadURL_GateOrder(t *testing.T) {
 				t.Fatalf("code = %q, want %q", got, tc.wantCode)
 			}
 		})
+	}
+}
+
+// A note is a valid attachment owner as of E-053 — the gate-order table above
+// previously asserted that "note" was rejected outright.
+func TestUploadURL_NoteOwnerAccepted(t *testing.T) {
+	svc := NewService(&fakeRepo{}, &fakeStore{enabled: true}, fakeOwners{}, nil, nil)
+
+	resp, err := svc.UploadURL(context.Background(), userID, planPro,
+		UploadURLRequest{OwnerType: "note", OwnerID: "n1", FileName: "f.pdf", MimeType: "application/pdf", ClaimedSize: 1024})
+	if err != nil {
+		t.Fatalf("note owner was rejected: %v", err)
+	}
+	if resp.S3Key == "" {
+		t.Error("no s3Key returned for a note owner")
+	}
+	if !strings.Contains(resp.S3Key, "note") {
+		t.Errorf("s3Key = %q, want the note owner segment", resp.S3Key)
 	}
 }
 

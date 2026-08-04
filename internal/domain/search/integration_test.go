@@ -32,6 +32,7 @@ const (
 func cleanSearchTestData(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	queries := []string{
+		`DELETE FROM notes    WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%@searchtest.test')`,
 		`DELETE FROM tasks    WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%@searchtest.test')`,
 		`DELETE FROM projects WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%@searchtest.test')`,
 		`DELETE FROM areas    WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%@searchtest.test')`,
@@ -298,5 +299,171 @@ func TestIntegration_Search_PrefixMatch(t *testing.T) {
 	}
 	if len(env.Data.Areas) != 1 || env.Data.Areas[0].Name != "Testing area" {
 		t.Errorf("prefix 'testin' should match 'Testing area', got %+v", env.Data.Areas)
+	}
+}
+
+// ── notes in search (E-053 / NIC-1909) ───────────────────────────────────────
+
+// seedNote inserts a note directly. projectID empty ⇒ an orphaned note, the
+// state a project delete leaves behind.
+func seedNote(t *testing.T, pool *pgxpool.Pool, userID, projectID, title, contentText string) string {
+	t.Helper()
+	id := uuid.New().String()
+	var pid *string
+	if projectID != "" {
+		pid = &projectID
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO notes (id, user_id, project_id, title, content_text)
+		VALUES ($1, $2, $3, $4, $5)`,
+		id, userID, pid, title, contentText,
+	); err != nil {
+		t.Fatalf("seed note: %v", err)
+	}
+	return id
+}
+
+// AC1 — a note is findable by its title AND by its body text, because the
+// search vector is generated from title || content_text.
+func TestIntegration_Search_NotesMatchTitleAndBody(t *testing.T) {
+	srv, pool := newSearchServer(t)
+	userID, token := mustCreateUser(t, pool)
+	_, projectID, _ := seedAreaProjectTask(t, pool, userID, "Work", "Reference", "unrelated task", "")
+	noteID := seedNote(t, pool, userID, projectID, "GTD structure thread", "the weekly review is the keystone habit")
+
+	for _, term := range []string{"structure", "review"} {
+		t.Run(term, func(t *testing.T) {
+			resp := doGet(t, srv.URL+"/v1/search?q="+term, token)
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+
+			var env searchEnvelope
+			if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if len(env.Data.Notes) != 1 {
+				t.Fatalf("notes = %d, want 1 for %q", len(env.Data.Notes), term)
+			}
+			got := env.Data.Notes[0]
+			if got.ID != noteID {
+				t.Errorf("id = %q, want %q", got.ID, noteID)
+			}
+			if got.ProjectName != "Reference" {
+				t.Errorf("projectName = %q, want the parent project's name", got.ProjectName)
+			}
+			if got.Excerpt == "" {
+				t.Error("excerpt is empty")
+			}
+		})
+	}
+}
+
+// AC2 — deleting a project orphans its notes rather than destroying them, and
+// search is user-scoped, so an orphan stays findable. Search is the only surface
+// that can still reach it.
+func TestIntegration_Search_OrphanedNoteStillFound(t *testing.T) {
+	srv, pool := newSearchServer(t)
+	userID, token := mustCreateUser(t, pool)
+	_, projectID, _ := seedAreaProjectTask(t, pool, userID, "Work", "Doomed", "unrelated task", "")
+	noteID := seedNote(t, pool, userID, projectID, "orphan candidate", "kryptonite reference material")
+
+	if _, err := pool.Exec(context.Background(), `DELETE FROM projects WHERE id = $1`, projectID); err != nil {
+		t.Fatalf("delete project: %v", err)
+	}
+
+	resp := doGet(t, srv.URL+"/v1/search?q=kryptonite", token)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var env searchEnvelope
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(env.Data.Notes) != 1 {
+		t.Fatalf("notes = %d, want the orphan still returned", len(env.Data.Notes))
+	}
+	got := env.Data.Notes[0]
+	if got.ID != noteID {
+		t.Errorf("id = %q, want %q", got.ID, noteID)
+	}
+	if got.ProjectID != "" || got.ProjectName != "" {
+		t.Errorf("orphan carries project fields: id=%q name=%q", got.ProjectID, got.ProjectName)
+	}
+}
+
+// AC3 — another user's note never appears in this user's results.
+func TestIntegration_Search_NotesIsolatedByUser(t *testing.T) {
+	srv, pool := newSearchServer(t)
+	userA, tokenA := mustCreateUser(t, pool)
+	userB, _ := mustCreateUser(t, pool)
+
+	_, projectA, _ := seedAreaProjectTask(t, pool, userA, "A area", "A project", "a task", "")
+	_, projectB, _ := seedAreaProjectTask(t, pool, userB, "B area", "B project", "b task", "")
+	seedNote(t, pool, userA, projectA, "shared keyword mine", "zebra")
+	seedNote(t, pool, userB, projectB, "shared keyword theirs", "zebra")
+
+	resp := doGet(t, srv.URL+"/v1/search?q=zebra", tokenA)
+	defer resp.Body.Close()
+
+	var env searchEnvelope
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(env.Data.Notes) != 1 {
+		t.Fatalf("notes = %d, want only the caller's own", len(env.Data.Notes))
+	}
+	if env.Data.Notes[0].Title != "shared keyword mine" {
+		t.Errorf("title = %q — another user's note leaked", env.Data.Notes[0].Title)
+	}
+}
+
+// AC4 — types=note narrows the response to notes alone, over real HTTP.
+func TestIntegration_Search_TypesNoteFilter(t *testing.T) {
+	srv, pool := newSearchServer(t)
+	userID, token := mustCreateUser(t, pool)
+	_, projectID, _ := seedAreaProjectTask(t, pool, userID, "Zebra area", "Zebra project", "Zebra task", "")
+	seedNote(t, pool, userID, projectID, "Zebra note", "zebra body")
+
+	resp := doGet(t, srv.URL+"/v1/search?q=zebra&types=note", token)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var env searchEnvelope
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(env.Data.Notes) != 1 {
+		t.Errorf("notes = %d, want 1", len(env.Data.Notes))
+	}
+	if len(env.Data.Tasks) != 0 || len(env.Data.Projects) != 0 || len(env.Data.Areas) != 0 {
+		t.Errorf("other groups populated: tasks=%d projects=%d areas=%d",
+			len(env.Data.Tasks), len(env.Data.Projects), len(env.Data.Areas))
+	}
+}
+
+// The per-type limit applies to notes as it does to every other group.
+func TestIntegration_Search_NotesRespectLimit(t *testing.T) {
+	srv, pool := newSearchServer(t)
+	userID, token := mustCreateUser(t, pool)
+	_, projectID, _ := seedAreaProjectTask(t, pool, userID, "Work", "Bulk", "unrelated", "")
+	for i := range 5 {
+		seedNote(t, pool, userID, projectID, fmt.Sprintf("bulk note %d", i), "walrus")
+	}
+
+	resp := doGet(t, srv.URL+"/v1/search?q=walrus&types=note&limit=2", token)
+	defer resp.Body.Close()
+
+	var env searchEnvelope
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(env.Data.Notes) != 2 {
+		t.Errorf("notes = %d, want the limit of 2 respected", len(env.Data.Notes))
 	}
 }

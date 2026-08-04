@@ -200,7 +200,7 @@ func (s *service) Delete(ctx context.Context, userID, id string) error {
 // verifyOwner dispatches through the OwnerVerifier and normalizes an unknown
 // owner type into INVALID_INPUT.
 func (s *service) verifyOwner(ctx context.Context, userID, ownerType, ownerID string) error {
-	if ownerType != OwnerTypeTask {
+	if !isKnownOwnerType(ownerType) {
 		return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "unknown owner type")
 	}
 	if strings.TrimSpace(ownerID) == "" {

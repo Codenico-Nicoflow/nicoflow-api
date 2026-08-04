@@ -7,20 +7,53 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/rs/zerolog/log"
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
 )
 
 type service struct {
-	repo     Repository
-	projects ProjectOwnershipVerifier
+	repo        Repository
+	projects    ProjectOwnershipVerifier
+	broadcaster Broadcaster       // nil disables emission
+	cleaner     AttachmentCleaner // nil disables attachment cleanup
 }
 
 // NewService creates a note Service. Notes are Free and unlimited, so there is
 // no plan parameter anywhere in this domain — adding a cap later would be a
-// deliberate contract change, not an oversight.
-func NewService(repo Repository, projects ProjectOwnershipVerifier) Service {
-	return &service{repo: repo, projects: projects}
+// deliberate contract change, not an oversight. broadcaster may be nil
+// (real-time emission disabled).
+func NewService(repo Repository, projects ProjectOwnershipVerifier, broadcaster Broadcaster) Service {
+	return &service{repo: repo, projects: projects, broadcaster: broadcaster}
+}
+
+// WithCleaner returns the service with attachment cleanup enabled. Wired
+// post-construction because the attachment service already depends on this one
+// via OwnerVerifier — the concretes meet only in main.go, so the cycle stays
+// acyclic.
+func (s *service) WithCleaner(c AttachmentCleaner) Service {
+	s.cleaner = c
+	return s
+}
+
+// emit fans a domain event out best-effort. A nil broadcaster is a valid no-op.
+func (s *service) emit(userID string, ev Event) {
+	if s.broadcaster != nil {
+		s.broadcaster.Broadcast(userID, ev)
+	}
+}
+
+// cleanAttachments best-effort removes a deleted note's attachments. A failure is
+// logged and swallowed: the note is already gone, and the GC sweep reconciles
+// anything left behind, so cleanup must never fail the delete the caller saw
+// succeed.
+func (s *service) cleanAttachments(ctx context.Context, userID, noteID string) {
+	if s.cleaner == nil {
+		return
+	}
+	if err := s.cleaner.DeleteAllForOwner(ctx, userID, ownerTypeNote, noteID); err != nil {
+		log.Error().Err(err).Str("note_id", noteID).Msg("note: attachment cleanup failed — note deleted anyway")
+	}
 }
 
 func invalid(msg string) error {
@@ -124,6 +157,10 @@ func (s *service) Create(ctx context.Context, userID string, req CreateNoteReque
 	if err != nil {
 		return NoteDetailView{}, err
 	}
+
+	// The event carries the list shape — a client syncing its list needs the
+	// excerpt, not the body it just sent.
+	s.emit(userID, Event{Type: EventCreated, Payload: toView(created)})
 	return toDetailView(created), nil
 }
 
@@ -176,6 +213,10 @@ func (s *service) Update(ctx context.Context, userID, id string, req UpdateNoteR
 		return NoteDetailView{}, apperror.New(http.StatusConflict, apperror.ErrConflict,
 			"note was modified by another session")
 	}
+
+	// List shape deliberately: autosave fires every ~1–2s, so broadcasting the
+	// whole document on each save would be wasteful and racy.
+	s.emit(userID, Event{Type: EventUpdated, Payload: toView(updated)})
 	return toDetailView(updated), nil
 }
 
@@ -187,5 +228,10 @@ func (s *service) Delete(ctx context.Context, userID, id string) error {
 	if !ok {
 		return noteNotFound()
 	}
+
+	// Best-effort, after the row is gone: cleanup never blocks or fails a delete
+	// that already committed.
+	s.cleanAttachments(ctx, userID, id)
+	s.emit(userID, Event{Type: EventDeleted, Payload: DeletedPayload{ID: id}})
 	return nil
 }

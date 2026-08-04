@@ -125,6 +125,37 @@ type UpdateNoteRequest struct {
 	Version *int             `json:"version"`
 }
 
+// Broadcaster receives a domain Event for real-time fan-out. Fire-and-forget:
+// implementations must never block or fail the mutation. A nil Broadcaster is a
+// valid no-op seam.
+type Broadcaster interface {
+	Broadcast(userID string, ev Event)
+}
+
+// Event is the domain-level real-time event. The ws adapter maps Type onto the
+// wire EventType.
+type Event struct {
+	Type    string
+	Payload any
+}
+
+// DeletedPayload is the note.deleted event body — just enough for a client to
+// drop the row, never stale document metadata.
+type DeletedPayload struct {
+	ID string `json:"id"`
+}
+
+// AttachmentCleaner removes a deleted owner's attachments. Defined here (the
+// consumer) so the note package stays free of any attachment import; the
+// concrete is the attachment service, injected at wire-up. Nil disables cleanup.
+type AttachmentCleaner interface {
+	DeleteAllForOwner(ctx context.Context, userID, ownerType, ownerID string) error
+}
+
+// ownerTypeNote is the polymorphic owner-type value notes register with the
+// attachment domain. Kept local so the note package never imports attachment.
+const ownerTypeNote = "note"
+
 // ProjectOwnershipVerifier reports whether the caller owns a project. Defined in
 // this (consumer) package so note imports no concrete project type; main.go
 // supplies the adapter. A foreign or missing project must be reported as
@@ -142,6 +173,11 @@ type Service interface {
 	Create(ctx context.Context, userID string, req CreateNoteRequest) (NoteDetailView, error)
 	Update(ctx context.Context, userID, id string, req UpdateNoteRequest) (NoteDetailView, error)
 	Delete(ctx context.Context, userID, id string) error
+
+	// WithCleaner injects the attachment cleaner invoked best-effort on delete.
+	// A post-construction option because the attachment service already depends
+	// on this domain via OwnerVerifier — the concretes meet only in main.go.
+	WithCleaner(c AttachmentCleaner) Service
 }
 
 // UpdateParams is one guarded save. Version is the version the client last read;
@@ -183,4 +219,9 @@ type Repository interface {
 	// ExistsForUser reports whether the user owns the note. Backs the attachment
 	// OwnerVerifier seam and disambiguates a failed guarded update.
 	ExistsForUser(ctx context.Context, userID, noteID string) (bool, error)
+
+	// ExistsByID reports whether a note exists, system-wide (no user scope). The
+	// attachment GC sweep uses it to find rows whose owner has vanished; it has
+	// no request-path caller, so it can never become an existence oracle.
+	ExistsByID(ctx context.Context, id string) (bool, error)
 }

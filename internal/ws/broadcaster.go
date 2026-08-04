@@ -10,6 +10,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/attachment"
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
 	"github.com/nicoflow/nicoflow-api/internal/domain/focus"
+	"github.com/nicoflow/nicoflow-api/internal/domain/note"
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
 	"github.com/nicoflow/nicoflow-api/internal/domain/recurrence"
@@ -51,6 +52,9 @@ var wireTypes = map[string]EventType{
 	ai.EventSessionUpdated:    EventAISessionUpdated,
 	focus.EventSessionStarted: EventFocusSessionStarted,
 	focus.EventSessionEnded:   EventFocusSessionEnded,
+	note.EventCreated:         EventNoteCreated,
+	note.EventUpdated:         EventNoteUpdated,
+	note.EventDeleted:         EventNoteDeleted,
 	"notification.created":    EventNotificationCreated,
 }
 
@@ -180,6 +184,20 @@ func NewFocusBroadcaster(hub *Hub) *FocusBroadcaster {
 }
 
 func (b *FocusBroadcaster) Broadcast(userID string, ev focus.Event) {
+	broadcast(b.hub, b.now, userID, ev.Type, ev.Payload)
+}
+
+// NoteBroadcaster adapts the Hub to note.Broadcaster.
+type NoteBroadcaster struct {
+	hub *Hub
+	now func() time.Time
+}
+
+func NewNoteBroadcaster(hub *Hub) *NoteBroadcaster {
+	return &NoteBroadcaster{hub: hub, now: time.Now}
+}
+
+func (b *NoteBroadcaster) Broadcast(userID string, ev note.Event) {
 	broadcast(b.hub, b.now, userID, ev.Type, ev.Payload)
 }
 

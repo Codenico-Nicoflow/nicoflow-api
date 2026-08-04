@@ -152,15 +152,20 @@ func main() {
 		log.Warn().Msg("file attachments: object storage disabled (unset STORAGE_* env) — /attachments returns 503")
 	}
 
+	// Note repository — built here rather than with the note service below because
+	// the attachment owner seams need it: a note is a valid attachment owner
+	// (E-053), and the GC sweep resolves note owners through the same repo.
+	noteRepo := note.NewRepository(pool)
+
 	// Attachment domain (E-024 / NIC-1643). Owner ownership dispatches to the task
-	// service via the adapter below; the GC sweep (NIC-1651) checks owner existence
+	// service or the note repo via the adapter below; the GC sweep (NIC-1651) checks owner existence
 	// system-wide via taskOwnerExistence over the task repo; storageClient is the
 	// object-store port.
 	attachmentSvc := attachment.NewService(
 		attachment.NewRepository(pool),
 		storageClient,
-		taskOwnerVerifier{tasks: taskSvc},
-		taskOwnerExistence{tasks: taskRepo},
+		ownerVerifier{tasks: taskSvc, notes: noteRepo},
+		ownerExistence{tasks: taskRepo, notes: noteRepo},
 		ws.NewAttachmentBroadcaster(wsHub),
 	)
 
@@ -211,7 +216,13 @@ func main() {
 
 	// Project notes (E-053 / NIC-1890). Free and unlimited — no plan is passed
 	// in. projectOwnerVerifier keeps note ↛ project at the type level.
-	noteSvc := note.NewService(note.NewRepository(pool), projectOwnerVerifier{projects: projectSvc})
+	noteSvc := note.NewService(noteRepo, projectOwnerVerifier{projects: projectSvc}, ws.NewNoteBroadcaster(wsHub)).
+		WithCleaner(attachmentSvc)
+
+	// Close the bucket→note seam now that the note service exists (E-053 /
+	// NIC-1903). Post-construction for the same reason as the task cleaner: the
+	// concretes meet only here in wiring.
+	bucketSvc = bucketSvc.WithNoteCreator(noteSvc)
 
 	// Google Calendar connection (E-052 / NIC-1844). Any credential or the
 	// encryption key missing ⇒ every endpoint returns a typed 503 and nothing
@@ -278,25 +289,46 @@ func main() {
 	log.Info().Msg("server shut down cleanly")
 }
 
-// taskOwnerVerifier adapts the task service to attachment.OwnerVerifier. It
-// resolves ownership by attempting a user-scoped task lookup and normalizes any
-// not-found (task-scoped or otherwise) into RESOURCE_NOT_FOUND so a foreign or
-// missing owner never leaks its existence (AC6).
-type taskOwnerVerifier struct {
+// ownerVerifier adapts the task and note domains to attachment.OwnerVerifier,
+// dispatching on the polymorphic owner type. Each branch resolves ownership with
+// a user-scoped lookup and normalizes any not-found into RESOURCE_NOT_FOUND, so
+// a foreign or missing owner never leaks its existence.
+type ownerVerifier struct {
 	tasks task.Service
+	notes note.Repository
 }
 
-func (v taskOwnerVerifier) VerifyOwner(ctx context.Context, userID, ownerType, ownerID string) error {
-	if ownerType != attachment.OwnerTypeTask {
+func (v ownerVerifier) VerifyOwner(ctx context.Context, userID, ownerType, ownerID string) error {
+	switch ownerType {
+	case attachment.OwnerTypeTask:
+		if _, err := v.tasks.Get(ctx, userID, ownerID); err != nil {
+			if ae, ok := errors.AsType[*apperror.AppError](err); ok && ae.Status == http.StatusNotFound {
+				return notOwned()
+			}
+			return err
+		}
+		return nil
+
+	case attachment.OwnerTypeNote:
+		owned, err := v.notes.ExistsForUser(ctx, userID, ownerID)
+		if err != nil {
+			return err
+		}
+		if !owned {
+			return notOwned()
+		}
+		return nil
+
+	default:
 		return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "unknown owner type")
 	}
-	if _, err := v.tasks.Get(ctx, userID, ownerID); err != nil {
-		if ae, ok := errors.AsType[*apperror.AppError](err); ok && ae.Status == http.StatusNotFound {
-			return apperror.New(http.StatusNotFound, apperror.ErrResourceNotFound, "resource not found")
-		}
-		return err
-	}
-	return nil
+}
+
+// notOwned is the single not-found an owner check may return. A foreign owner and
+// a missing one are indistinguishable by design — a 403 would confirm the row
+// exists.
+func notOwned() error {
+	return apperror.New(http.StatusNotFound, apperror.ErrResourceNotFound, "resource not found")
 }
 
 // projectOwnerVerifier adapts the project service to note.ProjectOwnershipVerifier.
@@ -317,18 +349,23 @@ func (v projectOwnerVerifier) VerifyProjectOwner(ctx context.Context, userID, pr
 	return nil
 }
 
-// taskOwnerExistence adapts the task repo to attachment.OwnerExistence for the GC
-// sweep — a system-wide (no user scope) existence check. An unknown owner type is
-// reported non-existent so its stale rows get reaped.
-type taskOwnerExistence struct {
+// ownerExistence adapts the task and note repos to attachment.OwnerExistence for
+// the GC sweep — a system-wide (no user scope) existence check. An unknown owner
+// type is reported non-existent so its stale rows get reaped.
+type ownerExistence struct {
 	tasks task.Repository
+	notes note.Repository
 }
 
-func (e taskOwnerExistence) OwnerExists(ctx context.Context, ownerType, ownerID string) (bool, error) {
-	if ownerType != attachment.OwnerTypeTask {
+func (e ownerExistence) OwnerExists(ctx context.Context, ownerType, ownerID string) (bool, error) {
+	switch ownerType {
+	case attachment.OwnerTypeTask:
+		return e.tasks.ExistsByID(ctx, ownerID)
+	case attachment.OwnerTypeNote:
+		return e.notes.ExistsByID(ctx, ownerID)
+	default:
 		return false, nil
 	}
-	return e.tasks.ExistsByID(ctx, ownerID)
 }
 
 // focusStaleAdapter adapts the focus service to jobs.FocusStaleSweeper,

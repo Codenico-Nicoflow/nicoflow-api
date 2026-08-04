@@ -34,7 +34,7 @@ func processReq() bucket.ProcessBucketRequest {
 func TestBroadcast_ProcessFiresBothEvents(t *testing.T) {
 	repo := &mockRepo{
 		getByID: func(_ context.Context, _, id string) (bucket.Bucket, error) { return unprocessed(id), nil },
-		markProcessed: func(_ context.Context, _, id, _ string, _, _ *string) (bucket.Bucket, error) {
+		markProcessed: func(_ context.Context, _, id, _ string, _ bucket.ProcessedRefs) (bucket.Bucket, error) {
 			return unprocessed(id), nil
 		},
 	}
@@ -63,7 +63,7 @@ func TestBroadcast_ProcessFiresBothEvents(t *testing.T) {
 func TestBroadcast_ProcessMidFailureEmitsNothing(t *testing.T) {
 	repo := &mockRepo{
 		getByID: func(_ context.Context, _, id string) (bucket.Bucket, error) { return unprocessed(id), nil },
-		markProcessed: func(_ context.Context, _, _, _ string, _, _ *string) (bucket.Bucket, error) {
+		markProcessed: func(_ context.Context, _, _, _ string, _ bucket.ProcessedRefs) (bucket.Bucket, error) {
 			return bucket.Bucket{}, errors.New("mark failed")
 		},
 	}
@@ -88,7 +88,7 @@ func TestBroadcast_CreateDeleteAndTrashEmit(t *testing.T) {
 		getByID: func(_ context.Context, _, id string) (bucket.Bucket, error) {
 			return unprocessed(id), nil
 		},
-		markProcessed: func(_ context.Context, _, id, _ string, _, _ *string) (bucket.Bucket, error) {
+		markProcessed: func(_ context.Context, _, id, _ string, _ bucket.ProcessedRefs) (bucket.Bucket, error) {
 			return unprocessed(id), nil
 		},
 	}

@@ -24,9 +24,10 @@ type Repository interface {
 	// CountUnprocessed returns how many of the user's inbox items are still
 	// unprocessed (processed_at IS NULL) — zero is the inbox_zero signal.
 	CountUnprocessed(ctx context.Context, userID string) (int, error)
-	// MarkProcessed stamps result/task/project on an UNPROCESSED item only.
-	// Already-processed returns 409 CONFLICT (the concurrency backstop).
-	MarkProcessed(ctx context.Context, userID, id, result string, taskID, projectID *string) (Bucket, error)
+	// MarkProcessed stamps result and the produced-entity ids on an UNPROCESSED
+	// item only. Already-processed returns 409 CONFLICT (the concurrency
+	// backstop).
+	MarkProcessed(ctx context.Context, userID, id, result string, refs ProcessedRefs) (Bucket, error)
 }
 
 type pgRepo struct{ db *pgxpool.Pool }
@@ -35,12 +36,12 @@ type pgRepo struct{ db *pgxpool.Pool }
 func NewRepository(db *pgxpool.Pool) Repository { return &pgRepo{db: db} }
 
 const bucketSelectCols = ` id, user_id, content, processing_result, project_id,
-	created_task_id, processed_at, created_at, updated_at `
+	created_task_id, created_note_id, processed_at, created_at, updated_at `
 
 func scanBucket(row pgx.Row, b *Bucket) error {
 	return row.Scan(
 		&b.ID, &b.UserID, &b.Content, &b.ProcessingResult, &b.ProjectID,
-		&b.CreatedTaskID, &b.ProcessedAt, &b.CreatedAt, &b.UpdatedAt,
+		&b.CreatedTaskID, &b.CreatedNoteID, &b.ProcessedAt, &b.CreatedAt, &b.UpdatedAt,
 	)
 }
 
@@ -132,19 +133,23 @@ func (r *pgRepo) UpdateContent(ctx context.Context, userID, id, content string) 
 	return b, nil
 }
 
-func (r *pgRepo) MarkProcessed(ctx context.Context, userID, id, result string, taskID, projectID *string) (Bucket, error) {
+func (r *pgRepo) MarkProcessed(ctx context.Context, userID, id, result string, refs ProcessedRefs) (Bucket, error) {
 	var b Bucket
 	err := scanBucket(
 		r.db.QueryRow(ctx, `
 			UPDATE bucket SET
 				processing_result = @result,
 				created_task_id   = @taskID,
+				created_note_id   = @noteID,
 				project_id        = @projectID,
 				processed_at      = NOW(),
 				updated_at        = NOW()
 			WHERE id = @id AND user_id = @userID AND processed_at IS NULL
 			RETURNING`+bucketSelectCols,
-			pgx.NamedArgs{"result": result, "taskID": taskID, "projectID": projectID, "id": id, "userID": userID},
+			pgx.NamedArgs{
+				"result": result, "taskID": refs.TaskID, "noteID": refs.NoteID,
+				"projectID": refs.ProjectID, "id": id, "userID": userID,
+			},
 		),
 		&b,
 	)

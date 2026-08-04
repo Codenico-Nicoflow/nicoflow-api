@@ -336,12 +336,21 @@ definitions:
     type: object
   bucket.ProcessBucketRequest:
     properties:
+      noteDetails:
+        $ref: '#/definitions/bucket.ProcessNoteDetails'
       processingResult:
         type: string
       projectId:
         type: string
       taskDetails:
         $ref: '#/definitions/bucket.ProcessTaskDetails'
+    type: object
+  bucket.ProcessNoteDetails:
+    properties:
+      content:
+        type: object
+      title:
+        type: string
     type: object
   bucket.ProcessTaskDetails:
     properties:
@@ -804,6 +813,19 @@ definitions:
       error:
         $ref: '#/definitions/search.SwaggerError'
     type: object
+  search.NoteResult:
+    properties:
+      excerpt:
+        type: string
+      id:
+        type: string
+      projectId:
+        type: string
+      projectName:
+        type: string
+      title:
+        type: string
+    type: object
   search.ProjectResult:
     properties:
       areaName:
@@ -818,6 +840,10 @@ definitions:
       areas:
         items:
           $ref: '#/definitions/search.AreaResult'
+        type: array
+      notes:
+        items:
+          $ref: '#/definitions/search.NoteResult'
         type: array
       projects:
         items:
@@ -2592,7 +2618,7 @@ paths:
         name: q
         required: true
         type: string
-      - description: 'Comma-separated groups: task,project,area (omit for all)'
+      - description: 'Comma-separated groups: task,project,area,note (omit for all)'
         in: query
         name: types
         type: string
