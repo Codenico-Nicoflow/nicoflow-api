@@ -26,6 +26,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
 	"github.com/nicoflow/nicoflow-api/internal/domain/focus"
 	"github.com/nicoflow/nicoflow-api/internal/domain/googlecal"
+	"github.com/nicoflow/nicoflow-api/internal/domain/note"
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
 	"github.com/nicoflow/nicoflow-api/internal/domain/recurrence"
@@ -208,6 +209,10 @@ func main() {
 	// carry totalFocusSeconds (NIC-1712); the reverse seam keeps task ↛ focus.
 	taskSvc = taskSvc.WithFocusTotals(focusRepo)
 
+	// Project notes (E-053 / NIC-1890). Free and unlimited — no plan is passed
+	// in. projectOwnerVerifier keeps note ↛ project at the type level.
+	noteSvc := note.NewService(note.NewRepository(pool), projectOwnerVerifier{projects: projectSvc})
+
 	// Google Calendar connection (E-052 / NIC-1844). Any credential or the
 	// encryption key missing ⇒ every endpoint returns a typed 503 and nothing
 	// else in the app notices.
@@ -233,6 +238,7 @@ func main() {
 		Attachment:      attachment.NewHandler(attachmentSvc),
 		Recurrence:      recurrence.NewHandler(recurrenceSvc),
 		Focus:           focus.NewHandler(focusSvc),
+		Note:            note.NewHandler(noteSvc),
 		Notification:    notification.NewHandler(notificationSvc),
 		GoogleCal:       googlecal.NewHandler(googleCalSvc, cfg.AppBaseURL),
 		GoogleEvents:    googlecal.NewEventsHandler(googleEventsSvc),
@@ -285,6 +291,24 @@ func (v taskOwnerVerifier) VerifyOwner(ctx context.Context, userID, ownerType, o
 		return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "unknown owner type")
 	}
 	if _, err := v.tasks.Get(ctx, userID, ownerID); err != nil {
+		if ae, ok := errors.AsType[*apperror.AppError](err); ok && ae.Status == http.StatusNotFound {
+			return apperror.New(http.StatusNotFound, apperror.ErrResourceNotFound, "resource not found")
+		}
+		return err
+	}
+	return nil
+}
+
+// projectOwnerVerifier adapts the project service to note.ProjectOwnershipVerifier.
+// It resolves ownership with a user-scoped lookup and normalizes any not-found
+// (project-scoped or otherwise) into RESOURCE_NOT_FOUND, so filing a note into
+// someone else's project is indistinguishable from filing into a missing one.
+type projectOwnerVerifier struct {
+	projects project.Service
+}
+
+func (v projectOwnerVerifier) VerifyProjectOwner(ctx context.Context, userID, projectID string) error {
+	if _, err := v.projects.Get(ctx, userID, projectID); err != nil {
 		if ae, ok := errors.AsType[*apperror.AppError](err); ok && ae.Status == http.StatusNotFound {
 			return apperror.New(http.StatusNotFound, apperror.ErrResourceNotFound, "resource not found")
 		}

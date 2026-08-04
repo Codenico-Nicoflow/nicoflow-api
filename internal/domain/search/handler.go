@@ -28,9 +28,9 @@ func NewHandler(svc Service) *Handler { return &Handler{svc: svc} }
 // @Param        types  query     string  false  "Comma-separated groups: task,project,area (omit for all)"
 // @Param        limit  query     int     false  "Per-type cap (default 10, max 50)"
 // @Security     BearerAuth
-// @Success      200  {object}  respond.Envelope  "Grouped results"
-// @Failure      400  {object}  respond.Envelope  "INVALID_INPUT"
-// @Failure      401  {object}  respond.Envelope  "UNAUTHORIZED"
+// @Success      200  {object}  SearchEnvelope  "Grouped results"
+// @Failure      400  {object}  ErrorEnvelope   "INVALID_INPUT"
+// @Failure      401  {object}  ErrorEnvelope   "UNAUTHORIZED"
 // @Router       /search [get]
 func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())

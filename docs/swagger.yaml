@@ -141,6 +141,28 @@ definitions:
       user:
         $ref: '#/definitions/auth.UserView'
     type: object
+  auth.CalendarPrefsView:
+    properties:
+      dayEndHour:
+        type: integer
+      dayStartHour:
+        type: integer
+      weekStart:
+        type: integer
+      workdays:
+        items:
+          type: integer
+        type: array
+    type: object
+  auth.ChangePasswordRequest:
+    properties:
+      confirmPassword:
+        type: string
+      currentPassword:
+        type: string
+      newPassword:
+        type: string
+    type: object
   auth.ErrorEnvelope:
     properties:
       data: {}
@@ -164,6 +186,8 @@ definitions:
         type: string
       remember:
         type: boolean
+      timezone:
+        type: string
     type: object
   auth.MessageData:
     properties:
@@ -213,8 +237,10 @@ definitions:
     type: object
   auth.UpdateMeRequest:
     properties:
-      email:
-        type: string
+      dayEndHour:
+        type: integer
+      dayStartHour:
+        type: integer
       firstName:
         type: string
       language:
@@ -225,6 +251,15 @@ definitions:
         type: string
       timezone:
         type: string
+      weekStart:
+        description: |-
+          Calendar preferences are individually optional too, so a client changing
+          only the day window never has to echo back a week_start it did not read.
+        type: integer
+      workdays:
+        items:
+          type: integer
+        type: array
     type: object
   auth.UserEnvelope:
     properties:
@@ -234,6 +269,12 @@ definitions:
     type: object
   auth.UserView:
     properties:
+      calendar:
+        allOf:
+        - $ref: '#/definitions/auth.CalendarPrefsView'
+        description: |-
+          Calendar always travels with the user: the grid needs it on first paint,
+          and a second round trip would render one frame of the wrong week.
       email:
         type: string
       firstName:
@@ -250,6 +291,8 @@ definitions:
         type: string
       theme:
         type: string
+      timezone:
+        type: string
       username:
         type: string
     type: object
@@ -257,6 +300,392 @@ definitions:
     properties:
       token:
         type: string
+    type: object
+  bucket.BucketListResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/bucket.BucketView'
+        type: array
+    type: object
+  bucket.BucketView:
+    properties:
+      content:
+        type: string
+      createdAt:
+        type: string
+      createdNoteId:
+        type: string
+      createdTaskId:
+        type: string
+      id:
+        type: string
+      processedAt:
+        type: string
+      processingResult:
+        type: string
+      projectId:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  bucket.CreateBucketRequest:
+    properties:
+      content:
+        type: string
+    type: object
+  bucket.ProcessBucketRequest:
+    properties:
+      processingResult:
+        type: string
+      projectId:
+        type: string
+      taskDetails:
+        $ref: '#/definitions/bucket.ProcessTaskDetails'
+    type: object
+  bucket.ProcessTaskDetails:
+    properties:
+      energy:
+        type: string
+      estimatedMinutes:
+        type: integer
+      notes:
+        type: string
+      priority:
+        type: string
+      rollsOver:
+        type: boolean
+      scheduledFor:
+        type: string
+      title:
+        type: string
+      url:
+        type: string
+    type: object
+  bucket.UpdateBucketRequest:
+    properties:
+      content:
+        type: string
+    type: object
+  googlecal.CalendarView:
+    properties:
+      backgroundColor:
+        type: string
+      id:
+        type: string
+      primary:
+        type: boolean
+      selected:
+        type: boolean
+      summary:
+        type: string
+    type: object
+  googlecal.ErrorEnvelope:
+    properties:
+      data: {}
+      error:
+        $ref: '#/definitions/googlecal.SwaggerError'
+    type: object
+  googlecal.EventsResponse:
+    properties:
+      events:
+        items:
+          $ref: '#/definitions/googlecal.GoogleEventView'
+        type: array
+      googleStatus:
+        $ref: '#/definitions/googlecal.GoogleStatus'
+    type: object
+  googlecal.GoogleEventView:
+    properties:
+      allDay:
+        type: boolean
+      attendeeCount:
+        type: integer
+      calendarId:
+        type: string
+      description:
+        type: string
+      end:
+        type: string
+      htmlLink:
+        type: string
+      id:
+        type: string
+      location:
+        type: string
+      organizer:
+        type: string
+      responseStatus:
+        $ref: '#/definitions/googlecal.ResponseStatus'
+      start:
+        type: string
+      title:
+        type: string
+    type: object
+  googlecal.GoogleStatus:
+    enum:
+    - ok
+    - disconnected
+    - error
+    type: string
+    x-enum-varnames:
+    - StatusOK
+    - StatusDisconnected
+    - StatusError
+  googlecal.ResponseStatus:
+    enum:
+    - ""
+    - accepted
+    - declined
+    - tentative
+    - needsAction
+    type: string
+    x-enum-varnames:
+    - ResponseNone
+    - ResponseAccepted
+    - ResponseDeclined
+    - ResponseTentative
+    - ResponseNeedsAction
+  googlecal.SwaggerError:
+    properties:
+      code:
+        example: GOOGLE_NOT_CONNECTED
+        type: string
+      message:
+        example: google calendar is not connected
+        type: string
+    type: object
+  googlecal.UpdateSelectionRequest:
+    properties:
+      calendarIds:
+        items:
+          type: string
+        type: array
+    type: object
+  note.CreateNoteRequest:
+    properties:
+      content:
+        type: object
+      projectId:
+        type: string
+      title:
+        type: string
+    type: object
+  note.ErrorEnvelope:
+    properties:
+      data: {}
+      error:
+        $ref: '#/definitions/note.SwaggerError'
+    type: object
+  note.NoteDetailEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/note.NoteDetailView'
+      error: {}
+    type: object
+  note.NoteDetailView:
+    properties:
+      content:
+        type: object
+      createdAt:
+        type: string
+      id:
+        type: string
+      projectId:
+        type: string
+      title:
+        type: string
+      updatedAt:
+        type: string
+      version:
+        type: integer
+    type: object
+  note.NoteListEnvelope:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/note.NoteView'
+        type: array
+      error: {}
+    type: object
+  note.NoteView:
+    properties:
+      createdAt:
+        type: string
+      excerpt:
+        type: string
+      id:
+        type: string
+      projectId:
+        type: string
+      title:
+        type: string
+      updatedAt:
+        type: string
+      version:
+        type: integer
+    type: object
+  note.SwaggerError:
+    properties:
+      code:
+        example: RESOURCE_NOT_FOUND
+        type: string
+      message:
+        example: note not found
+        type: string
+    type: object
+  note.UpdateNoteRequest:
+    properties:
+      content:
+        type: object
+      title:
+        type: string
+      version:
+        type: integer
+    type: object
+  notification.CountEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/notification.CountResponse'
+      error: {}
+    type: object
+  notification.CountResponse:
+    properties:
+      count:
+        type: integer
+    type: object
+  notification.ErrorEnvelope:
+    properties:
+      data: {}
+      error:
+        $ref: '#/definitions/notification.SwaggerError'
+    type: object
+  notification.ListNotificationsResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/notification.NotificationView'
+        type: array
+      nextCursor:
+        type: string
+    type: object
+  notification.NotificationEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/notification.NotificationView'
+      error: {}
+    type: object
+  notification.NotificationListEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/notification.ListNotificationsResponse'
+      error: {}
+    type: object
+  notification.NotificationView:
+    properties:
+      body:
+        type: string
+      createdAt:
+        type: string
+      id:
+        type: string
+      isRead:
+        type: boolean
+      metadata:
+        type: object
+      readAt:
+        type: string
+      title:
+        type: string
+      type:
+        type: string
+    type: object
+  notification.PreferencesEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/notification.PreferencesView'
+      error: {}
+    type: object
+  notification.PreferencesView:
+    properties:
+      afterDueMinutes:
+        type: integer
+      beforeDueMinutes:
+        type: integer
+      dailySummaryEnabled:
+        type: boolean
+      emailDigest:
+        type: boolean
+      eveningHour:
+        type: integer
+      inboxNudgesEnabled:
+        type: boolean
+      morningHour:
+        type: integer
+      overdueEnabled:
+        type: boolean
+      pushEnabled:
+        type: boolean
+      smsEnabled:
+        type: boolean
+      streaksEnabled:
+        type: boolean
+    type: object
+  notification.SubscribeRequest:
+    properties:
+      authKey:
+        type: string
+      endpoint:
+        type: string
+      p256dhKey:
+        type: string
+      userAgent:
+        type: string
+    type: object
+  notification.SwaggerError:
+    properties:
+      code:
+        example: NOTIFICATION_NOT_FOUND
+        type: string
+      message:
+        example: notification not found
+        type: string
+    type: object
+  notification.UnreadCountEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/notification.UnreadCountResponse'
+      error: {}
+    type: object
+  notification.UnreadCountResponse:
+    properties:
+      count:
+        type: integer
+    type: object
+  notification.UpdatePreferences:
+    properties:
+      afterDueMinutes:
+        type: integer
+      beforeDueMinutes:
+        type: integer
+      dailySummaryEnabled:
+        type: boolean
+      emailDigest:
+        type: boolean
+      eveningHour:
+        type: integer
+      inboxNudgesEnabled:
+        type: boolean
+      morningHour:
+        type: integer
+      overdueEnabled:
+        type: boolean
+      pushEnabled:
+        type: boolean
+      smsEnabled:
+        type: boolean
+      streaksEnabled:
+        type: boolean
     type: object
   project.CreateProjectRequest:
     properties:
@@ -362,6 +791,71 @@ definitions:
     type: object
   project.UpdateProjectRequest:
     type: object
+  search.AreaResult:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+  search.ErrorEnvelope:
+    properties:
+      data: {}
+      error:
+        $ref: '#/definitions/search.SwaggerError'
+    type: object
+  search.ProjectResult:
+    properties:
+      areaName:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+  search.Response:
+    properties:
+      areas:
+        items:
+          $ref: '#/definitions/search.AreaResult'
+        type: array
+      projects:
+        items:
+          $ref: '#/definitions/search.ProjectResult'
+        type: array
+      tasks:
+        items:
+          $ref: '#/definitions/search.TaskResult'
+        type: array
+    type: object
+  search.SearchEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/search.Response'
+      error: {}
+    type: object
+  search.SwaggerError:
+    properties:
+      code:
+        example: INVALID_INPUT
+        type: string
+      message:
+        example: query is required
+        type: string
+    type: object
+  search.TaskResult:
+    properties:
+      excerpt:
+        type: string
+      id:
+        type: string
+      projectId:
+        type: string
+      projectName:
+        type: string
+      title:
+        type: string
+    type: object
   task.CreateSubtaskRequest:
     properties:
       position:
@@ -382,6 +876,8 @@ definitions:
       rollsOver:
         type: boolean
       scheduledFor:
+        type: string
+      scheduledTime:
         type: string
       status:
         type: string
@@ -420,6 +916,8 @@ definitions:
       rollsOver:
         type: boolean
       scheduledFor:
+        type: string
+      scheduledTime:
         type: string
     type: object
   task.SetStatusRequest:
@@ -493,18 +991,36 @@ definitions:
         type: string
       notes:
         type: string
+      occurrenceDate:
+        type: string
+      openSubtaskCount:
+        type: integer
       priority:
         type: string
       projectId:
+        type: string
+      recurrenceRuleId:
         type: string
       rollsOver:
         type: boolean
       scheduledFor:
         type: string
+      scheduledTime:
+        type: string
       status:
         type: string
+      subtaskCount:
+        description: SubtaskCount / OpenSubtaskCount are always populated, on every
+          read.
+        type: integer
       title:
         type: string
+      totalFocusSeconds:
+        description: |-
+          TotalFocusSeconds is the SUM of the task's closed focus segments (E-049).
+          Enriched only on Focus + GetTask; 0 on the project task-list, where a
+          per-row SUM would be pure cost for a value the list never renders.
+        type: integer
       updatedAt:
         type: string
       url:
@@ -843,6 +1359,50 @@ paths:
       summary: List areas with nested projects
       tags:
       - areas
+  /auth/change-password:
+    post:
+      consumes:
+      - application/json
+      description: Changes the authenticated user's password. Re-verifies currentPassword
+        via bcrypt, enforces the register password policy on newPassword, revokes
+        all refresh tokens, and issues a fresh token pair to the caller (every other
+        device is signed out; the caller stays signed in). Sets a new HttpOnly refresh
+        cookie.
+      parameters:
+      - description: Current + new password
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.ChangePasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: New access token + rotated refresh cookie
+          schema:
+            $ref: '#/definitions/auth.AuthEnvelope'
+        "400":
+          description: WEAK_PASSWORD
+          schema:
+            $ref: '#/definitions/auth.ErrorEnvelope'
+        "401":
+          description: UNAUTHORIZED (missing access token or wrong current password)
+          schema:
+            $ref: '#/definitions/auth.ErrorEnvelope'
+        "422":
+          description: INVALID_INPUT (password mismatch)
+          schema:
+            $ref: '#/definitions/auth.ErrorEnvelope'
+        "429":
+          description: RATE_LIMITED
+          schema:
+            $ref: '#/definitions/auth.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Change password (logged in)
+      tags:
+      - auth
   /auth/forgot-password:
     post:
       consumes:
@@ -1098,6 +1658,271 @@ paths:
       summary: Verify email address
       tags:
       - auth
+  /bucket:
+    get:
+      description: Lists the caller's bucket items, newest first. Processed and unprocessed
+        items are both returned; the client partitions them into Inbox / Archived.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/bucket.BucketListResponse'
+      security:
+      - BearerAuth: []
+      summary: List inbox items
+      tags:
+      - bucket
+    post:
+      consumes:
+      - application/json
+      description: Quick-captures a thought into the bucket. Content is 1–500 characters
+        (trimmed).
+      parameters:
+      - description: Content to capture
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/bucket.CreateBucketRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/bucket.BucketView'
+        "422":
+          description: INVALID_INPUT
+      security:
+      - BearerAuth: []
+      summary: Capture an inbox item
+      tags:
+      - bucket
+  /bucket/{id}:
+    delete:
+      description: Hard-deletes a bucket item regardless of processed state.
+      parameters:
+      - description: Bucket item ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: RESOURCE_NOT_FOUND
+      security:
+      - BearerAuth: []
+      summary: Delete an inbox item
+      tags:
+      - bucket
+    get:
+      description: Retrieves a single bucket item by ID. Cross-user access returns
+        404 (no existence leak).
+      parameters:
+      - description: Bucket item ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/bucket.BucketView'
+        "404":
+          description: RESOURCE_NOT_FOUND
+      security:
+      - BearerAuth: []
+      summary: Get an inbox item
+      tags:
+      - bucket
+    patch:
+      consumes:
+      - application/json
+      description: Edits the content of an unprocessed bucket item. Editing a processed
+        item returns 409.
+      parameters:
+      - description: Bucket item ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: New content
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/bucket.UpdateBucketRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/bucket.BucketView'
+        "404":
+          description: RESOURCE_NOT_FOUND
+        "409":
+          description: CONFLICT (already processed)
+        "422":
+          description: INVALID_INPUT
+      security:
+      - BearerAuth: []
+      summary: Edit an unprocessed inbox item
+      tags:
+      - bucket
+  /bucket/{id}/process:
+    post:
+      consumes:
+      - application/json
+      description: Converts an unprocessed item into a task (requires projectId +
+        taskDetails), trashes it, or (note — not yet implemented) returns 501. Already-processed
+        items return 409.
+      parameters:
+      - description: Bucket item ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: How to process the item
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/bucket.ProcessBucketRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/bucket.BucketView'
+        "403":
+          description: PLAN_LIMIT_EXCEEDED
+        "404":
+          description: RESOURCE_NOT_FOUND / PROJECT_NOT_FOUND
+        "409":
+          description: CONFLICT (already processed)
+        "422":
+          description: INVALID_INPUT
+        "501":
+          description: note processing not implemented
+      security:
+      - BearerAuth: []
+      summary: Process an inbox item
+      tags:
+      - bucket
+  /calendar/google-events:
+    get:
+      description: Read-only overlay of the user's selected Google calendars for an
+        inclusive date range (max 62 days). Never returns 5xx for a Google-side failure
+        — the response carries `googleStatus` (`ok`|`disconnected`|`error`) with an
+        empty list instead, so a Google outage cannot break the calendar view. `refresh=true`
+        bypasses the short server-side cache.
+      parameters:
+      - description: Inclusive start date (YYYY-MM-DD)
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: Inclusive end date (YYYY-MM-DD)
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: Bypass the cache and re-query Google
+        in: query
+        name: refresh
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/googlecal.EventsResponse'
+        "422":
+          description: INVALID_INPUT (missing bound, bad date, or span > 62 days)
+          schema:
+            $ref: '#/definitions/googlecal.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: List Google Calendar events
+      tags:
+      - calendar
+  /calendar/google/calendars:
+    get:
+      description: The calendars the user can read, each flagged with whether it currently
+        overlays the Nicoflow calendar. A connection with no stored selection reports
+        the primary calendar as selected, matching the overlay's default.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/googlecal.CalendarView'
+            type: array
+        "409":
+          description: GOOGLE_NOT_CONNECTED
+          schema:
+            $ref: '#/definitions/googlecal.ErrorEnvelope'
+        "502":
+          description: GOOGLE_AUTH_FAILED — Google unreachable
+          schema:
+            $ref: '#/definitions/googlecal.ErrorEnvelope'
+        "503":
+          description: GOOGLE_AUTH_FAILED — integration not configured
+          schema:
+            $ref: '#/definitions/googlecal.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: List the user's Google calendars
+      tags:
+      - calendar
+    put:
+      consumes:
+      - application/json
+      description: Replaces the overlay selection. Capped at 5 calendars — each selected
+        calendar is a separate Google API call per ranged fetch. Duplicates are collapsed
+        rather than rejected. Returns the full calendar list with the new selection
+        applied.
+      parameters:
+      - description: Calendar IDs to select
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/googlecal.UpdateSelectionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/googlecal.CalendarView'
+            type: array
+        "409":
+          description: GOOGLE_NOT_CONNECTED
+          schema:
+            $ref: '#/definitions/googlecal.ErrorEnvelope'
+        "422":
+          description: INVALID_INPUT — missing field, empty ID, or more than 5 calendars
+          schema:
+            $ref: '#/definitions/googlecal.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Replace the selected calendars
+      tags:
+      - calendar
   /focus:
     get:
       description: 'Returns a deterministically-ranked short list of the user''s active+inbox
@@ -1133,6 +1958,370 @@ paths:
       summary: Focus — what can I do right now?
       tags:
       - tasks
+  /notes:
+    get:
+      description: Returns the project's notes ordered by updated_at DESC. Each item
+        carries a 200-char excerpt and NO content — never render a note body from
+        this response. Notes are Free and unlimited.
+      parameters:
+      - description: Project to list notes for
+        in: query
+        name: projectId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Notes with excerpts
+          schema:
+            $ref: '#/definitions/note.NoteListEnvelope'
+        "404":
+          description: RESOURCE_NOT_FOUND (project missing or not owned)
+          schema:
+            $ref: '#/definitions/note.ErrorEnvelope'
+        "422":
+          description: INVALID_INPUT (projectId missing)
+          schema:
+            $ref: '#/definitions/note.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: List a project's notes
+      tags:
+      - notes
+    post:
+      consumes:
+      - application/json
+      description: Files a new note under a project. content is optional (defaults
+        to an empty document). content_text is always server-derived — a client-sent
+        value is rejected. Notes are Free and unlimited; this endpoint never returns
+        PLAN_LIMIT_EXCEEDED. Bodies over 1 MB are refused.
+      parameters:
+      - description: Note to create
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/note.CreateNoteRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: The created note
+          schema:
+            $ref: '#/definitions/note.NoteDetailEnvelope'
+        "404":
+          description: RESOURCE_NOT_FOUND (project missing or not owned)
+          schema:
+            $ref: '#/definitions/note.ErrorEnvelope'
+        "422":
+          description: INVALID_INPUT (bad title/content/projectId, or body over 1
+            MB)
+          schema:
+            $ref: '#/definitions/note.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Create a note
+      tags:
+      - notes
+  /notes/{id}:
+    delete:
+      description: Hard-deletes a note. Cross-user access returns 404, never 403.
+      parameters:
+      - description: Note ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: RESOURCE_NOT_FOUND
+          schema:
+            $ref: '#/definitions/note.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Delete a note
+      tags:
+      - notes
+    get:
+      description: Retrieves a single note including its full document. Cross-user
+        access returns 404, never 403.
+      parameters:
+      - description: Note ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The note with its content
+          schema:
+            $ref: '#/definitions/note.NoteDetailEnvelope'
+        "404":
+          description: RESOURCE_NOT_FOUND
+          schema:
+            $ref: '#/definitions/note.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Get a note
+      tags:
+      - notes
+    patch:
+      consumes:
+      - application/json
+      description: Partial update guarded by optimistic concurrency. version is REQUIRED
+        and must match the stored row; a stale version returns 409 and writes nothing.
+        On 409 a client must surface a conflict state and stop autosaving — never
+        retry silently. A successful save increments version.
+      parameters:
+      - description: Note ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to change plus the version last read
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/note.UpdateNoteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The updated note at its new version
+          schema:
+            $ref: '#/definitions/note.NoteDetailEnvelope'
+        "404":
+          description: RESOURCE_NOT_FOUND
+          schema:
+            $ref: '#/definitions/note.ErrorEnvelope'
+        "409":
+          description: CONFLICT (stale version — the note moved on)
+          schema:
+            $ref: '#/definitions/note.ErrorEnvelope'
+        "422":
+          description: INVALID_INPUT (missing version, bad title/content, or body
+            over 1 MB)
+          schema:
+            $ref: '#/definitions/note.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Update a note
+      tags:
+      - notes
+  /notifications:
+    get:
+      description: Lists the user's notifications, cursor-paginated, newest first,
+        with an optional read filter.
+      parameters:
+      - description: Filter by read state
+        in: query
+        name: isRead
+        type: boolean
+      - description: Page size (1–100)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Paginated notifications
+          schema:
+            $ref: '#/definitions/notification.NotificationListEnvelope'
+        "400":
+          description: INVALID_INPUT (bad limit/cursor)
+          schema:
+            $ref: '#/definitions/notification.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: List notifications
+      tags:
+      - notifications
+  /notifications/{id}:
+    delete:
+      description: Hard-deletes a notification. Cross-user access returns 404.
+      parameters:
+      - description: Notification ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: NOTIFICATION_NOT_FOUND
+          schema:
+            $ref: '#/definitions/notification.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Dismiss a notification
+      tags:
+      - notifications
+  /notifications/{id}/read:
+    patch:
+      description: Marks a single notification read. Cross-user access returns 404.
+      parameters:
+      - description: Notification ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The updated notification
+          schema:
+            $ref: '#/definitions/notification.NotificationEnvelope'
+        "404":
+          description: NOTIFICATION_NOT_FOUND
+          schema:
+            $ref: '#/definitions/notification.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Mark a notification read
+      tags:
+      - notifications
+  /notifications/preferences:
+    get:
+      description: Returns the user's notification preferences. An absent row yields
+        the defaults ({ emailDigest:true, pushEnabled:false, smsEnabled:false, beforeDueMinutes:1440,
+        afterDueMinutes:0 }). Push/SMS toggles are stored but inert until E-037.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The user's preferences
+          schema:
+            $ref: '#/definitions/notification.PreferencesEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Get notification preferences
+      tags:
+      - notifications
+    put:
+      consumes:
+      - application/json
+      description: Partially or fully updates the user's notification preferences
+        (lazy upsert). Lead-time minutes must be 0–10080. Push/SMS toggles persist
+        but have no delivery path until E-037.
+      parameters:
+      - description: Fields to update (all optional)
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/notification.UpdatePreferences'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The updated preferences
+          schema:
+            $ref: '#/definitions/notification.PreferencesEnvelope'
+        "400":
+          description: INVALID_INPUT (bad body or lead time out of range)
+          schema:
+            $ref: '#/definitions/notification.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Update notification preferences
+      tags:
+      - notifications
+  /notifications/push/subscribe:
+    delete:
+      consumes:
+      - application/json
+      description: Removes the user's Web Push subscription for the given endpoint.
+        Idempotent.
+      parameters:
+      - description: Endpoint to remove
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/notification.SubscribeRequest'
+      responses:
+        "204":
+          description: Subscription removed
+      security:
+      - BearerAuth: []
+      summary: Unsubscribe from web push
+      tags:
+      - notifications
+    post:
+      consumes:
+      - application/json
+      description: Stores a browser Web Push subscription for the user (Pro-only).
+        Upserts on endpoint. Free-plan callers get PLAN_LIMIT_EXCEEDED.
+      parameters:
+      - description: Push subscription (endpoint + keys)
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/notification.SubscribeRequest'
+      responses:
+        "201":
+          description: Subscription stored
+        "403":
+          description: PLAN_LIMIT_EXCEEDED (free plan)
+          schema:
+            $ref: '#/definitions/notification.ErrorEnvelope'
+        "422":
+          description: INVALID_INPUT (missing endpoint/keys)
+          schema:
+            $ref: '#/definitions/notification.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Subscribe to web push
+      tags:
+      - notifications
+  /notifications/read-all:
+    patch:
+      description: Marks every unread notification read and returns how many were
+        updated.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Number marked read
+          schema:
+            $ref: '#/definitions/notification.CountEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Mark all notifications read
+      tags:
+      - notifications
+  /notifications/unread-count:
+    get:
+      description: Returns the number of unread notifications — the cheap poll target
+        for the bell badge.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Unread count
+          schema:
+            $ref: '#/definitions/notification.UnreadCountEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Unread notification count
+      tags:
+      - notifications
   /projects:
     get:
       description: Lists the user's projects across all areas, cursor-paginated, with
@@ -1393,6 +2582,78 @@ paths:
       summary: Reorder projects
       tags:
       - projects
+  /search:
+    get:
+      description: Searches the user's tasks, projects and areas via PostgreSQL full-text
+        (plainto_tsquery), ranked by relevance.
+      parameters:
+      - description: Search term (2–100 chars)
+        in: query
+        name: q
+        required: true
+        type: string
+      - description: 'Comma-separated groups: task,project,area (omit for all)'
+        in: query
+        name: types
+        type: string
+      - description: Per-type cap (default 10, max 50)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Grouped results
+          schema:
+            $ref: '#/definitions/search.SearchEnvelope'
+        "400":
+          description: INVALID_INPUT
+          schema:
+            $ref: '#/definitions/search.ErrorEnvelope'
+        "401":
+          description: UNAUTHORIZED
+          schema:
+            $ref: '#/definitions/search.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Full-text search
+      tags:
+      - search
+  /tasks:
+    get:
+      description: Flat list of the user's tasks scheduled within an inclusive date
+        range, ordered by (scheduledFor, scheduledTime NULLS FIRST, displayOrder).
+        Unlike Time Spread no roll-forward is applied — a task is returned on the
+        date it is actually scheduled for. Both bounds are required and the span is
+        capped at 62 days.
+      parameters:
+      - description: Inclusive start date (YYYY-MM-DD)
+        in: query
+        name: scheduledFrom
+        required: true
+        type: string
+      - description: Inclusive end date (YYYY-MM-DD)
+        in: query
+        name: scheduledTo
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Tasks in the range
+          schema:
+            $ref: '#/definitions/task.TaskListEnvelope'
+        "422":
+          description: INVALID_INPUT (missing bound, bad date, or span > 62 days)
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: List tasks in a date range (calendar)
+      tags:
+      - tasks
   /tasks/{id}:
     delete:
       description: Hard-deletes a task; its subtasks cascade.
@@ -1523,15 +2784,16 @@ paths:
     patch:
       consumes:
       - application/json
-      description: Sets the soft scheduledFor intention + rollsOver flag. scheduledFor
-        null (or absent) unschedules. A bad date returns 400 INVALID_DATE.
+      description: Sets the soft scheduledFor intention, optional scheduledTime (HH:MM,
+        Pro-only) and rollsOver flag. scheduledFor null (or absent) unschedules. A
+        bad date returns 400 INVALID_DATE.
       parameters:
       - description: Task ID
         in: path
         name: id
         required: true
         type: string
-      - description: scheduledFor (ISO date or null) + optional rollsOver
+      - description: scheduledFor (ISO date or null) + optional scheduledTime + rollsOver
         in: body
         name: body
         required: true
@@ -1548,8 +2810,16 @@ paths:
           description: INVALID_DATE
           schema:
             $ref: '#/definitions/task.ErrorEnvelope'
+        "403":
+          description: PLAN_LIMIT_EXCEEDED (free plan setting a time)
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
         "404":
           description: TASK_NOT_FOUND
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
+        "422":
+          description: INVALID_INPUT (malformed or non-snapped time)
           schema:
             $ref: '#/definitions/task.ErrorEnvelope'
       security:
@@ -1735,6 +3005,12 @@ paths:
       description: Buckets the user's active+inbox tasks into today/tomorrow/thisWeek
         with the no-guilt roll-forward (a past soft-scheduled task with rollsOver=true
         carries to today instead of going overdue). someday/done/cancelled are excluded.
+      parameters:
+      - description: IANA timezone for day bucketing (e.g. Asia/Jerusalem); defaults
+          to UTC
+        in: query
+        name: tz
+        type: string
       produces:
       - application/json
       responses:
@@ -1742,6 +3018,10 @@ paths:
           description: Three-bucket task lists
           schema:
             $ref: '#/definitions/task.TimeSpreadEnvelope'
+        "400":
+          description: INVALID_INPUT — unknown timezone
+          schema:
+            $ref: '#/definitions/task.ErrorEnvelope'
       security:
       - BearerAuth: []
       summary: Time spread (today / tomorrow / this week)
@@ -1789,7 +3069,7 @@ paths:
           schema:
             $ref: '#/definitions/auth.ErrorEnvelope'
         "422":
-          description: INVALID_INPUT or INVALID_EMAIL
+          description: INVALID_INPUT
           schema:
             $ref: '#/definitions/auth.ErrorEnvelope'
       security:
