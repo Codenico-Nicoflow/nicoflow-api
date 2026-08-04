@@ -1745,6 +1745,44 @@
           }
         },
         {
+          "name": "Process Bucket Item \u2192 Note",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/bucket/{{bucketId}}/process",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "bucket",
+                "{{bucketId}}",
+                "process"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"processingResult\": \"note\",\n  \"projectId\": \"{{projectId}}\",\n  \"noteDetails\": {\n    \"title\": \"Reference material from inbox\",\n    \"content\": {\n      \"type\": \"doc\",\n      \"content\": [\n        {\n          \"type\": \"paragraph\",\n          \"content\": [\n            {\n              \"type\": \"text\",\n              \"text\": \"Captured thought, expanded.\"\n            }\n          ]\n        }\n      ]\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Processes an inbox item into a NOTE (E-053). `projectId` + `noteDetails` are required; omitting either is 422. Ordered, not transactional: the note is created first, so a failure leaves the item unprocessed rather than silently emptying it. Response carries `createdNoteId`. `content` is optional \u2014 omit it for the empty-doc default."
+          }
+        },
+        {
           "name": "Delete Bucket Item",
           "request": {
             "method": "DELETE",
@@ -1768,7 +1806,7 @@
           }
         }
       ],
-      "description": "Inbox capture + processing. Live \u2014 verified against handlers (NIC-1453..). Process body: `processingResult` \u2208 {task, note, trash}; `projectId` + `taskDetails` required only when processing to a task."
+      "description": "Inbox capture + processing. Live \u2014 verified against handlers (NIC-1453..). Process body: `processingResult` \u2208 {task, note, trash}; `projectId` + `taskDetails` required when processing to a task; `projectId` + `noteDetails` when processing to a note (E-053). The response's `createdTaskId` / `createdNoteId` link back to whatever the thought became."
     },
     {
       "name": "Search",
@@ -1811,6 +1849,162 @@
               ]
             },
             "description": "Full-text prefix search across tasks, projects, areas (row-isolated). Live \u2014 NIC-1497 (#73)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Notes",
+      "description": "Project Notes (E-053). Flat and top-level like /attachments, not nested under the project. FREE and unlimited \u2014 this surface never returns PLAN_LIMIT_EXCEEDED.\n\nTwo shapes: the list carries a 200-char `excerpt` and NO `content`; the scalar reads carry the full document. Never render a note body from a list response.\n\nWrites are guarded by optimistic concurrency: PATCH requires the `version` you last read. A stale version returns 409 CONFLICT and writes nothing \u2014 the client must surface a conflict state and stop autosaving, never retry silently.\n\n`contentText` is always server-derived from `content`; sending it is rejected. Bodies over 1 MB \u2192 422.",
+      "item": [
+        {
+          "name": "List Notes (by project)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/notes?projectId={{projectId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "notes"
+              ],
+              "query": [
+                {
+                  "key": "projectId",
+                  "value": "{{projectId}}"
+                }
+              ]
+            },
+            "description": "Excerpt-only list for one project, ordered updated_at DESC. A project you don't own returns 404, never an empty list."
+          }
+        },
+        {
+          "name": "Create Note",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"projectId\": \"{{projectId}}\",\n  \"title\": \"GTD structure thread\",\n  \"content\": {\n    \"type\": \"doc\",\n    \"content\": [\n      {\n        \"type\": \"paragraph\",\n        \"content\": [\n          {\n            \"type\": \"text\",\n            \"text\": \"First paragraph of the note.\"\n          }\n        ]\n      }\n    ]\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/notes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "notes"
+              ]
+            },
+            "description": "Files a note under a project. `content` is optional (defaults to an empty doc). Foreign project \u2192 404, never 403."
+          }
+        },
+        {
+          "name": "Get Note",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/notes/{{noteId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "notes",
+                "{{noteId}}"
+              ]
+            },
+            "description": "Full document. Cross-user access returns 404, never 403."
+          }
+        },
+        {
+          "name": "Update Note (optimistic)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"GTD structure thread (revised)\",\n  \"content\": {\n    \"type\": \"doc\",\n    \"content\": [\n      {\n        \"type\": \"paragraph\",\n        \"content\": [\n          {\n            \"type\": \"text\",\n            \"text\": \"First paragraph of the note.\"\n          }\n        ]\n      }\n    ]\n  },\n  \"version\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/notes/{{noteId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "notes",
+                "{{noteId}}"
+              ]
+            },
+            "description": "Partial update. `version` is REQUIRED and must match the stored row; a stale value \u2192 409 CONFLICT with nothing written. Success increments version."
+          }
+        },
+        {
+          "name": "Delete Note",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/notes/{{noteId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "notes",
+                "{{noteId}}"
+              ]
+            },
+            "description": "Hard delete \u2192 204. Cross-user access returns 404."
           }
         }
       ]
@@ -2457,6 +2651,10 @@
     },
     {
       "key": "bucketId",
+      "value": ""
+    },
+    {
+      "key": "noteId",
       "value": ""
     },
     {

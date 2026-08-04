@@ -2,8 +2,10 @@
 package bucket
 
 import (
+	"encoding/json"
 	"time"
 
+	"github.com/nicoflow/nicoflow-api/internal/domain/note"
 	"github.com/nicoflow/nicoflow-api/internal/domain/task"
 )
 
@@ -22,14 +24,16 @@ type Bucket struct {
 	ProcessingResult *string
 	ProjectID        *string
 	CreatedTaskID    *string
+	CreatedNoteID    *string
 	ProcessedAt      *time.Time
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 }
 
 // BucketView is the JSON response shape (IBucket) for a single item.
-// CreatedNoteID is always null for now — note processing is not implemented,
-// but the field is present so the frontend IBucket contract matches.
+// CreatedNoteID is set when the item was processed into a note (E-053), the
+// mirror of CreatedTaskID — it is what lets the client link back to whatever the
+// thought became.
 type BucketView struct {
 	ID               string  `json:"id"`
 	Content          string  `json:"content"`
@@ -64,6 +68,26 @@ type ProcessBucketRequest struct {
 	ProcessingResult string              `json:"processingResult"`
 	ProjectID        *string             `json:"projectId"`
 	TaskDetails      *ProcessTaskDetails `json:"taskDetails"`
+	NoteDetails      *ProcessNoteDetails `json:"noteDetails"`
+}
+
+// ProcessNoteDetails is the subset of note fields the process dialog sends.
+// Nil Content means "use the note service default" (the empty doc), so an older
+// client that omits it is unaffected.
+type ProcessNoteDetails struct {
+	Title   string           `json:"title"`
+	Content *json.RawMessage `json:"content" swaggertype:"object"`
+}
+
+// toNoteCreateRequest maps the process details onto the note create contract.
+// A nil Content falls through to the note service's empty-doc default rather
+// than being forced to an explicit value here.
+func (d ProcessNoteDetails) toNoteCreateRequest(projectID string) note.CreateNoteRequest {
+	req := note.CreateNoteRequest{ProjectID: projectID, Title: d.Title}
+	if d.Content != nil {
+		req.Content = *d.Content
+	}
+	return req
 }
 
 // ProcessTaskDetails is the subset of task fields the process dialog sends.
@@ -110,7 +134,7 @@ func BucketToView(b Bucket) BucketView {
 		ProcessingResult: b.ProcessingResult,
 		ProjectID:        b.ProjectID,
 		CreatedTaskID:    b.CreatedTaskID,
-		CreatedNoteID:    nil,
+		CreatedNoteID:    b.CreatedNoteID,
 		CreatedAt:        b.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:        b.UpdatedAt.UTC().Format(time.RFC3339),
 	}
@@ -119,4 +143,14 @@ func BucketToView(b Bucket) BucketView {
 		v.ProcessedAt = &s
 	}
 	return v
+}
+
+// ProcessedRefs are the entity ids a process operation produced. Grouped rather
+// than passed as loose pointers so adding a result kind doesn't grow the
+// repository signature again; exactly one of TaskID/NoteID is set (both nil for
+// trash).
+type ProcessedRefs struct {
+	TaskID    *string
+	NoteID    *string
+	ProjectID *string
 }

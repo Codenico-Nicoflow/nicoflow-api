@@ -1012,6 +1012,7 @@ List all unprocessed inbox items for the authenticated user.
     "processedAt": null,
     "processingResult": null,
     "createdTaskId": null,
+    "createdNoteId": null,
     "projectId": null,
     "createdAt": "...",
     "updatedAt": "..."
@@ -1095,9 +1096,26 @@ Process an inbox item — convert it to a task or note, or trash it.
 | Field              | Type   | Required | Values                                    |
 | ------------------ | ------ | -------- | ----------------------------------------- |
 | `processingResult` | string | Yes      | `"task"` \| `"note"` \| `"trash"`         |
-| `projectId`        | string | No       | Required when `processingResult = "task"` |
+| `projectId`        | string | No       | Required when `processingResult` is `"task"` **or** `"note"` |
 | `taskDetails`      | object | No       | Required when `processingResult = "task"` |
 | `noteDetails`      | object | No       | Required when `processingResult = "note"` |
+
+Inside `noteDetails`, only `title` is required; `content` is optional and
+omitting it means "use the note service default" (the empty doc). `contentText`
+is never accepted — the search mirror is always server-derived (§3.17).
+
+**Processing is ordered, NOT transactional** — for the note path exactly as for
+the task path. The note is created first (its own transaction, so title
+validation and project ownership abort before the bucket row is touched), and
+only then is the item marked processed. This guarantees a processed inbox item
+never exists without the thing it became: a processed-but-empty item would lose
+the user's thought with no trace, whereas a benign orphan note (if the final
+mark loses a race) is visible and user-fixable.
+
+On success the response's **`createdNoteId`** carries the new note's id, the
+mirror of `createdTaskId`. ⚠️ This is what lets a client link back to what the
+thought became — a frontend that ignores it leaves the "view what this became"
+affordance silently dead for notes.
 
 Inside `taskDetails`, only `title` is required. Every other field is optional and
 omitting it means "use the task service default" — the same defaults `POST
@@ -1410,28 +1428,48 @@ for Pro (`limit` = 500, `month` = the current `YYYY-MM`).
 
 #### GET /v1/search
 
-Full-text search across tasks, projects, and areas.
+Full-text search across tasks, projects, areas, and **notes**.
 
 - **Auth required:** Yes
+- Ranked by `ts_rank` over the STORED `search_vector` GIN columns, using the
+  `'simple'` config (no stemming, so prefix/type-ahead matching works and every
+  language is treated alike).
 
 **Query parameters**
 
-| Param    | Type   | Required | Description                                          |
-| -------- | ------ | -------- | ---------------------------------------------------- |
-| `q`      | string | Yes      | Search query (min 2 characters)                      |
-| `type`   | string | No       | `"tasks"` \| `"projects"` \| `"areas"` — default all |
-| `limit`  | number | No       | Max results per type — default 10                    |
-| `offset` | number | No       | Pagination offset — default 0                        |
+| Param   | Type   | Required | Description                                                       |
+| ------- | ------ | -------- | ----------------------------------------------------------------- |
+| `q`     | string | Yes      | Search query (2–100 characters)                                   |
+| `types` | string | No       | Comma-separated subset of `task,project,area,note` — omit for all |
+| `limit` | number | No       | Max results **per group**, 1–50 — default 10                      |
 
 **Response — 200 OK**
 
 ```json
 {
-  "tasks":    [ { ...ITask,    "_highlight": { "title": "Write <mark>spec</mark>" } } ],
-  "projects": [ { ...IProject, "_highlight": { "name": "..." } } ],
-  "areas":    [ { ...IArea,    "_highlight": { "name": "..." } } ]
+  "tasks":    [ { "id", "title", "excerpt", "projectId", "projectName" } ],
+  "projects": [ { "id", "name", "areaName" } ],
+  "areas":    [ { "id", "name" } ],
+  "notes":    [ { "id", "title", "excerpt", "projectId", "projectName" } ]
 }
 ```
+
+Every group is always present (empty array when unrequested or unmatched), so a
+client never needs a nil check.
+
+⚠️ **`notes` is a response-shape change.** It is additive, but a frontend that
+does not handle the new group silently drops results.
+
+**Notes in search** match on **title _and_ body text**, because the note search
+vector is generated from `title || content_text`. An **orphaned** note
+(`project_id` NULL after its project was deleted) is still returned, with empty
+`projectId`/`projectName` — search is user-scoped, not project-scoped, which is
+precisely what keeps orphans reachable.
+
+> **Drift note:** this section previously documented `type` (singular),
+> `offset`, and a `_highlight` field. None of those exist in the shipped API —
+> the parameter is `types`, there is no offset, and hits carry a plain
+> `excerpt`. Corrected under NIC-1909.
 
 ---
 
@@ -2266,6 +2304,134 @@ Google.
   is dropped from the results and the overall fetch still succeeds.
 - **Fan-out is bounded** by the 5-calendar selection cap; each selected calendar
   is one Google call per ranged fetch.
+
+---
+
+### 3.17 Project Notes — E-053
+
+Rich-text reference material filed under a project. **Notes are FREE and
+unlimited** — this surface never returns `PLAN_LIMIT_EXCEEDED`. That is a
+deliberate product decision, not an oversight: notes are where reference
+material lives, and capping them would push users to keep it outside the app.
+
+Routes are **flat and top-level** (`/notes`), consistent with `/attachments`,
+not nested under the project.
+
+#### Two view shapes — the list never carries the body
+
+```jsonc
+// NoteView — LIST shape. NO content field at all.
+{ "id", "projectId", "title", "excerpt", "version", "createdAt", "updatedAt" }
+
+// NoteDetailView — SCALAR shape.
+{ "id", "projectId", "title", "content", "version", "createdAt", "updatedAt" }
+```
+
+`excerpt` is `content_text` truncated to **200 characters**. A project with 30
+notes each holding a large document would otherwise make the list response
+enormous — the same principle as `totalFocusSeconds` being scalar-only (E-049).
+**Never render a note body from a list response.**
+
+#### GET /v1/notes?projectId=
+
+Lists one project's notes, ordered `updated_at DESC`. Returns `NoteView[]`.
+
+- **Auth required:** Yes
+- A project the caller does not own → `404 RESOURCE_NOT_FOUND` (never an empty
+  list, which would still confirm the project is reachable).
+
+**Errors:** `RESOURCE_NOT_FOUND` (404), `INVALID_INPUT` (422 — `projectId` missing)
+
+#### POST /v1/notes → 201 `NoteDetailView`
+
+```json
+{
+  "projectId": "p_abc",
+  "title": "GTD structure thread",
+  "content": { "type": "doc", "content": [] }
+}
+```
+
+- `content` is **optional**; omitted ⇒ the empty-doc default `{"type":"doc","content":[]}`.
+  It is `NOT NULL` in the database so the client never branches on null-vs-empty.
+- `contentText` is **never accepted from the client** — sending it is a `422`.
+  The mirror is always derived server-side by `flattenDoc` (see below).
+- A project the caller does not own → `404`, never `403`.
+
+**Errors:** `RESOURCE_NOT_FOUND` (404), `INVALID_INPUT` (422 — missing
+`projectId`, empty title, title > 255, malformed `content`, or a body over 1 MB)
+
+#### GET /v1/notes/{id} → 200 `NoteDetailView`
+
+The full document. Cross-user access → `404`, never `403`.
+
+#### PATCH /v1/notes/{id} → 200 `NoteDetailView` | 409
+
+**`version` is REQUIRED.** This is optimistic concurrency: the client sends the
+version it last read, and the guarded `UPDATE` applies only if the row is still
+at it. A stale version returns **`409 CONFLICT`** and writes nothing.
+
+```json
+{ "title": "…", "content": { … }, "version": 7 }
+```
+
+- A successful save increments `version` and returns the new value.
+- `title` and `content` are both optional — an omitted field keeps its stored
+  value (PATCH is partial).
+- ⚠️ **On 409 a client must surface a conflict state and STOP autosaving.**
+  Never retry silently: a blind retry loop spins forever against a newer
+  document and can clobber the other session's work.
+
+**Errors:** `RESOURCE_NOT_FOUND` (404), `CONFLICT` (409 — stale version),
+`INVALID_INPUT` (422 — missing `version`, bad title/content, body over 1 MB)
+
+#### DELETE /v1/notes/{id} → 204
+
+Hard delete. Best-effort reaps the note's attachments; a cleanup failure never
+blocks the delete. Cross-user access → `404`.
+
+#### Server-derived search text (`flattenDoc`)
+
+`content_text` is the flattened plain text of the document, written alongside it
+on **every** write. It is **mandatory, not an optimization**: extracting text
+from arbitrary JSONB is not `IMMUTABLE`, so Postgres cannot generate the
+`tsvector` from the `content` column directly — the mirror is what makes notes
+searchable at all.
+
+The walker reads only `{type, content[], text}`, so it is schema-agnostic: a new
+node type added on the client needs no server change. Text leaves are joined
+with a space so words from adjacent blocks never fuse into one token.
+
+#### Attachments on notes
+
+A note is a valid polymorphic attachment owner (`ownerType: "note"`). Quotas are
+**inherited and shared**: 20 files per note, and the **100 MB byte budget is one
+pool spanning tasks and notes**. Attachment _writes_ remain Pro-only
+(`403 PLAN_LIMIT_EXCEEDED`); reads and deletes are open on any plan.
+
+#### Real-time events
+
+| Event          | Payload                       |
+| -------------- | ----------------------------- |
+| `note.created` | full `NoteView` (list shape)  |
+| `note.updated` | `NoteView` — **no `content`** |
+| `note.deleted` | `{ id }`                      |
+
+`note.updated` deliberately breaks the full-payload convention. Autosave fires
+every ~1–2s while typing; shipping a whole rich-text body per save would be
+wasteful and racy. A client that needs the body refetches the scalar. Beyond
+cache sync the event has a correctness role: a second tab can notice a change
+and refetch _before_ the user types, defusing conflicts before `version` has to
+reject them.
+
+#### Project delete orphans notes, never destroys them
+
+`notes.project_id` is nullable with `ON DELETE SET NULL`, mirroring
+`tasks.project_id`. Deleting a project **orphans** its notes rather than
+destroying reference material. The API still requires `projectId` on create;
+nullability exists only to survive the delete. Orphans stay reachable through
+**search**, which is user-scoped rather than project-scoped — that is the only
+surface that can still find them.
 
 ---
 

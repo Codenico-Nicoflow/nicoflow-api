@@ -466,6 +466,69 @@
                 }
             }
         },
+        "/auth/change-password": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Changes the authenticated user's password. Re-verifies currentPassword via bcrypt, enforces the register password policy on newPassword, revokes all refresh tokens, and issues a fresh token pair to the caller (every other device is signed out; the caller stays signed in). Sets a new HttpOnly refresh cookie.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Change password (logged in)",
+                "parameters": [
+                    {
+                        "description": "Current + new password",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/auth.ChangePasswordRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "New access token + rotated refresh cookie",
+                        "schema": {
+                            "$ref": "#/definitions/auth.AuthEnvelope"
+                        }
+                    },
+                    "400": {
+                        "description": "WEAK_PASSWORD",
+                        "schema": {
+                            "$ref": "#/definitions/auth.ErrorEnvelope"
+                        }
+                    },
+                    "401": {
+                        "description": "UNAUTHORIZED (missing access token or wrong current password)",
+                        "schema": {
+                            "$ref": "#/definitions/auth.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT (password mismatch)",
+                        "schema": {
+                            "$ref": "#/definitions/auth.ErrorEnvelope"
+                        }
+                    },
+                    "429": {
+                        "description": "RATE_LIMITED",
+                        "schema": {
+                            "$ref": "#/definitions/auth.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/forgot-password": {
             "post": {
                 "description": "Sends a password-reset email. Always returns 200 regardless of whether the email exists (no user enumeration).",
@@ -834,6 +897,402 @@
                 }
             }
         },
+        "/bucket": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lists the caller's bucket items, newest first. Processed and unprocessed items are both returned; the client partitions them into Inbox / Archived.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "bucket"
+                ],
+                "summary": "List inbox items",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/bucket.BucketListResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Quick-captures a thought into the bucket. Content is 1–500 characters (trimmed).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "bucket"
+                ],
+                "summary": "Capture an inbox item",
+                "parameters": [
+                    {
+                        "description": "Content to capture",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/bucket.CreateBucketRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/bucket.BucketView"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT"
+                    }
+                }
+            }
+        },
+        "/bucket/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Retrieves a single bucket item by ID. Cross-user access returns 404 (no existence leak).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "bucket"
+                ],
+                "summary": "Get an inbox item",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bucket item ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/bucket.BucketView"
+                        }
+                    },
+                    "404": {
+                        "description": "RESOURCE_NOT_FOUND"
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Hard-deletes a bucket item regardless of processed state.",
+                "tags": [
+                    "bucket"
+                ],
+                "summary": "Delete an inbox item",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bucket item ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "RESOURCE_NOT_FOUND"
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Edits the content of an unprocessed bucket item. Editing a processed item returns 409.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "bucket"
+                ],
+                "summary": "Edit an unprocessed inbox item",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bucket item ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "New content",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/bucket.UpdateBucketRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/bucket.BucketView"
+                        }
+                    },
+                    "404": {
+                        "description": "RESOURCE_NOT_FOUND"
+                    },
+                    "409": {
+                        "description": "CONFLICT (already processed)"
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT"
+                    }
+                }
+            }
+        },
+        "/bucket/{id}/process": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Converts an unprocessed item into a task (requires projectId + taskDetails), trashes it, or (note — not yet implemented) returns 501. Already-processed items return 409.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "bucket"
+                ],
+                "summary": "Process an inbox item",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bucket item ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "How to process the item",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/bucket.ProcessBucketRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/bucket.BucketView"
+                        }
+                    },
+                    "403": {
+                        "description": "PLAN_LIMIT_EXCEEDED"
+                    },
+                    "404": {
+                        "description": "RESOURCE_NOT_FOUND / PROJECT_NOT_FOUND"
+                    },
+                    "409": {
+                        "description": "CONFLICT (already processed)"
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT"
+                    },
+                    "501": {
+                        "description": "note processing not implemented"
+                    }
+                }
+            }
+        },
+        "/calendar/google-events": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Read-only overlay of the user's selected Google calendars for an inclusive date range (max 62 days). Never returns 5xx for a Google-side failure — the response carries `googleStatus` (`ok`|`disconnected`|`error`) with an empty list instead, so a Google outage cannot break the calendar view. `refresh=true` bypasses the short server-side cache.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "calendar"
+                ],
+                "summary": "List Google Calendar events",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Inclusive start date (YYYY-MM-DD)",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Inclusive end date (YYYY-MM-DD)",
+                        "name": "to",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Bypass the cache and re-query Google",
+                        "name": "refresh",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/googlecal.EventsResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT (missing bound, bad date, or span \u003e 62 days)",
+                        "schema": {
+                            "$ref": "#/definitions/googlecal.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/calendar/google/calendars": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The calendars the user can read, each flagged with whether it currently overlays the Nicoflow calendar. A connection with no stored selection reports the primary calendar as selected, matching the overlay's default.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "calendar"
+                ],
+                "summary": "List the user's Google calendars",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/googlecal.CalendarView"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "GOOGLE_NOT_CONNECTED",
+                        "schema": {
+                            "$ref": "#/definitions/googlecal.ErrorEnvelope"
+                        }
+                    },
+                    "502": {
+                        "description": "GOOGLE_AUTH_FAILED — Google unreachable",
+                        "schema": {
+                            "$ref": "#/definitions/googlecal.ErrorEnvelope"
+                        }
+                    },
+                    "503": {
+                        "description": "GOOGLE_AUTH_FAILED — integration not configured",
+                        "schema": {
+                            "$ref": "#/definitions/googlecal.ErrorEnvelope"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Replaces the overlay selection. Capped at 5 calendars — each selected calendar is a separate Google API call per ranged fetch. Duplicates are collapsed rather than rejected. Returns the full calendar list with the new selection applied.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "calendar"
+                ],
+                "summary": "Replace the selected calendars",
+                "parameters": [
+                    {
+                        "description": "Calendar IDs to select",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/googlecal.UpdateSelectionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/googlecal.CalendarView"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "GOOGLE_NOT_CONNECTED",
+                        "schema": {
+                            "$ref": "#/definitions/googlecal.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT — missing field, empty ID, or more than 5 calendars",
+                        "schema": {
+                            "$ref": "#/definitions/googlecal.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
         "/focus": {
             "get": {
                 "security": [
@@ -880,6 +1339,557 @@
                         "description": "INVALID_INPUT (bad available/energy/limit)",
                         "schema": {
                             "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/notes": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the project's notes ordered by updated_at DESC. Each item carries a 200-char excerpt and NO content — never render a note body from this response. Notes are Free and unlimited.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notes"
+                ],
+                "summary": "List a project's notes",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project to list notes for",
+                        "name": "projectId",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Notes with excerpts",
+                        "schema": {
+                            "$ref": "#/definitions/note.NoteListEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "RESOURCE_NOT_FOUND (project missing or not owned)",
+                        "schema": {
+                            "$ref": "#/definitions/note.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT (projectId missing)",
+                        "schema": {
+                            "$ref": "#/definitions/note.ErrorEnvelope"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Files a new note under a project. content is optional (defaults to an empty document). content_text is always server-derived — a client-sent value is rejected. Notes are Free and unlimited; this endpoint never returns PLAN_LIMIT_EXCEEDED. Bodies over 1 MB are refused.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notes"
+                ],
+                "summary": "Create a note",
+                "parameters": [
+                    {
+                        "description": "Note to create",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/note.CreateNoteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "The created note",
+                        "schema": {
+                            "$ref": "#/definitions/note.NoteDetailEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "RESOURCE_NOT_FOUND (project missing or not owned)",
+                        "schema": {
+                            "$ref": "#/definitions/note.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT (bad title/content/projectId, or body over 1 MB)",
+                        "schema": {
+                            "$ref": "#/definitions/note.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/notes/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Retrieves a single note including its full document. Cross-user access returns 404, never 403.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notes"
+                ],
+                "summary": "Get a note",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Note ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The note with its content",
+                        "schema": {
+                            "$ref": "#/definitions/note.NoteDetailEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "RESOURCE_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/note.ErrorEnvelope"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Hard-deletes a note. Cross-user access returns 404, never 403.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notes"
+                ],
+                "summary": "Delete a note",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Note ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Deleted"
+                    },
+                    "404": {
+                        "description": "RESOURCE_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/note.ErrorEnvelope"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Partial update guarded by optimistic concurrency. version is REQUIRED and must match the stored row; a stale version returns 409 and writes nothing. On 409 a client must surface a conflict state and stop autosaving — never retry silently. A successful save increments version.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notes"
+                ],
+                "summary": "Update a note",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Note ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to change plus the version last read",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/note.UpdateNoteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The updated note at its new version",
+                        "schema": {
+                            "$ref": "#/definitions/note.NoteDetailEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "RESOURCE_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/note.ErrorEnvelope"
+                        }
+                    },
+                    "409": {
+                        "description": "CONFLICT (stale version — the note moved on)",
+                        "schema": {
+                            "$ref": "#/definitions/note.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT (missing version, bad title/content, or body over 1 MB)",
+                        "schema": {
+                            "$ref": "#/definitions/note.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/notifications": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lists the user's notifications, cursor-paginated, newest first, with an optional read filter.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notifications"
+                ],
+                "summary": "List notifications",
+                "parameters": [
+                    {
+                        "type": "boolean",
+                        "description": "Filter by read state",
+                        "name": "isRead",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size (1–100)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Pagination cursor",
+                        "name": "cursor",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Paginated notifications",
+                        "schema": {
+                            "$ref": "#/definitions/notification.NotificationListEnvelope"
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_INPUT (bad limit/cursor)",
+                        "schema": {
+                            "$ref": "#/definitions/notification.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/notifications/preferences": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the user's notification preferences. An absent row yields the defaults ({ emailDigest:true, pushEnabled:false, smsEnabled:false, beforeDueMinutes:1440, afterDueMinutes:0 }). Push/SMS toggles are stored but inert until E-037.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notifications"
+                ],
+                "summary": "Get notification preferences",
+                "responses": {
+                    "200": {
+                        "description": "The user's preferences",
+                        "schema": {
+                            "$ref": "#/definitions/notification.PreferencesEnvelope"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Partially or fully updates the user's notification preferences (lazy upsert). Lead-time minutes must be 0–10080. Push/SMS toggles persist but have no delivery path until E-037.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notifications"
+                ],
+                "summary": "Update notification preferences",
+                "parameters": [
+                    {
+                        "description": "Fields to update (all optional)",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/notification.UpdatePreferences"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The updated preferences",
+                        "schema": {
+                            "$ref": "#/definitions/notification.PreferencesEnvelope"
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_INPUT (bad body or lead time out of range)",
+                        "schema": {
+                            "$ref": "#/definitions/notification.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/notifications/push/subscribe": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Stores a browser Web Push subscription for the user (Pro-only). Upserts on endpoint. Free-plan callers get PLAN_LIMIT_EXCEEDED.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notifications"
+                ],
+                "summary": "Subscribe to web push",
+                "parameters": [
+                    {
+                        "description": "Push subscription (endpoint + keys)",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/notification.SubscribeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Subscription stored"
+                    },
+                    "403": {
+                        "description": "PLAN_LIMIT_EXCEEDED (free plan)",
+                        "schema": {
+                            "$ref": "#/definitions/notification.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT (missing endpoint/keys)",
+                        "schema": {
+                            "$ref": "#/definitions/notification.ErrorEnvelope"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Removes the user's Web Push subscription for the given endpoint. Idempotent.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notifications"
+                ],
+                "summary": "Unsubscribe from web push",
+                "parameters": [
+                    {
+                        "description": "Endpoint to remove",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/notification.SubscribeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Subscription removed"
+                    }
+                }
+            }
+        },
+        "/notifications/read-all": {
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Marks every unread notification read and returns how many were updated.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notifications"
+                ],
+                "summary": "Mark all notifications read",
+                "responses": {
+                    "200": {
+                        "description": "Number marked read",
+                        "schema": {
+                            "$ref": "#/definitions/notification.CountEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/notifications/unread-count": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the number of unread notifications — the cheap poll target for the bell badge.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notifications"
+                ],
+                "summary": "Unread notification count",
+                "responses": {
+                    "200": {
+                        "description": "Unread count",
+                        "schema": {
+                            "$ref": "#/definitions/notification.UnreadCountEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/notifications/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Hard-deletes a notification. Cross-user access returns 404.",
+                "tags": [
+                    "notifications"
+                ],
+                "summary": "Dismiss a notification",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Notification ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "NOTIFICATION_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/notification.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/notifications/{id}/read": {
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Marks a single notification read. Cross-user access returns 404.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notifications"
+                ],
+                "summary": "Mark a notification read",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Notification ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The updated notification",
+                        "schema": {
+                            "$ref": "#/definitions/notification.NotificationEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "NOTIFICATION_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/notification.ErrorEnvelope"
                         }
                     }
                 }
@@ -1283,6 +2293,111 @@
                 }
             }
         },
+        "/search": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Searches the user's tasks, projects and areas via PostgreSQL full-text (plainto_tsquery), ranked by relevance.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "search"
+                ],
+                "summary": "Full-text search",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Search term (2–100 chars)",
+                        "name": "q",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated groups: task,project,area,note (omit for all)",
+                        "name": "types",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Per-type cap (default 10, max 50)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Grouped results",
+                        "schema": {
+                            "$ref": "#/definitions/search.SearchEnvelope"
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_INPUT",
+                        "schema": {
+                            "$ref": "#/definitions/search.ErrorEnvelope"
+                        }
+                    },
+                    "401": {
+                        "description": "UNAUTHORIZED",
+                        "schema": {
+                            "$ref": "#/definitions/search.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/tasks": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Flat list of the user's tasks scheduled within an inclusive date range, ordered by (scheduledFor, scheduledTime NULLS FIRST, displayOrder). Unlike Time Spread no roll-forward is applied — a task is returned on the date it is actually scheduled for. Both bounds are required and the span is capped at 62 days.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "summary": "List tasks in a date range (calendar)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Inclusive start date (YYYY-MM-DD)",
+                        "name": "scheduledFrom",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Inclusive end date (YYYY-MM-DD)",
+                        "name": "scheduledTo",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Tasks in the range",
+                        "schema": {
+                            "$ref": "#/definitions/task.TaskListEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT (missing bound, bad date, or span \u003e 62 days)",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
         "/tasks/{id}": {
             "get": {
                 "security": [
@@ -1482,7 +2597,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Sets the soft scheduledFor intention + rollsOver flag. scheduledFor null (or absent) unschedules. A bad date returns 400 INVALID_DATE.",
+                "description": "Sets the soft scheduledFor intention, optional scheduledTime (HH:MM, Pro-only) and rollsOver flag. scheduledFor null (or absent) unschedules. A bad date returns 400 INVALID_DATE.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1502,7 +2617,7 @@
                         "required": true
                     },
                     {
-                        "description": "scheduledFor (ISO date or null) + optional rollsOver",
+                        "description": "scheduledFor (ISO date or null) + optional scheduledTime + rollsOver",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -1524,8 +2639,20 @@
                             "$ref": "#/definitions/task.ErrorEnvelope"
                         }
                     },
+                    "403": {
+                        "description": "PLAN_LIMIT_EXCEEDED (free plan setting a time)",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    },
                     "404": {
                         "description": "TASK_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT (malformed or non-snapped time)",
                         "schema": {
                             "$ref": "#/definitions/task.ErrorEnvelope"
                         }
@@ -1812,11 +2939,25 @@
                     "tasks"
                 ],
                 "summary": "Time spread (today / tomorrow / this week)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "IANA timezone for day bucketing (e.g. Asia/Jerusalem); defaults to UTC",
+                        "name": "tz",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "Three-bucket task lists",
                         "schema": {
                             "$ref": "#/definitions/task.TimeSpreadEnvelope"
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_INPUT — unknown timezone",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
                         }
                     }
                 }
@@ -1891,7 +3032,7 @@
                         }
                     },
                     "422": {
-                        "description": "INVALID_INPUT or INVALID_EMAIL",
+                        "description": "INVALID_INPUT",
                         "schema": {
                             "$ref": "#/definitions/auth.ErrorEnvelope"
                         }
@@ -2147,6 +3288,40 @@
                 }
             }
         },
+        "auth.CalendarPrefsView": {
+            "type": "object",
+            "properties": {
+                "dayEndHour": {
+                    "type": "integer"
+                },
+                "dayStartHour": {
+                    "type": "integer"
+                },
+                "weekStart": {
+                    "type": "integer"
+                },
+                "workdays": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "auth.ChangePasswordRequest": {
+            "type": "object",
+            "properties": {
+                "confirmPassword": {
+                    "type": "string"
+                },
+                "currentPassword": {
+                    "type": "string"
+                },
+                "newPassword": {
+                    "type": "string"
+                }
+            }
+        },
         "auth.ErrorEnvelope": {
             "type": "object",
             "properties": {
@@ -2181,6 +3356,9 @@
                 },
                 "remember": {
                     "type": "boolean"
+                },
+                "timezone": {
+                    "type": "string"
                 }
             }
         },
@@ -2257,8 +3435,11 @@
         "auth.UpdateMeRequest": {
             "type": "object",
             "properties": {
-                "email": {
-                    "type": "string"
+                "dayEndHour": {
+                    "type": "integer"
+                },
+                "dayStartHour": {
+                    "type": "integer"
                 },
                 "firstName": {
                     "type": "string"
@@ -2274,6 +3455,16 @@
                 },
                 "timezone": {
                     "type": "string"
+                },
+                "weekStart": {
+                    "description": "Calendar preferences are individually optional too, so a client changing\nonly the day window never has to echo back a week_start it did not read.",
+                    "type": "integer"
+                },
+                "workdays": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
                 }
             }
         },
@@ -2289,6 +3480,14 @@
         "auth.UserView": {
             "type": "object",
             "properties": {
+                "calendar": {
+                    "description": "Calendar always travels with the user: the grid needs it on first paint,\nand a second round trip would render one frame of the wrong week.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/auth.CalendarPrefsView"
+                        }
+                    ]
+                },
                 "email": {
                     "type": "string"
                 },
@@ -2313,6 +3512,9 @@
                 "theme": {
                     "type": "string"
                 },
+                "timezone": {
+                    "type": "string"
+                },
                 "username": {
                     "type": "string"
                 }
@@ -2323,6 +3525,602 @@
             "properties": {
                 "token": {
                     "type": "string"
+                }
+            }
+        },
+        "bucket.BucketListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/bucket.BucketView"
+                    }
+                }
+            }
+        },
+        "bucket.BucketView": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "createdNoteId": {
+                    "type": "string"
+                },
+                "createdTaskId": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "processedAt": {
+                    "type": "string"
+                },
+                "processingResult": {
+                    "type": "string"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "bucket.CreateBucketRequest": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                }
+            }
+        },
+        "bucket.ProcessBucketRequest": {
+            "type": "object",
+            "properties": {
+                "noteDetails": {
+                    "$ref": "#/definitions/bucket.ProcessNoteDetails"
+                },
+                "processingResult": {
+                    "type": "string"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "taskDetails": {
+                    "$ref": "#/definitions/bucket.ProcessTaskDetails"
+                }
+            }
+        },
+        "bucket.ProcessNoteDetails": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "object"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "bucket.ProcessTaskDetails": {
+            "type": "object",
+            "properties": {
+                "energy": {
+                    "type": "string"
+                },
+                "estimatedMinutes": {
+                    "type": "integer"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "priority": {
+                    "type": "string"
+                },
+                "rollsOver": {
+                    "type": "boolean"
+                },
+                "scheduledFor": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "bucket.UpdateBucketRequest": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                }
+            }
+        },
+        "googlecal.CalendarView": {
+            "type": "object",
+            "properties": {
+                "backgroundColor": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "primary": {
+                    "type": "boolean"
+                },
+                "selected": {
+                    "type": "boolean"
+                },
+                "summary": {
+                    "type": "string"
+                }
+            }
+        },
+        "googlecal.ErrorEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {},
+                "error": {
+                    "$ref": "#/definitions/googlecal.SwaggerError"
+                }
+            }
+        },
+        "googlecal.EventsResponse": {
+            "type": "object",
+            "properties": {
+                "events": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/googlecal.GoogleEventView"
+                    }
+                },
+                "googleStatus": {
+                    "$ref": "#/definitions/googlecal.GoogleStatus"
+                }
+            }
+        },
+        "googlecal.GoogleEventView": {
+            "type": "object",
+            "properties": {
+                "allDay": {
+                    "type": "boolean"
+                },
+                "attendeeCount": {
+                    "type": "integer"
+                },
+                "calendarId": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "end": {
+                    "type": "string"
+                },
+                "htmlLink": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "location": {
+                    "type": "string"
+                },
+                "organizer": {
+                    "type": "string"
+                },
+                "responseStatus": {
+                    "$ref": "#/definitions/googlecal.ResponseStatus"
+                },
+                "start": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "googlecal.GoogleStatus": {
+            "type": "string",
+            "enum": [
+                "ok",
+                "disconnected",
+                "error"
+            ],
+            "x-enum-varnames": [
+                "StatusOK",
+                "StatusDisconnected",
+                "StatusError"
+            ]
+        },
+        "googlecal.ResponseStatus": {
+            "type": "string",
+            "enum": [
+                "",
+                "accepted",
+                "declined",
+                "tentative",
+                "needsAction"
+            ],
+            "x-enum-varnames": [
+                "ResponseNone",
+                "ResponseAccepted",
+                "ResponseDeclined",
+                "ResponseTentative",
+                "ResponseNeedsAction"
+            ]
+        },
+        "googlecal.SwaggerError": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "example": "GOOGLE_NOT_CONNECTED"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "google calendar is not connected"
+                }
+            }
+        },
+        "googlecal.UpdateSelectionRequest": {
+            "type": "object",
+            "properties": {
+                "calendarIds": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "note.CreateNoteRequest": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "object"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "note.ErrorEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {},
+                "error": {
+                    "$ref": "#/definitions/note.SwaggerError"
+                }
+            }
+        },
+        "note.NoteDetailEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/note.NoteDetailView"
+                },
+                "error": {}
+            }
+        },
+        "note.NoteDetailView": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "object"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "note.NoteListEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/note.NoteView"
+                    }
+                },
+                "error": {}
+            }
+        },
+        "note.NoteView": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "excerpt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "note.SwaggerError": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "example": "RESOURCE_NOT_FOUND"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "note not found"
+                }
+            }
+        },
+        "note.UpdateNoteRequest": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "object"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "notification.CountEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/notification.CountResponse"
+                },
+                "error": {}
+            }
+        },
+        "notification.CountResponse": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "notification.ErrorEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {},
+                "error": {
+                    "$ref": "#/definitions/notification.SwaggerError"
+                }
+            }
+        },
+        "notification.ListNotificationsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/notification.NotificationView"
+                    }
+                },
+                "nextCursor": {
+                    "type": "string"
+                }
+            }
+        },
+        "notification.NotificationEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/notification.NotificationView"
+                },
+                "error": {}
+            }
+        },
+        "notification.NotificationListEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/notification.ListNotificationsResponse"
+                },
+                "error": {}
+            }
+        },
+        "notification.NotificationView": {
+            "type": "object",
+            "properties": {
+                "body": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "isRead": {
+                    "type": "boolean"
+                },
+                "metadata": {
+                    "type": "object"
+                },
+                "readAt": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "notification.PreferencesEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/notification.PreferencesView"
+                },
+                "error": {}
+            }
+        },
+        "notification.PreferencesView": {
+            "type": "object",
+            "properties": {
+                "afterDueMinutes": {
+                    "type": "integer"
+                },
+                "beforeDueMinutes": {
+                    "type": "integer"
+                },
+                "dailySummaryEnabled": {
+                    "type": "boolean"
+                },
+                "emailDigest": {
+                    "type": "boolean"
+                },
+                "eveningHour": {
+                    "type": "integer"
+                },
+                "inboxNudgesEnabled": {
+                    "type": "boolean"
+                },
+                "morningHour": {
+                    "type": "integer"
+                },
+                "overdueEnabled": {
+                    "type": "boolean"
+                },
+                "pushEnabled": {
+                    "type": "boolean"
+                },
+                "smsEnabled": {
+                    "type": "boolean"
+                },
+                "streaksEnabled": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "notification.SubscribeRequest": {
+            "type": "object",
+            "properties": {
+                "authKey": {
+                    "type": "string"
+                },
+                "endpoint": {
+                    "type": "string"
+                },
+                "p256dhKey": {
+                    "type": "string"
+                },
+                "userAgent": {
+                    "type": "string"
+                }
+            }
+        },
+        "notification.SwaggerError": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "example": "NOTIFICATION_NOT_FOUND"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "notification not found"
+                }
+            }
+        },
+        "notification.UnreadCountEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/notification.UnreadCountResponse"
+                },
+                "error": {}
+            }
+        },
+        "notification.UnreadCountResponse": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "notification.UpdatePreferences": {
+            "type": "object",
+            "properties": {
+                "afterDueMinutes": {
+                    "type": "integer"
+                },
+                "beforeDueMinutes": {
+                    "type": "integer"
+                },
+                "dailySummaryEnabled": {
+                    "type": "boolean"
+                },
+                "emailDigest": {
+                    "type": "boolean"
+                },
+                "eveningHour": {
+                    "type": "integer"
+                },
+                "inboxNudgesEnabled": {
+                    "type": "boolean"
+                },
+                "morningHour": {
+                    "type": "integer"
+                },
+                "overdueEnabled": {
+                    "type": "boolean"
+                },
+                "pushEnabled": {
+                    "type": "boolean"
+                },
+                "smsEnabled": {
+                    "type": "boolean"
+                },
+                "streaksEnabled": {
+                    "type": "boolean"
                 }
             }
         },
@@ -2484,6 +4282,131 @@
         "project.UpdateProjectRequest": {
             "type": "object"
         },
+        "search.AreaResult": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "search.ErrorEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {},
+                "error": {
+                    "$ref": "#/definitions/search.SwaggerError"
+                }
+            }
+        },
+        "search.NoteResult": {
+            "type": "object",
+            "properties": {
+                "excerpt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "projectName": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "search.ProjectResult": {
+            "type": "object",
+            "properties": {
+                "areaName": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "search.Response": {
+            "type": "object",
+            "properties": {
+                "areas": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/search.AreaResult"
+                    }
+                },
+                "notes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/search.NoteResult"
+                    }
+                },
+                "projects": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/search.ProjectResult"
+                    }
+                },
+                "tasks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/search.TaskResult"
+                    }
+                }
+            }
+        },
+        "search.SearchEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/search.Response"
+                },
+                "error": {}
+            }
+        },
+        "search.SwaggerError": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "example": "INVALID_INPUT"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "query is required"
+                }
+            }
+        },
+        "search.TaskResult": {
+            "type": "object",
+            "properties": {
+                "excerpt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "projectName": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
         "task.CreateSubtaskRequest": {
             "type": "object",
             "properties": {
@@ -2514,6 +4437,9 @@
                     "type": "boolean"
                 },
                 "scheduledFor": {
+                    "type": "string"
+                },
+                "scheduledTime": {
                     "type": "string"
                 },
                 "status": {
@@ -2573,6 +4499,9 @@
                     "type": "boolean"
                 },
                 "scheduledFor": {
+                    "type": "string"
+                },
+                "scheduledTime": {
                     "type": "string"
                 }
             }
@@ -2684,10 +4613,19 @@
                 "notes": {
                     "type": "string"
                 },
+                "occurrenceDate": {
+                    "type": "string"
+                },
+                "openSubtaskCount": {
+                    "type": "integer"
+                },
                 "priority": {
                     "type": "string"
                 },
                 "projectId": {
+                    "type": "string"
+                },
+                "recurrenceRuleId": {
                     "type": "string"
                 },
                 "rollsOver": {
@@ -2696,11 +4634,22 @@
                 "scheduledFor": {
                     "type": "string"
                 },
+                "scheduledTime": {
+                    "type": "string"
+                },
                 "status": {
                     "type": "string"
                 },
+                "subtaskCount": {
+                    "description": "SubtaskCount / OpenSubtaskCount are always populated, on every read.",
+                    "type": "integer"
+                },
                 "title": {
                     "type": "string"
+                },
+                "totalFocusSeconds": {
+                    "description": "TotalFocusSeconds is the SUM of the task's closed focus segments (E-049).\nEnriched only on Focus + GetTask; 0 on the project task-list, where a\nper-row SUM would be pure cost for a value the list never renders.",
+                    "type": "integer"
                 },
                 "updatedAt": {
                     "type": "string"

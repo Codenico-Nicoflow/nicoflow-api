@@ -142,6 +142,21 @@ func (r *pgRepo) Delete(ctx context.Context, userID, id string) (bool, error) {
 	return tag.RowsAffected() > 0, nil
 }
 
+// ExistsByID is deliberately not user-scoped — the GC sweep asks "does this note
+// still exist at all?" across every user. Sweep-only; never reachable from a
+// request path.
+func (r *pgRepo) ExistsByID(ctx context.Context, id string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM notes WHERE id = $1)`,
+		id,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("note.ExistsByID: %w", err)
+	}
+	return exists, nil
+}
+
 func (r *pgRepo) ExistsForUser(ctx context.Context, userID, noteID string) (bool, error) {
 	var exists bool
 	err := r.db.QueryRow(ctx,

@@ -194,6 +194,37 @@ func TestRunGC_ReapsDeadOwnerRowsAndObjects(t *testing.T) {
 	}
 }
 
+// A deleted note leaves orphaned objects behind exactly as a deleted task does —
+// the sweep is owner-type-agnostic, so onboarding notes (E-053) needed no GC
+// change beyond the existence adapter resolving "note".
+func TestRunGC_ReapsDeadNoteOwners(t *testing.T) {
+	repo := &gcRepo{
+		allKeys: map[string]struct{}{"k_note_dead": {}, "k_task_live": {}},
+		owners:  []Owner{{"note", "n_dead"}, {"task", "t_live"}},
+		deleteByOwnerRet: map[string][]Attachment{
+			"note|n_dead": {{ID: "a1", S3Key: "k_note_dead"}},
+		},
+	}
+	store := &gcStore{enabled: true, keys: []string{"k_note_dead", "k_task_live"}}
+	ext := existOwners{live: map[string]struct{}{"task|t_live": {}}}
+	svc := gcSvc(repo, store, ext)
+
+	sum, err := svc.RunGC(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+
+	if len(repo.deletedOwners) != 1 || repo.deletedOwners[0].OwnerType != "note" {
+		t.Fatalf("dead note owner not reaped: %v", repo.deletedOwners)
+	}
+	if sum.RowsDeleted != 1 {
+		t.Errorf("rowsDeleted = %d, want 1", sum.RowsDeleted)
+	}
+	if len(store.deleted) != 1 || store.deleted[0] != "k_note_dead" {
+		t.Errorf("wrong object reaped: %v, want k_note_dead", store.deleted)
+	}
+}
+
 func TestRunGC_LeavesHealthyDataUntouched(t *testing.T) {
 	repo := &gcRepo{
 		allKeys: map[string]struct{}{"k_live": {}},

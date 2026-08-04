@@ -17,6 +17,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
 	"github.com/nicoflow/nicoflow-api/internal/domain/focus"
 	"github.com/nicoflow/nicoflow-api/internal/domain/googlecal"
+	"github.com/nicoflow/nicoflow-api/internal/domain/note"
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
 	"github.com/nicoflow/nicoflow-api/internal/domain/recurrence"
@@ -40,6 +41,7 @@ type Handlers struct {
 	Attachment      *attachment.Handler
 	Recurrence      *recurrence.Handler
 	Focus           *focus.Handler
+	Note            *note.Handler
 	Notification    *notification.Handler
 	GoogleCal       *googlecal.Handler
 	GoogleEvents    *googlecal.EventsHandler
@@ -198,6 +200,14 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		r.Get("/attachments/usage", h.Attachment.StorageUsage)
 		r.Get("/attachments/{id}/download-url", h.Attachment.DownloadURL)
 		r.Delete("/attachments/{id}", h.Attachment.Delete)
+
+		// Notes (E-053) — flat and top-level like /attachments, not nested under
+		// the project. Free and unlimited: no plan gate anywhere on this surface.
+		r.Get("/notes", h.Note.List)
+		r.Post("/notes", h.Note.Create)
+		r.Get("/notes/{id}", h.Note.Get)
+		r.Patch("/notes/{id}", h.Note.Update)
+		r.Delete("/notes/{id}", h.Note.Delete)
 
 		// Recurrence rules (E-050). Creation is nested under the project that owns
 		// the series; every other verb is flat on the rule id.

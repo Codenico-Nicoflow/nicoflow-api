@@ -37,6 +37,17 @@ const (
 	// heartbeats never broadcast. FREE on every plan.
 	EventFocusSessionStarted EventType = "focus.session_started"
 	EventFocusSessionEnded   EventType = "focus.session_ended"
+	// Note events (E-053) carry the LIST-shaped NoteView — excerpt, never the
+	// document body. note.updated deliberately breaks the full-payload
+	// convention: autosave fires every ~1–2s while typing, and shipping a whole
+	// rich-text body on each keystroke burst would be wasteful and racy. A client
+	// that needs the body refetches the scalar. The event also has a correctness
+	// role beyond cache sync — it lets a second tab notice a change and refetch
+	// before the user types, defusing conflicts before `version` has to reject
+	// them. deleted carries { id }. FREE on every plan.
+	EventNoteCreated EventType = "note.created"
+	EventNoteUpdated EventType = "note.updated"
+	EventNoteDeleted EventType = "note.deleted"
 )
 
 // Event is the envelope for every server-pushed WebSocket message.
