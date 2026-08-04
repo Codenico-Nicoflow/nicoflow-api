@@ -25,7 +25,7 @@ func NewHandler(svc Service) *Handler { return &Handler{svc: svc} }
 // @Tags         search
 // @Produce      json
 // @Param        q      query     string  true   "Search term (2–100 chars)"
-// @Param        types  query     string  false  "Comma-separated groups: task,project,area (omit for all)"
+// @Param        types  query     string  false  "Comma-separated groups: task,project,area,note (omit for all)"
 // @Param        limit  query     int     false  "Per-type cap (default 10, max 50)"
 // @Security     BearerAuth
 // @Success      200  {object}  SearchEnvelope  "Grouped results"
