@@ -695,6 +695,93 @@ func TestHabitDeleteCascadesToCheckIns(t *testing.T) {
 	}
 }
 
+func TestListCheckIns_BatchesByHabit(t *testing.T) {
+	repo, pool := newRepo(t)
+	ctx := context.Background()
+	userID := seedUser(t, pool)
+
+	h1, err := repo.Create(ctx, newHabit(userID, "Read"))
+	if err != nil {
+		t.Fatalf("Create h1: %v", err)
+	}
+	h2, err := repo.Create(ctx, newHabit(userID, "Run"))
+	if err != nil {
+		t.Fatalf("Create h2: %v", err)
+	}
+
+	seedCheckIn(t, repo, h1, checkInDate(2026, time.August, 3), 1, 1, true)
+	seedCheckIn(t, repo, h1, checkInDate(2026, time.August, 4), 1, 1, true)
+	seedCheckIn(t, repo, h2, checkInDate(2026, time.August, 4), 1, 1, true)
+
+	got, err := repo.ListCheckIns(ctx, userID, []string{h1.ID, h2.ID}, checkInDate(2026, time.August, 1))
+	if err != nil {
+		t.Fatalf("ListCheckIns: %v", err)
+	}
+	if len(got[h1.ID]) != 2 || len(got[h2.ID]) != 1 {
+		t.Errorf("got %d/%d check-ins, want 2 for h1 and 1 for h2", len(got[h1.ID]), len(got[h2.ID]))
+	}
+
+	// Ascending order lets the streak walk assume a stable sequence.
+	if !got[h1.ID][0].Date.Before(got[h1.ID][1].Date) {
+		t.Error("check-ins are not ascending by date")
+	}
+}
+
+func TestListCheckIns_HonoursTheSinceBound(t *testing.T) {
+	repo, pool := newRepo(t)
+	ctx := context.Background()
+	userID := seedUser(t, pool)
+
+	h, err := repo.Create(ctx, newHabit(userID, "Read"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	seedCheckIn(t, repo, h, checkInDate(2026, time.January, 1), 1, 1, true)
+	seedCheckIn(t, repo, h, checkInDate(2026, time.August, 4), 1, 1, true)
+
+	got, err := repo.ListCheckIns(ctx, userID, []string{h.ID}, checkInDate(2026, time.August, 1))
+	if err != nil {
+		t.Fatalf("ListCheckIns: %v", err)
+	}
+	if len(got[h.ID]) != 1 {
+		t.Errorf("got %d check-ins, want only the one inside the window", len(got[h.ID]))
+	}
+}
+
+func TestListCheckIns_IsScopedToTheUser(t *testing.T) {
+	repo, pool := newRepo(t)
+	ctx := context.Background()
+	owner, other := seedUser(t, pool), seedUser(t, pool)
+
+	h, err := repo.Create(ctx, newHabit(owner, "Read"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	seedCheckIn(t, repo, h, checkInDate(2026, time.August, 4), 1, 1, true)
+
+	got, err := repo.ListCheckIns(ctx, other, []string{h.ID}, checkInDate(2026, time.August, 1))
+	if err != nil {
+		t.Fatalf("ListCheckIns: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("another user read %d habits' history, want none", len(got))
+	}
+}
+
+// An empty habit set must not issue a query at all.
+func TestListCheckIns_EmptySetIsANoOp(t *testing.T) {
+	repo, pool := newRepo(t)
+	userID := seedUser(t, pool)
+
+	got, err := repo.ListCheckIns(context.Background(), userID, nil, checkInDate(2026, time.August, 1))
+	if err != nil {
+		t.Fatalf("ListCheckIns: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("got %d entries, want an empty map", len(got))
+	}
+}
+
 // Deleting a user takes their habits with them.
 func TestUserDeleteCascades(t *testing.T) {
 	repo, pool := newRepo(t)

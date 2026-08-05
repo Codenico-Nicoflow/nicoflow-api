@@ -21,6 +21,14 @@ type mockRepo struct {
 	upsertCheckIn func(ctx context.Context, c CheckIn) (CheckIn, error)
 	deleteCheckIn func(ctx context.Context, userID, habitID string, date time.Time) (bool, error)
 	userTimezone  func(ctx context.Context, userID string) (string, error)
+	listCheckIns  func(ctx context.Context, userID string, habitIDs []string, since time.Time) (map[string][]CheckIn, error)
+}
+
+func (m *mockRepo) ListCheckIns(ctx context.Context, userID string, habitIDs []string, since time.Time) (map[string][]CheckIn, error) {
+	if m.listCheckIns != nil {
+		return m.listCheckIns(ctx, userID, habitIDs, since)
+	}
+	return map[string][]CheckIn{}, nil
 }
 
 func (m *mockRepo) UpsertCheckIn(ctx context.Context, c CheckIn) (CheckIn, error) {
@@ -564,7 +572,11 @@ func TestMutations_Broadcast(t *testing.T) {
 // pinnedAt builds a service whose clock is fixed, so the local-date rules are
 // provable rather than dependent on when the suite happens to run.
 func pinnedAt(repo *mockRepo, instant time.Time) Service {
-	return NewService(repo, nil).(*service).WithClock(func() time.Time { return instant })
+	return newPinnedService(repo, nil, instant)
+}
+
+func newPinnedService(repo *mockRepo, bc Broadcaster, instant time.Time) Service {
+	return NewServiceWithClock(repo, bc, func() time.Time { return instant })
 }
 
 func dailyHabit() Habit {
@@ -849,9 +861,7 @@ func TestUndoCheckIn_HonoursTheBackfillWindow(t *testing.T) {
 func TestCheckInAndUndo_Broadcast(t *testing.T) {
 	bc := &recordingBroadcaster{}
 	repo := repoFor(dailyHabit(), "UTC")
-	svc := NewService(repo, bc).(*service).WithClock(func() time.Time {
-		return time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
-	})
+	svc := newPinnedService(repo, bc, time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC))
 
 	ctx := context.Background()
 	if _, err := svc.CheckIn(ctx, "u1", "h1", CheckInRequest{}); err != nil {
@@ -867,6 +877,309 @@ func TestCheckInAndUndo_Broadcast(t *testing.T) {
 	for i, ev := range bc.events {
 		if ev.Type != EventCheckedIn {
 			t.Errorf("event[%d] = %q, want %q", i, ev.Type, EventCheckedIn)
+		}
+	}
+}
+
+// ── Enrichment ───────────────────────────────────────────────────────────────
+
+// A list read must derive every habit's streak from one history query. N+1 here
+// is what would make derived-on-read expensive enough to regret.
+func TestList_LoadsHistoryInOneQuery(t *testing.T) {
+	habits := []Habit{
+		{ID: "h1", UserID: "u1", Name: "Read", Polarity: PolarityBuild, TargetValue: 1, ScheduleKind: ScheduleDaily},
+		{ID: "h2", UserID: "u1", Name: "Run", Polarity: PolarityBuild, TargetValue: 1, ScheduleKind: ScheduleDaily},
+		{ID: "h3", UserID: "u1", Name: "Water", Polarity: PolarityBuild, TargetValue: 1, ScheduleKind: ScheduleDaily},
+	}
+	today := date(2026, time.August, 5)
+
+	calls := 0
+	var gotIDs []string
+	repo := &mockRepo{
+		list: func(context.Context, string, bool) ([]Habit, error) { return habits, nil },
+		listCheckIns: func(_ context.Context, _ string, ids []string, _ time.Time) (map[string][]CheckIn, error) {
+			calls++
+			gotIDs = ids
+			return map[string][]CheckIn{"h1": run(today, 4)}, nil
+		},
+	}
+
+	views, err := pinnedAt(repo, time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)).
+		List(context.Background(), "u1", false)
+	if err != nil {
+		t.Fatalf("List() error = %v, want nil", err)
+	}
+
+	if calls != 1 {
+		t.Errorf("ListCheckIns called %d times, want exactly 1 for %d habits", calls, len(habits))
+	}
+	if len(gotIDs) != 3 {
+		t.Errorf("requested %d habit ids, want all 3 batched", len(gotIDs))
+	}
+	if views[0].CurrentStreak != 4 {
+		t.Errorf("h1 streak = %d, want 4", views[0].CurrentStreak)
+	}
+	if views[1].CurrentStreak != 0 {
+		t.Errorf("h2 streak = %d, want 0 — it has no history", views[1].CurrentStreak)
+	}
+}
+
+// An empty list must not issue a history query at all.
+func TestList_NoHabitsSkipsTheHistoryQuery(t *testing.T) {
+	called := false
+	repo := &mockRepo{listCheckIns: func(context.Context, string, []string, time.Time) (map[string][]CheckIn, error) {
+		called = true
+		return nil, nil
+	}}
+
+	views, err := pinnedAt(repo, time.Now()).List(context.Background(), "u1", false)
+	if err != nil {
+		t.Fatalf("List() error = %v, want nil", err)
+	}
+	if views == nil {
+		t.Error("views is nil, want an empty slice")
+	}
+	if called {
+		t.Error("ListCheckIns was called for a user with no habits, want it skipped")
+	}
+}
+
+func TestList_StreakUnitFollowsTheSchedule(t *testing.T) {
+	three := int16(3)
+	repo := &mockRepo{list: func(context.Context, string, bool) ([]Habit, error) {
+		return []Habit{
+			{ID: "h1", ScheduleKind: ScheduleDaily},
+			{ID: "h2", ScheduleKind: ScheduleWeekdays, ByWeekday: []int16{1}},
+			{ID: "h3", ScheduleKind: ScheduleWeeklyQuota, TimesPerWeek: &three},
+		}, nil
+	}}
+
+	views, err := pinnedAt(repo, time.Now()).List(context.Background(), "u1", false)
+	if err != nil {
+		t.Fatalf("List() error = %v, want nil", err)
+	}
+
+	want := []string{StreakUnitDay, StreakUnitDay, StreakUnitWeek}
+	for i, w := range want {
+		if views[i].StreakUnit != w {
+			t.Errorf("views[%d].streakUnit = %q, want %q", i, views[i].StreakUnit, w)
+		}
+	}
+	// Only the quota habit accumulates toward a period.
+	if views[0].PeriodProgress != nil || views[1].PeriodProgress != nil {
+		t.Error("a day habit carries periodProgress, want nil")
+	}
+	if views[2].PeriodProgress == nil {
+		t.Error("the quota habit has no periodProgress, want it populated")
+	}
+}
+
+// An archived habit is history: it is never due, whatever its schedule says.
+func TestList_ArchivedHabitIsNeverDue(t *testing.T) {
+	archived := time.Now().UTC()
+	repo := &mockRepo{list: func(context.Context, string, bool) ([]Habit, error) {
+		return []Habit{{ID: "h1", ScheduleKind: ScheduleDaily, ArchivedAt: &archived}}, nil
+	}}
+
+	views, err := pinnedAt(repo, time.Now()).List(context.Background(), "u1", true)
+	if err != nil {
+		t.Fatalf("List() error = %v, want nil", err)
+	}
+	if views[0].DueToday {
+		t.Error("dueToday = true on an archived habit, want false")
+	}
+}
+
+func TestGet_ReturnsCellsAtTheHabitsGranularity(t *testing.T) {
+	today := date(2026, time.August, 5)
+	repo := &mockRepo{
+		getByID: func(context.Context, string, string) (Habit, error) {
+			return Habit{ID: "h1", UserID: "u1", Polarity: PolarityBuild, TargetValue: 1,
+				ScheduleKind: ScheduleDaily}, nil
+		},
+		listCheckIns: func(context.Context, string, []string, time.Time) (map[string][]CheckIn, error) {
+			return map[string][]CheckIn{"h1": run(today, 3)}, nil
+		},
+	}
+
+	got, err := pinnedAt(repo, time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)).
+		Get(context.Background(), "u1", "h1")
+	if err != nil {
+		t.Fatalf("Get() error = %v, want nil", err)
+	}
+
+	if len(got.Cells) != RibbonDays {
+		t.Errorf("got %d cells, want %d", len(got.Cells), RibbonDays)
+	}
+	if got.CurrentStreak != 3 {
+		t.Errorf("currentStreak = %d, want 3", got.CurrentStreak)
+	}
+	if last := got.Cells[len(got.Cells)-1]; last.Date != "2026-08-05" || !last.Satisfied {
+		t.Errorf("last cell = %+v, want today satisfied", last)
+	}
+}
+
+// The response to a check-in carries the recomputed streak, so a client does not
+// need a follow-up fetch and a second tab gets it straight from the broadcast.
+func TestCheckIn_ReturnsTheRecomputedStreak(t *testing.T) {
+	today := date(2026, time.August, 5)
+	bc := &recordingBroadcaster{}
+
+	repo := repoFor(dailyHabit(), "UTC")
+	repo.listCheckIns = func(context.Context, string, []string, time.Time) (map[string][]CheckIn, error) {
+		// The four days behind today, plus today itself just written.
+		return map[string][]CheckIn{"h1": run(today, 5)}, nil
+	}
+
+	svc := newPinnedService(repo, bc, time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC))
+	view, err := svc.CheckIn(context.Background(), "u1", "h1", CheckInRequest{})
+	if err != nil {
+		t.Fatalf("CheckIn() error = %v, want nil", err)
+	}
+
+	if view.CurrentStreak != 5 {
+		t.Errorf("currentStreak = %d, want 5 recomputed after the write", view.CurrentStreak)
+	}
+	if !view.CompletedToday {
+		t.Error("completedToday = false after checking in, want true")
+	}
+
+	broadcast, ok := bc.events[0].Payload.(HabitView)
+	if !ok {
+		t.Fatalf("payload = %#v, want a HabitView", bc.events[0].Payload)
+	}
+	if broadcast.CurrentStreak != 5 {
+		t.Errorf("broadcast streak = %d, want the post-write 5", broadcast.CurrentStreak)
+	}
+}
+
+// ── Today feed ───────────────────────────────────────────────────────────────
+
+func TestToday_FiltersByScheduleAndCompletion(t *testing.T) {
+	// A Wednesday. The Mon/Wed/Fri habit is due; a Tue/Thu one would not be.
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	today := date(2026, time.August, 5)
+	archived := now
+
+	habits := []Habit{
+		{ID: "daily", ScheduleKind: ScheduleDaily, Polarity: PolarityBuild, TargetValue: 1},
+		{ID: "onSchedule", ScheduleKind: ScheduleWeekdays, ByWeekday: []int16{1, 3, 5}, Polarity: PolarityBuild, TargetValue: 1},
+		{ID: "offSchedule", ScheduleKind: ScheduleWeekdays, ByWeekday: []int16{2, 4}, Polarity: PolarityBuild, TargetValue: 1},
+		{ID: "alreadyDone", ScheduleKind: ScheduleDaily, Polarity: PolarityBuild, TargetValue: 1},
+		{ID: "archived", ScheduleKind: ScheduleDaily, Polarity: PolarityBuild, TargetValue: 1, ArchivedAt: &archived},
+	}
+
+	repo := &mockRepo{
+		list: func(_ context.Context, _ string, includeArchived bool) ([]Habit, error) {
+			if includeArchived {
+				return habits, nil
+			}
+			return habits[:4], nil
+		},
+		listCheckIns: func(context.Context, string, []string, time.Time) (map[string][]CheckIn, error) {
+			return map[string][]CheckIn{"alreadyDone": {ci(today, 1, true)}}, nil
+		},
+	}
+
+	views, err := pinnedAt(repo, now).Today(context.Background(), "u1")
+	if err != nil {
+		t.Fatalf("Today() error = %v, want nil", err)
+	}
+
+	got := map[string]bool{}
+	for _, v := range views {
+		got[v.ID] = true
+	}
+	if !got["daily"] || !got["onSchedule"] {
+		t.Errorf("feed = %v, want the daily and on-schedule habits present", got)
+	}
+	if got["offSchedule"] {
+		t.Error("an off-schedule habit appeared in the feed, want it excluded")
+	}
+	if got["alreadyDone"] {
+		t.Error("a completed habit appeared in the feed, want it excluded")
+	}
+	if got["archived"] {
+		t.Error("an archived habit appeared in the feed, want it excluded")
+	}
+}
+
+// A quota habit nags every day until the week is met, then goes quiet rather
+// than asking for a fourth session.
+func TestToday_QuotaHabitLeavesTheFeedWhenMet(t *testing.T) {
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	week := date(2026, time.August, 3)
+
+	newRepo := func(done int) *mockRepo {
+		entries := make([]CheckIn, 0, done)
+		for i := range done {
+			entries = append(entries, ci(week.AddDate(0, 0, i), 1, true))
+		}
+		return &mockRepo{
+			list: func(context.Context, string, bool) ([]Habit, error) {
+				return []Habit{{ID: "h1", ScheduleKind: ScheduleWeeklyQuota,
+					TimesPerWeek: i16Ptr(3), Polarity: PolarityBuild, TargetValue: 1}}, nil
+			},
+			listCheckIns: func(context.Context, string, []string, time.Time) (map[string][]CheckIn, error) {
+				return map[string][]CheckIn{"h1": entries}, nil
+			},
+		}
+	}
+
+	partial, err := pinnedAt(newRepo(2), now).Today(context.Background(), "u1")
+	if err != nil {
+		t.Fatalf("Today() error = %v", err)
+	}
+	if len(partial) != 1 {
+		t.Errorf("feed has %d habits at 2 of 3, want 1", len(partial))
+	}
+
+	met, err := pinnedAt(newRepo(3), now).Today(context.Background(), "u1")
+	if err != nil {
+		t.Fatalf("Today() error = %v", err)
+	}
+	if len(met) != 0 {
+		t.Errorf("feed has %d habits at 3 of 3, want none", len(met))
+	}
+}
+
+func TestToday_EmptyIsNeverNull(t *testing.T) {
+	views, err := pinnedAt(&mockRepo{}, time.Now()).Today(context.Background(), "u1")
+	if err != nil {
+		t.Fatalf("Today() error = %v, want nil", err)
+	}
+	if views == nil {
+		t.Error("views is nil, want an empty slice")
+	}
+}
+
+// ── Subject catalog ──────────────────────────────────────────────────────────
+
+func TestSubjectCatalog(t *testing.T) {
+	if len(SubjectCatalog) < 20 {
+		t.Errorf("catalog has %d entries, want at least 20", len(SubjectCatalog))
+	}
+
+	seen := map[string]bool{}
+	for _, s := range SubjectCatalog {
+		if s.Slug == "" || s.LabelKey == "" {
+			t.Errorf("entry %+v has an empty field", s)
+		}
+		if seen[s.Slug] {
+			t.Errorf("duplicate slug %q", s.Slug)
+		}
+		seen[s.Slug] = true
+	}
+
+	// The default subject must exist in the catalog, or a habit created without
+	// one would render as an unknown slug.
+	if !seen[DefaultSubject] {
+		t.Errorf("catalog is missing the default subject %q", DefaultSubject)
+	}
+	// The quit-habit examples the feature was designed around.
+	for _, want := range []string{"reading", "quit_drinking", "quit_smoking"} {
+		if !seen[want] {
+			t.Errorf("catalog is missing %q", want)
 		}
 	}
 }

@@ -50,13 +50,13 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 // Get godoc
 // @Summary      Get a habit
-// @Description  Retrieves a single habit. Cross-user access returns 404, never 403.
+// @Description  Retrieves a single habit with its derived counters and the heatmap window behind them. Cells are day cells for daily/weekdays habits and week cells (carrying quota progress) for weekly_quota habits — the granularity streakUnit announces. Cross-user access returns 404, never 403.
 // @Tags         habits
 // @Produce      json
 // @Param        id   path      string  true  "Habit ID"
 // @Security     BearerAuth
-// @Success      200  {object}  HabitEnvelope  "The habit"
-// @Failure      404  {object}  ErrorEnvelope  "HABIT_NOT_FOUND"
+// @Success      200  {object}  HabitDetailEnvelope  "The habit with its history"
+// @Failure      404  {object}  ErrorEnvelope        "HABIT_NOT_FOUND"
 // @Router       /habits/{id} [get]
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	view, err := h.svc.Get(r.Context(), mw.UserIDFromCtx(r.Context()), chi.URLParam(r, "id"))
@@ -138,6 +138,35 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Today godoc
+// @Summary      Habits due today
+// @Description  Returns the habits still owed right now, for the Today-page strip. A weekdays habit appears only on its own days; a weekly-quota habit appears every day until its week's quota is met, then goes quiet. Archived and already-completed habits are excluded.
+// @Tags         habits
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  HabitListEnvelope  "Habits due today"
+// @Router       /habits/today [get]
+func (h *Handler) Today(w http.ResponseWriter, r *http.Request) {
+	views, err := h.svc.Today(r.Context(), mw.UserIDFromCtx(r.Context()))
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, views)
+}
+
+// Subjects godoc
+// @Summary      Habit subject catalog
+// @Description  The canonical subject list. Subjects are cosmetic — they drive the card icon and never scheduling or targets. labelKey is an i18n key, not a display string. A client meeting an unknown slug renders a fallback icon rather than failing, so the catalog can gain entries without a client release.
+// @Tags         habits
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  SubjectListEnvelope  "Subjects"
+// @Router       /habits/subjects [get]
+func (h *Handler) Subjects(w http.ResponseWriter, r *http.Request) {
+	respond.JSON(w, http.StatusOK, SubjectCatalog)
 }
 
 // CheckIn godoc

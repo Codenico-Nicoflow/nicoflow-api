@@ -108,10 +108,9 @@ type Habit struct {
 
 // HabitView is the wire shape. All IDs are strings; instants are RFC3339 UTC.
 //
-// The derived fields (StreakUnit, CurrentStreak, LongestStreak, DueToday,
-// CompletedToday, TodayValue, PeriodProgress) are enriched in NIC-1925 and are
-// deliberately absent here rather than hardcoded to zero — a fake zero is a
-// number a client would render as truth.
+// Every derived field is computed server-side. The client performs no streak
+// math at all, which is what keeps the web app and the future mobile app from
+// disagreeing about a number the user is emotionally invested in.
 type HabitView struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
@@ -126,16 +125,66 @@ type HabitView struct {
 	ByWeekday    []int16 `json:"byWeekday"`
 	TimesPerWeek *int16  `json:"timesPerWeek"`
 
+	// StreakUnit tells the client which noun to print ("12 days" vs "5 weeks")
+	// and which heatmap granularity to draw. Normalising everything to weeks was
+	// rejected: it would show "0 weeks" to someone on a 6-day run, which kills
+	// the daily feedback the feature is built on.
+	StreakUnit    string `json:"streakUnit"`
+	CurrentStreak int    `json:"currentStreak"`
+	LongestStreak int    `json:"longestStreak"`
+
+	DueToday       bool `json:"dueToday"`
+	CompletedToday bool `json:"completedToday"`
+	TodayValue     int  `json:"todayValue"`
+
+	// PeriodProgress is the quota habit's "2 of 3 this week". Null for day
+	// habits — the client must not read a missing value as 0/0.
+	PeriodProgress *PeriodProgress `json:"periodProgress"`
+
 	ArchivedAt *time.Time `json:"archivedAt"`
 	CreatedAt  time.Time  `json:"createdAt"`
 	UpdatedAt  time.Time  `json:"updatedAt"`
 }
 
+// PeriodProgress is progress through the current period. Only weekly-quota
+// habits have a period that accumulates; a day habit is simply done or not.
+type PeriodProgress struct {
+	Current int `json:"current"`
+	Target  int `json:"target"`
+}
+
+// HabitDetailView adds the heatmap window to the scalar read. Cells are day
+// cells for day habits and week cells for quota habits — the granularity the
+// StreakUnit already announced.
+type HabitDetailView struct {
+	HabitView
+	Cells []CellView `json:"cells"`
+}
+
+// CellView is one square in the history ribbon.
+//
+// Scheduled is what lets the client draw an off-schedule day as a baseline
+// rather than a gap: a Mon/Wed/Fri habit must not look like it failed four days
+// a week. For a week cell it is always true — a quota week is always "on".
+type CellView struct {
+	Date      string `json:"date"`
+	Scheduled bool   `json:"scheduled"`
+	Value     int    `json:"value"`
+	Satisfied bool   `json:"satisfied"`
+
+	// Set only on week cells, where a period accumulates toward a quota.
+	Progress *PeriodProgress `json:"progress"`
+}
+
+// toView renders a habit with no history — the shape used before check-ins are
+// loaded. Derived counters are zero and dueToday is computed from the schedule
+// alone, so an empty habit still reports honestly rather than optimistically.
 func toView(h Habit) HabitView {
 	return HabitView{
 		ID: h.ID, Name: h.Name, Subject: h.Subject, Color: h.Color,
 		Polarity: h.Polarity, TargetValue: h.TargetValue, Unit: h.Unit,
 		ScheduleKind: h.ScheduleKind, ByWeekday: h.ByWeekday, TimesPerWeek: h.TimesPerWeek,
+		StreakUnit: streakUnitFor(h),
 		ArchivedAt: h.ArchivedAt, CreatedAt: h.CreatedAt, UpdatedAt: h.UpdatedAt,
 	}
 }
@@ -244,10 +293,16 @@ type DeletedPayload struct {
 // plan is the caller's JWT claim, never a DB lookup.
 type Service interface {
 	List(ctx context.Context, userID string, includeArchived bool) ([]HabitView, error)
-	Get(ctx context.Context, userID, id string) (HabitView, error)
+	Get(ctx context.Context, userID, id string) (HabitDetailView, error)
 	Create(ctx context.Context, userID, plan string, req CreateHabitRequest) (HabitView, error)
 	Update(ctx context.Context, userID, plan, id string, req UpdateHabitRequest) (HabitView, error)
 	Delete(ctx context.Context, userID, id string) error
+
+	// Today returns the habits due right now, feeding the Today-page strip.
+	// A separate call rather than an extension of the task time-spread: welding
+	// the task service to the habit service would undo the domain separation
+	// this epic is built on, and the client fetches both in parallel anyway.
+	Today(ctx context.Context, userID string) ([]HabitView, error)
 
 	// CheckIn records (or corrects) one dated entry and returns the habit.
 	// Idempotent on (habit, date): a second call updates the value rather than
@@ -329,4 +384,10 @@ type Repository interface {
 	// Lives on the habit repository rather than reaching into the auth domain:
 	// one column read is not worth a cross-domain dependency.
 	UserTimezone(ctx context.Context, userID string) (string, error)
+
+	// ListCheckIns returns every check-in from `since` onward for the given
+	// habits, keyed by habit id. One query serves a whole list read — the
+	// alternative is N queries for N habits, which is the shape that turns a
+	// derived streak from cheap into a problem.
+	ListCheckIns(ctx context.Context, userID string, habitIDs []string, since time.Time) (map[string][]CheckIn, error)
 }
