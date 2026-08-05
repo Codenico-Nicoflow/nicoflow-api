@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS habit_check_ins;
+DROP TABLE IF EXISTS habits;
