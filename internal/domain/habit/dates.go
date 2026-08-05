@@ -67,10 +67,12 @@ func weekStart(d time.Time) time.Time {
 // true for them and the caller applies the quota rule; there is no such thing as
 // an unscheduled day for a "3 times a week" habit.
 func IsScheduledOn(h Habit, d time.Time) bool {
-	if h.ScheduleKind != ScheduleWeekdays {
-		return true
+	wd := d.Weekday()
+	if wd < time.Sunday || wd > time.Saturday {
+		return false
 	}
-	return slices.Contains(h.ByWeekday, int16(d.Weekday())) // Sunday = 0, matching the stored values
+
+	return slices.Contains(h.ByWeekday, int16(wd))
 }
 
 // satisfies applies the polarity rule. A build habit clears its target from
