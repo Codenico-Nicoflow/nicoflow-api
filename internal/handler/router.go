@@ -213,9 +213,16 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 
 		r.Get("/habits", h.Habit.List)
 		r.Post("/habits", h.Habit.Create)
+		// Literal segments before the {id} wildcard: chi matches static paths
+		// first, but declaring them together keeps the precedence obvious to a
+		// reader rather than resting on router internals.
+		r.Get("/habits/today", h.Habit.Today)
+		r.Get("/habits/subjects", h.Habit.Subjects)
 		r.Get("/habits/{id}", h.Habit.Get)
 		r.Patch("/habits/{id}", h.Habit.Update)
 		r.Delete("/habits/{id}", h.Habit.Delete)
+		r.Post("/habits/{id}/check-in", h.Habit.CheckIn)
+		r.Delete("/habits/{id}/check-in", h.Habit.UndoCheckIn)
 
 		// Recurrence rules (E-050). Creation is nested under the project that owns
 		// the series; every other verb is flat on the rule id.
