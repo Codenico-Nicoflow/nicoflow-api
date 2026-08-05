@@ -15,12 +15,21 @@ import (
 type service struct {
 	repo Repository
 	bc   Broadcaster
+	now  Clock
 }
 
 // NewService creates the habit service. bc may be nil — broadcasting is an
 // optional seam and a nil Broadcaster is a valid no-op.
 func NewService(repo Repository, bc Broadcaster) Service {
-	return &service{repo: repo, bc: bc}
+	return &service{repo: repo, bc: bc, now: time.Now}
+}
+
+// WithClock replaces the time source. Test-only seam: the local-date rules are
+// only provable against a pinned instant, since the ambient answer is correct in
+// a UTC container and wrong for a user thirteen hours away.
+func (s *service) WithClock(c Clock) *service {
+	s.now = c
+	return s
 }
 
 func (s *service) emit(userID string, ev Event) {
@@ -175,6 +184,111 @@ func (s *service) Delete(ctx context.Context, userID, id string) error {
 	}
 	s.emit(userID, Event{Type: EventDeleted, Payload: DeletedPayload{ID: id}})
 	return nil
+}
+
+// CheckIn records or corrects one dated entry.
+//
+// The entry freezes the target it was judged by, so a later edit to the habit
+// cannot rewrite what already happened. The write is an upsert on (habit, date):
+// a double-tap updates the value instead of creating a second row, and the
+// unique index — not a read-then-write — is what guarantees it.
+func (s *service) CheckIn(ctx context.Context, userID, id string, req CheckInRequest) (HabitView, error) {
+	h, today, err := s.habitAndToday(ctx, userID, id)
+	if err != nil {
+		return HabitView{}, err
+	}
+
+	date, err := s.resolveDate(h, req.Date, today)
+	if err != nil {
+		return HabitView{}, err
+	}
+
+	// Defaulting to the target means the common case — "I did it" — is an empty
+	// body, and a binary habit never has to state that 1 means done.
+	value := h.TargetValue
+	if req.Value != nil {
+		value = *req.Value
+	}
+	if value < 0 {
+		return HabitView{}, invalid("value must be zero or greater")
+	}
+
+	if _, err := s.repo.UpsertCheckIn(ctx, CheckIn{
+		ID:        uuid.New().String(),
+		HabitID:   h.ID,
+		UserID:    userID,
+		Date:      date,
+		Value:     value,
+		TargetAt:  h.TargetValue,
+		Satisfied: satisfies(h.Polarity, value, h.TargetValue),
+	}); err != nil {
+		return HabitView{}, err
+	}
+
+	view := toView(h)
+	s.emit(userID, Event{Type: EventCheckedIn, Payload: view})
+	return view, nil
+}
+
+// UndoCheckIn removes one dated entry. A date with no entry is not an error: the
+// caller wanted the day not-done, and it already is. Undo has to be as cheap as
+// the check-in, because a mis-tap on a grid of habit cards is routine.
+func (s *service) UndoCheckIn(ctx context.Context, userID, id string, req UndoCheckInRequest) (HabitView, error) {
+	h, today, err := s.habitAndToday(ctx, userID, id)
+	if err != nil {
+		return HabitView{}, err
+	}
+
+	date, err := s.resolveDate(h, req.Date, today)
+	if err != nil {
+		return HabitView{}, err
+	}
+
+	if _, err := s.repo.DeleteCheckIn(ctx, userID, h.ID, date); err != nil {
+		return HabitView{}, err
+	}
+
+	view := toView(h)
+	s.emit(userID, Event{Type: EventCheckedIn, Payload: view})
+	return view, nil
+}
+
+// habitAndToday loads the habit and resolves the user's current local date.
+// Archived habits are read-only history, not a live surface.
+func (s *service) habitAndToday(ctx context.Context, userID, id string) (Habit, time.Time, error) {
+	h, err := s.repo.GetByID(ctx, userID, id)
+	if err != nil {
+		return Habit{}, time.Time{}, err
+	}
+	if h.ArchivedAt != nil {
+		return Habit{}, time.Time{}, invalid("cannot check in on an archived habit")
+	}
+
+	tz, err := s.repo.UserTimezone(ctx, userID)
+	if err != nil {
+		return Habit{}, time.Time{}, fmt.Errorf("habit.checkIn timezone: %w", err)
+	}
+
+	today := localDate(s.now(), loadLocation(tz), int(h.DayCutoffHour))
+	return h, today, nil
+}
+
+// resolveDate turns an optional wire date into a calendar day. Omitted means
+// today — computed here, never accepted from the client, because a supplied
+// "today" is trivially spoofed to farm streaks and is wrong whenever a device
+// clock drifts. A supplied date is a backfill and must sit inside the window.
+func (s *service) resolveDate(h Habit, raw *string, today time.Time) (time.Time, error) {
+	if raw == nil {
+		return today, nil
+	}
+	date, err := parseDate(*raw)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if err := validateCheckInDate(h, date, today); err != nil {
+		return time.Time{}, err
+	}
+	return date, nil
 }
 
 func planLimitErr() error {

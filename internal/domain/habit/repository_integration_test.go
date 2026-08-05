@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -439,6 +440,258 @@ func TestScheduleShapeConstraint(t *testing.T) {
 				t.Fatalf("Create: %v", err)
 			}
 		})
+	}
+}
+
+// ── Check-ins ────────────────────────────────────────────────────────────────
+
+func checkInDate(y int, m time.Month, d int) time.Time {
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+}
+
+func seedCheckIn(t *testing.T, repo habit.Repository, h habit.Habit, d time.Time, value, target int, satisfied bool) habit.CheckIn {
+	t.Helper()
+	c, err := repo.UpsertCheckIn(context.Background(), habit.CheckIn{
+		ID: uuid.NewString(), HabitID: h.ID, UserID: h.UserID,
+		Date: d, Value: value, TargetAt: target, Satisfied: satisfied,
+	})
+	if err != nil {
+		t.Fatalf("UpsertCheckIn: %v", err)
+	}
+	return c
+}
+
+func TestUpsertCheckIn_InsertsThenUpdates(t *testing.T) {
+	repo, pool := newRepo(t)
+	ctx := context.Background()
+	userID := seedUser(t, pool)
+
+	h, err := repo.Create(ctx, newHabit(userID, "Read"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	day := checkInDate(2026, time.August, 5)
+
+	first := seedCheckIn(t, repo, h, day, 1, 1, true)
+	second := seedCheckIn(t, repo, h, day, 5, 1, true)
+
+	// The unique index on (habit_id, check_in_date) is what makes a repeat
+	// check-in an update rather than a duplicate row.
+	if first.ID != second.ID {
+		t.Errorf("ids differ (%s vs %s), want the same row upserted", first.ID, second.ID)
+	}
+	if second.Value != 5 {
+		t.Errorf("value = %d, want the updated 5", second.Value)
+	}
+
+	var n int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM habit_check_ins WHERE habit_id = $1`, h.ID).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("%d rows stored, want exactly 1 per (habit, date)", n)
+	}
+}
+
+// The frozen columns are the whole reason a habit can be edited safely: raising
+// a target must not retroactively fail days already completed.
+func TestUpsertCheckIn_HistorySurvivesATargetChange(t *testing.T) {
+	repo, pool := newRepo(t)
+	ctx := context.Background()
+	userID := seedUser(t, pool)
+
+	in := newHabit(userID, "Read")
+	in.TargetValue = 20
+	h, err := repo.Create(ctx, in)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	day := checkInDate(2026, time.August, 5)
+	seedCheckIn(t, repo, h, day, 20, 20, true)
+
+	// The user gets ambitious and raises the bar.
+	if _, ok, err := repo.Update(ctx, habit.UpdateParams{
+		ID: h.ID, UserID: userID, Name: h.Name, Subject: h.Subject, Color: h.Color,
+		TargetValue: 30, ScheduleKind: h.ScheduleKind,
+	}); err != nil || !ok {
+		t.Fatalf("Update: err=%v ok=%v", err, ok)
+	}
+
+	var target int
+	var satisfied bool
+	if err := pool.QueryRow(ctx,
+		`SELECT target_at_checkin, satisfied FROM habit_check_ins WHERE habit_id = $1 AND check_in_date = $2`,
+		h.ID, day).Scan(&target, &satisfied); err != nil {
+		t.Fatalf("read check-in: %v", err)
+	}
+	if target != 20 || !satisfied {
+		t.Errorf("stored target=%d satisfied=%v, want 20/true — history must not be rewritten", target, satisfied)
+	}
+}
+
+func TestDeleteCheckIn(t *testing.T) {
+	repo, pool := newRepo(t)
+	ctx := context.Background()
+	userID := seedUser(t, pool)
+
+	h, err := repo.Create(ctx, newHabit(userID, "Read"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	day := checkInDate(2026, time.August, 5)
+	seedCheckIn(t, repo, h, day, 1, 1, true)
+
+	ok, err := repo.DeleteCheckIn(ctx, userID, h.ID, day)
+	if err != nil || !ok {
+		t.Fatalf("DeleteCheckIn: err=%v ok=%v", err, ok)
+	}
+
+	// Repeating the delete reports no row, which the service treats as success.
+	ok, err = repo.DeleteCheckIn(ctx, userID, h.ID, day)
+	if err != nil {
+		t.Fatalf("second DeleteCheckIn: %v", err)
+	}
+	if ok {
+		t.Error("second delete reported a row, want none left")
+	}
+}
+
+func TestDeleteCheckIn_CrossUserMatchesNothing(t *testing.T) {
+	repo, pool := newRepo(t)
+	ctx := context.Background()
+	owner, other := seedUser(t, pool), seedUser(t, pool)
+
+	h, err := repo.Create(ctx, newHabit(owner, "Read"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	day := checkInDate(2026, time.August, 5)
+	seedCheckIn(t, repo, h, day, 1, 1, true)
+
+	ok, err := repo.DeleteCheckIn(ctx, other, h.ID, day)
+	if err != nil {
+		t.Fatalf("DeleteCheckIn: %v", err)
+	}
+	if ok {
+		t.Fatal("deleted another user's check-in, want no row matched")
+	}
+
+	var n int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM habit_check_ins WHERE habit_id = $1`, h.ID).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("%d rows remain, want the owner's check-in untouched", n)
+	}
+}
+
+// check_in_date is a real DATE. Storing it as text would make every streak
+// comparison a string comparison, which is the bug tasks.scheduled_for already
+// carries.
+func TestCheckInDateIsADateColumn(t *testing.T) {
+	_, pool := newRepo(t)
+
+	var dataType string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT data_type FROM information_schema.columns
+		  WHERE table_name = 'habit_check_ins' AND column_name = 'check_in_date'`).Scan(&dataType); err != nil {
+		t.Fatalf("introspect: %v", err)
+	}
+	if dataType != "date" {
+		t.Errorf("check_in_date is %q, want \"date\"", dataType)
+	}
+}
+
+func TestUserTimezone(t *testing.T) {
+	repo, pool := newRepo(t)
+	ctx := context.Background()
+	userID := seedUser(t, pool)
+
+	// Seeded users take the column default.
+	tz, err := repo.UserTimezone(ctx, userID)
+	if err != nil {
+		t.Fatalf("UserTimezone: %v", err)
+	}
+	if tz != "UTC" {
+		t.Errorf("timezone = %q, want the UTC default", tz)
+	}
+
+	if _, err := pool.Exec(ctx,
+		`UPDATE users SET timezone = 'Pacific/Auckland' WHERE id = $1`, userID); err != nil {
+		t.Fatalf("update timezone: %v", err)
+	}
+	if tz, err = repo.UserTimezone(ctx, userID); err != nil || tz != "Pacific/Auckland" {
+		t.Errorf("timezone = %q (err=%v), want Pacific/Auckland", tz, err)
+	}
+}
+
+// A missing user resolves to UTC rather than erroring: the caller is already
+// authenticated, so this is a defensive default, not a real code path.
+func TestUserTimezone_UnknownUserDefaultsToUTC(t *testing.T) {
+	repo, _ := newRepo(t)
+
+	tz, err := repo.UserTimezone(context.Background(), uuid.NewString())
+	if err != nil {
+		t.Fatalf("UserTimezone: %v", err)
+	}
+	if tz != "UTC" {
+		t.Errorf("timezone = %q, want UTC", tz)
+	}
+}
+
+// Archiving a habit keeps its check-ins — they are the user's record of what
+// they did, and un-archiving must restore a real history.
+func TestArchive_KeepsCheckIns(t *testing.T) {
+	repo, pool := newRepo(t)
+	ctx := context.Background()
+	userID := seedUser(t, pool)
+
+	h, err := repo.Create(ctx, newHabit(userID, "Read"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	seedCheckIn(t, repo, h, checkInDate(2026, time.August, 5), 1, 1, true)
+
+	if _, err := repo.Archive(ctx, userID, h.ID); err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+
+	var n int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM habit_check_ins WHERE habit_id = $1`, h.ID).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("%d check-ins survived archiving, want 1", n)
+	}
+}
+
+// Deleting a habit does take its check-ins, via ON DELETE CASCADE.
+func TestHabitDeleteCascadesToCheckIns(t *testing.T) {
+	repo, pool := newRepo(t)
+	ctx := context.Background()
+	userID := seedUser(t, pool)
+
+	h, err := repo.Create(ctx, newHabit(userID, "Read"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	seedCheckIn(t, repo, h, checkInDate(2026, time.August, 5), 1, 1, true)
+
+	if _, err := pool.Exec(ctx, `DELETE FROM habits WHERE id = $1`, h.ID); err != nil {
+		t.Fatalf("delete habit: %v", err)
+	}
+
+	var n int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM habit_check_ins WHERE habit_id = $1`, h.ID).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("%d check-ins survived the habit deletion, want 0", n)
 	}
 }
 

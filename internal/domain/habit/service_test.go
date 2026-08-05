@@ -12,12 +12,36 @@ import (
 // ── Test doubles ─────────────────────────────────────────────────────────────
 
 type mockRepo struct {
-	list        func(ctx context.Context, userID string, includeArchived bool) ([]Habit, error)
-	getByID     func(ctx context.Context, userID, id string) (Habit, error)
-	create      func(ctx context.Context, h Habit) (Habit, error)
-	update      func(ctx context.Context, p UpdateParams) (Habit, bool, error)
-	archive     func(ctx context.Context, userID, id string) (bool, error)
-	countActive func(ctx context.Context, userID string) (int, error)
+	list          func(ctx context.Context, userID string, includeArchived bool) ([]Habit, error)
+	getByID       func(ctx context.Context, userID, id string) (Habit, error)
+	create        func(ctx context.Context, h Habit) (Habit, error)
+	update        func(ctx context.Context, p UpdateParams) (Habit, bool, error)
+	archive       func(ctx context.Context, userID, id string) (bool, error)
+	countActive   func(ctx context.Context, userID string) (int, error)
+	upsertCheckIn func(ctx context.Context, c CheckIn) (CheckIn, error)
+	deleteCheckIn func(ctx context.Context, userID, habitID string, date time.Time) (bool, error)
+	userTimezone  func(ctx context.Context, userID string) (string, error)
+}
+
+func (m *mockRepo) UpsertCheckIn(ctx context.Context, c CheckIn) (CheckIn, error) {
+	if m.upsertCheckIn != nil {
+		return m.upsertCheckIn(ctx, c)
+	}
+	return c, nil
+}
+
+func (m *mockRepo) DeleteCheckIn(ctx context.Context, userID, habitID string, date time.Time) (bool, error) {
+	if m.deleteCheckIn != nil {
+		return m.deleteCheckIn(ctx, userID, habitID, date)
+	}
+	return true, nil
+}
+
+func (m *mockRepo) UserTimezone(ctx context.Context, userID string) (string, error) {
+	if m.userTimezone != nil {
+		return m.userTimezone(ctx, userID)
+	}
+	return "UTC", nil
 }
 
 func (m *mockRepo) List(ctx context.Context, userID string, includeArchived bool) ([]Habit, error) {
@@ -532,6 +556,318 @@ func TestMutations_Broadcast(t *testing.T) {
 	// The delete payload carries only the id — never stale habit metadata.
 	if p, ok := bc.events[2].Payload.(DeletedPayload); !ok || p.ID != "h1" {
 		t.Errorf("delete payload = %#v, want DeletedPayload{ID: \"h1\"}", bc.events[2].Payload)
+	}
+}
+
+// ── Check-in ─────────────────────────────────────────────────────────────────
+
+// pinnedAt builds a service whose clock is fixed, so the local-date rules are
+// provable rather than dependent on when the suite happens to run.
+func pinnedAt(repo *mockRepo, instant time.Time) Service {
+	return NewService(repo, nil).(*service).WithClock(func() time.Time { return instant })
+}
+
+func dailyHabit() Habit {
+	return Habit{ID: "h1", UserID: "u1", Name: "Read", Polarity: PolarityBuild,
+		TargetValue: 1, ScheduleKind: ScheduleDaily}
+}
+
+func repoFor(h Habit, tz string) *mockRepo {
+	return &mockRepo{
+		getByID:      func(context.Context, string, string) (Habit, error) { return h, nil },
+		userTimezone: func(context.Context, string) (string, error) { return tz, nil },
+	}
+}
+
+// AC1: an empty body checks in for today at the habit's target.
+func TestCheckIn_DefaultsToTodayAndTarget(t *testing.T) {
+	h := dailyHabit()
+	h.TargetValue = 20
+
+	var got CheckIn
+	repo := repoFor(h, "UTC")
+	repo.upsertCheckIn = func(_ context.Context, c CheckIn) (CheckIn, error) { got = c; return c, nil }
+
+	svc := pinnedAt(repo, time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC))
+	if _, err := svc.CheckIn(context.Background(), "u1", "h1", CheckInRequest{}); err != nil {
+		t.Fatalf("CheckIn() error = %v, want nil", err)
+	}
+
+	if got.Date.Format(DateLayout) != "2026-08-05" {
+		t.Errorf("date = %s, want 2026-08-05", got.Date.Format(DateLayout))
+	}
+	if got.Value != 20 {
+		t.Errorf("value = %d, want the habit's target 20", got.Value)
+	}
+	if !got.Satisfied {
+		t.Error("satisfied = false, want true when the value meets the target")
+	}
+	if got.TargetAt != 20 {
+		t.Errorf("targetAtCheckIn = %d, want 20 frozen onto the row", got.TargetAt)
+	}
+}
+
+// AC2: the server resolves "today" from the user's zone. The naive UTC answer
+// here is the previous day, which would credit the check-in to the wrong date
+// and silently break the streak.
+func TestCheckIn_UsesTheUsersLocalDate(t *testing.T) {
+	tests := []struct {
+		name    string
+		zone    string
+		instant time.Time
+		want    string
+	}{
+		{
+			name:    "ahead of utc",
+			zone:    "Pacific/Auckland",
+			instant: time.Date(2026, 8, 4, 21, 0, 0, 0, time.UTC), // 09:00 Aug 5 local
+			want:    "2026-08-05",
+		},
+		{
+			name:    "behind utc",
+			zone:    "America/Los_Angeles",
+			instant: time.Date(2026, 8, 6, 6, 0, 0, 0, time.UTC), // 23:00 Aug 5 local
+			want:    "2026-08-05",
+		},
+		{
+			name:    "utc",
+			zone:    "UTC",
+			instant: time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC),
+			want:    "2026-08-05",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got CheckIn
+			repo := repoFor(dailyHabit(), tt.zone)
+			repo.upsertCheckIn = func(_ context.Context, c CheckIn) (CheckIn, error) { got = c; return c, nil }
+
+			if _, err := pinnedAt(repo, tt.instant).CheckIn(
+				context.Background(), "u1", "h1", CheckInRequest{}); err != nil {
+				t.Fatalf("CheckIn() error = %v, want nil", err)
+			}
+			if d := got.Date.Format(DateLayout); d != tt.want {
+				t.Errorf("date = %s, want %s (the user's local day)", d, tt.want)
+			}
+		})
+	}
+}
+
+// An unresolvable stored zone must not lock the user out of their own habit.
+func TestCheckIn_UnknownTimezoneFallsBackToUTC(t *testing.T) {
+	var got CheckIn
+	repo := repoFor(dailyHabit(), "Mars/Olympus_Mons")
+	repo.upsertCheckIn = func(_ context.Context, c CheckIn) (CheckIn, error) { got = c; return c, nil }
+
+	if _, err := pinnedAt(repo, time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)).CheckIn(
+		context.Background(), "u1", "h1", CheckInRequest{}); err != nil {
+		t.Fatalf("CheckIn() error = %v, want nil", err)
+	}
+	if got.Date.Format(DateLayout) != "2026-08-05" {
+		t.Errorf("date = %s, want the UTC fallback 2026-08-05", got.Date.Format(DateLayout))
+	}
+}
+
+// AC7: polarity decides the comparison, so a quit habit passes at zero and
+// fails the moment a slip is logged.
+func TestCheckIn_PolarityDecidesSatisfaction(t *testing.T) {
+	tests := []struct {
+		name     string
+		polarity string
+		target   int
+		value    int
+		want     bool
+	}{
+		{name: "build habit meets its target", polarity: PolarityBuild, target: 20, value: 20, want: true},
+		{name: "build habit falls short", polarity: PolarityBuild, target: 20, value: 5, want: false},
+		{name: "quit habit stays clean", polarity: PolarityQuit, target: 0, value: 0, want: true},
+		{name: "quit habit slips", polarity: PolarityQuit, target: 0, value: 1, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := dailyHabit()
+			h.Polarity, h.TargetValue = tt.polarity, tt.target
+
+			var got CheckIn
+			repo := repoFor(h, "UTC")
+			repo.upsertCheckIn = func(_ context.Context, c CheckIn) (CheckIn, error) { got = c; return c, nil }
+
+			if _, err := pinnedAt(repo, time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)).CheckIn(
+				context.Background(), "u1", "h1", CheckInRequest{Value: intPtr(tt.value)}); err != nil {
+				t.Fatalf("CheckIn() error = %v, want nil", err)
+			}
+			if got.Satisfied != tt.want {
+				t.Errorf("satisfied = %v, want %v", got.Satisfied, tt.want)
+			}
+		})
+	}
+}
+
+// AC5: backfill is bounded. Unbounded correction would let a user fabricate a
+// year-long streak in one sitting.
+func TestCheckIn_BackfillWindow(t *testing.T) {
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC) // Wednesday
+
+	tests := []struct {
+		name     string
+		habit    Habit
+		date     string
+		wantCode string
+	}{
+		{name: "seven days back is allowed", habit: dailyHabit(), date: "2026-07-29"},
+		{name: "eight days back is refused", habit: dailyHabit(), date: "2026-07-28", wantCode: apperror.ErrInvalidInput},
+		{name: "tomorrow is refused", habit: dailyHabit(), date: "2026-08-06", wantCode: apperror.ErrInvalidInput},
+		{name: "malformed date", habit: dailyHabit(), date: "05/08/2026", wantCode: apperror.ErrInvalidInput},
+		{
+			name:  "quota habit, previous week is allowed",
+			habit: Habit{ID: "h1", UserID: "u1", Polarity: PolarityBuild, TargetValue: 1, ScheduleKind: ScheduleWeeklyQuota, TimesPerWeek: i16Ptr(3)},
+			date:  "2026-07-27",
+		},
+		{
+			name:     "quota habit, two weeks back is refused",
+			habit:    Habit{ID: "h1", UserID: "u1", Polarity: PolarityBuild, TargetValue: 1, ScheduleKind: ScheduleWeeklyQuota, TimesPerWeek: i16Ptr(3)},
+			date:     "2026-07-26",
+			wantCode: apperror.ErrInvalidInput,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := pinnedAt(repoFor(tt.habit, "UTC"), now).CheckIn(
+				context.Background(), "u1", "h1", CheckInRequest{Date: strPtr(tt.date)})
+			if got := errCode(err); got != tt.wantCode {
+				t.Errorf("error code = %q, want %q (err=%v)", got, tt.wantCode, err)
+			}
+		})
+	}
+}
+
+func TestCheckIn_NegativeValueRejected(t *testing.T) {
+	_, err := pinnedAt(repoFor(dailyHabit(), "UTC"), time.Now()).CheckIn(
+		context.Background(), "u1", "h1", CheckInRequest{Value: intPtr(-1)})
+	if got := errCode(err); got != apperror.ErrInvalidInput {
+		t.Errorf("error code = %q, want %q", got, apperror.ErrInvalidInput)
+	}
+}
+
+// Archived habits are readable history, not a live surface.
+func TestCheckIn_ArchivedHabitRejected(t *testing.T) {
+	archived := time.Now().UTC()
+	h := dailyHabit()
+	h.ArchivedAt = &archived
+
+	_, err := pinnedAt(repoFor(h, "UTC"), time.Now()).CheckIn(
+		context.Background(), "u1", "h1", CheckInRequest{})
+	if got := errCode(err); got != apperror.ErrInvalidInput {
+		t.Errorf("error code = %q, want %q", got, apperror.ErrInvalidInput)
+	}
+}
+
+func TestCheckIn_MissingHabit(t *testing.T) {
+	repo := &mockRepo{getByID: func(context.Context, string, string) (Habit, error) {
+		return Habit{}, notFound()
+	}}
+
+	_, err := pinnedAt(repo, time.Now()).CheckIn(context.Background(), "u1", "nope", CheckInRequest{})
+	if got := errCode(err); got != apperror.ErrHabitNotFound {
+		t.Errorf("error code = %q, want %q", got, apperror.ErrHabitNotFound)
+	}
+}
+
+// AC3: a repeat check-in is an upsert, so a double-tap updates rather than
+// duplicating. The single write is what the unique index makes idempotent.
+func TestCheckIn_IsIdempotentPerDate(t *testing.T) {
+	var writes []CheckIn
+	repo := repoFor(dailyHabit(), "UTC")
+	repo.upsertCheckIn = func(_ context.Context, c CheckIn) (CheckIn, error) {
+		writes = append(writes, c)
+		return c, nil
+	}
+
+	svc := pinnedAt(repo, time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC))
+	ctx := context.Background()
+	if _, err := svc.CheckIn(ctx, "u1", "h1", CheckInRequest{}); err != nil {
+		t.Fatalf("first CheckIn: %v", err)
+	}
+	if _, err := svc.CheckIn(ctx, "u1", "h1", CheckInRequest{Value: intPtr(3)}); err != nil {
+		t.Fatalf("second CheckIn: %v", err)
+	}
+
+	if len(writes) != 2 {
+		t.Fatalf("got %d writes, want 2", len(writes))
+	}
+	if !writes[0].Date.Equal(writes[1].Date) {
+		t.Error("the two writes targeted different dates, want the same day upserted")
+	}
+	if writes[1].Value != 3 {
+		t.Errorf("second value = %d, want 3", writes[1].Value)
+	}
+}
+
+// ── Undo ─────────────────────────────────────────────────────────────────────
+
+// AC4: undo removes the day and is safe to repeat — the caller wanted the day
+// not-done, and after the first call it already is.
+func TestUndoCheckIn_IsIdempotent(t *testing.T) {
+	repo := repoFor(dailyHabit(), "UTC")
+	repo.deleteCheckIn = func(context.Context, string, string, time.Time) (bool, error) { return false, nil }
+
+	_, err := pinnedAt(repo, time.Now()).UndoCheckIn(context.Background(), "u1", "h1", UndoCheckInRequest{})
+	if err != nil {
+		t.Errorf("UndoCheckIn() error = %v, want nil when no entry existed", err)
+	}
+}
+
+func TestUndoCheckIn_TargetsTheResolvedDate(t *testing.T) {
+	var gotDate time.Time
+	repo := repoFor(dailyHabit(), "Pacific/Auckland")
+	repo.deleteCheckIn = func(_ context.Context, _, _ string, d time.Time) (bool, error) {
+		gotDate = d
+		return true, nil
+	}
+
+	// 09:00 Aug 5 in Auckland — the UTC date is still Aug 4.
+	svc := pinnedAt(repo, time.Date(2026, 8, 4, 21, 0, 0, 0, time.UTC))
+	if _, err := svc.UndoCheckIn(context.Background(), "u1", "h1", UndoCheckInRequest{}); err != nil {
+		t.Fatalf("UndoCheckIn() error = %v, want nil", err)
+	}
+	if gotDate.Format(DateLayout) != "2026-08-05" {
+		t.Errorf("deleted date = %s, want the local day 2026-08-05", gotDate.Format(DateLayout))
+	}
+}
+
+func TestUndoCheckIn_HonoursTheBackfillWindow(t *testing.T) {
+	_, err := pinnedAt(repoFor(dailyHabit(), "UTC"), time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)).
+		UndoCheckIn(context.Background(), "u1", "h1", UndoCheckInRequest{Date: strPtr("2026-07-01")})
+	if got := errCode(err); got != apperror.ErrInvalidInput {
+		t.Errorf("error code = %q, want %q", got, apperror.ErrInvalidInput)
+	}
+}
+
+func TestCheckInAndUndo_Broadcast(t *testing.T) {
+	bc := &recordingBroadcaster{}
+	repo := repoFor(dailyHabit(), "UTC")
+	svc := NewService(repo, bc).(*service).WithClock(func() time.Time {
+		return time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	})
+
+	ctx := context.Background()
+	if _, err := svc.CheckIn(ctx, "u1", "h1", CheckInRequest{}); err != nil {
+		t.Fatalf("CheckIn: %v", err)
+	}
+	if _, err := svc.UndoCheckIn(ctx, "u1", "h1", UndoCheckInRequest{}); err != nil {
+		t.Fatalf("UndoCheckIn: %v", err)
+	}
+
+	if len(bc.events) != 2 {
+		t.Fatalf("got %d events, want 2", len(bc.events))
+	}
+	for i, ev := range bc.events {
+		if ev.Type != EventCheckedIn {
+			t.Errorf("event[%d] = %q, want %q", i, ev.Type, EventCheckedIn)
+		}
 	}
 }
 

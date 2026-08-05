@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -150,6 +151,66 @@ func (r *pgRepo) Archive(ctx context.Context, userID, id string) (bool, error) {
 		return false, fmt.Errorf("habit.Archive: %w", err)
 	}
 	return tag.RowsAffected() > 0, nil
+}
+
+// UpsertCheckIn writes one dated entry. The ON CONFLICT clause rides the unique
+// index on (habit_id, check_in_date), which is what makes a repeated check-in
+// idempotent at the database rather than through a read-then-write that two
+// concurrent taps could both lose.
+//
+// target_at_checkin and satisfied are re-stamped on conflict: they describe the
+// judgement made at *this* write, and the caller has already computed them from
+// the habit's current target.
+func (r *pgRepo) UpsertCheckIn(ctx context.Context, c CheckIn) (CheckIn, error) {
+	var out CheckIn
+	err := r.db.QueryRow(ctx,
+		`INSERT INTO habit_check_ins
+			(id, habit_id, user_id, check_in_date, value, target_at_checkin, satisfied)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		 ON CONFLICT (habit_id, check_in_date) DO UPDATE
+		    SET value = EXCLUDED.value,
+		        target_at_checkin = EXCLUDED.target_at_checkin,
+		        satisfied = EXCLUDED.satisfied,
+		        updated_at = NOW()
+		 RETURNING id, habit_id, user_id, check_in_date, value, target_at_checkin,
+		           satisfied, created_at, updated_at`,
+		c.ID, c.HabitID, c.UserID, c.Date, c.Value, c.TargetAt, c.Satisfied,
+	).Scan(&out.ID, &out.HabitID, &out.UserID, &out.Date, &out.Value, &out.TargetAt,
+		&out.Satisfied, &out.CreatedAt, &out.UpdatedAt)
+	if err != nil {
+		return CheckIn{}, fmt.Errorf("habit.UpsertCheckIn: %w", err)
+	}
+	return out, nil
+}
+
+func (r *pgRepo) DeleteCheckIn(ctx context.Context, userID, habitID string, date time.Time) (bool, error) {
+	tag, err := r.db.Exec(ctx,
+		`DELETE FROM habit_check_ins
+		  WHERE habit_id = $1 AND user_id = $2 AND check_in_date = $3`,
+		habitID, userID, date,
+	)
+	if err != nil {
+		return false, fmt.Errorf("habit.DeleteCheckIn: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// UserTimezone reads the caller's IANA zone. COALESCE guards a NULL column; the
+// service separately falls back to UTC when the stored value no longer resolves,
+// so a tzdata change can never lock a user out of their own habit.
+func (r *pgRepo) UserTimezone(ctx context.Context, userID string) (string, error) {
+	var tz string
+	err := r.db.QueryRow(ctx,
+		`SELECT COALESCE(timezone, 'UTC') FROM users WHERE id = $1 AND deleted_at IS NULL`,
+		userID,
+	).Scan(&tz)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "UTC", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("habit.UserTimezone: %w", err)
+	}
+	return tz, nil
 }
 
 // CountActive backs the free-plan limit. Archived rows are excluded, which is

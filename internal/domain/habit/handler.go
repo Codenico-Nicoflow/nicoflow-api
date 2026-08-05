@@ -140,6 +140,83 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// CheckIn godoc
+// @Summary      Check in to a habit
+// @Description  Records one dated entry. Omit date to check in for today — the server resolves it from the user's timezone and never accepts a client-supplied "today". Omit value to use the habit's target. Idempotent per (habit, date): a repeat call updates the value. A past date is a backfill and must fall inside the window (7 days for daily/weekdays habits, the current and previous week for weekly quota); future dates are refused.
+// @Tags         habits
+// @Accept       json
+// @Produce      json
+// @Param        id       path      string          true   "Habit ID"
+// @Param        request  body      CheckInRequest  false  "Optional date and value"
+// @Security     BearerAuth
+// @Success      200  {object}  HabitEnvelope  "The habit"
+// @Failure      404  {object}  ErrorEnvelope  "HABIT_NOT_FOUND"
+// @Failure      422  {object}  ErrorEnvelope  "INVALID_INPUT (future date, outside the backfill window, negative value, or archived habit)"
+// @Router       /habits/{id}/check-in [post]
+func (h *Handler) CheckIn(w http.ResponseWriter, r *http.Request) {
+	var req CheckInRequest
+	if err := decodeOptionalBody(w, r, &req); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	view, err := h.svc.CheckIn(r.Context(), mw.UserIDFromCtx(r.Context()), chi.URLParam(r, "id"), req)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, view)
+}
+
+// UndoCheckIn godoc
+// @Summary      Undo a habit check-in
+// @Description  Removes one dated entry, reverting the day to not-done. Omit date to undo today. Idempotent: undoing a date with no entry succeeds, because the day is already not done.
+// @Tags         habits
+// @Accept       json
+// @Produce      json
+// @Param        id       path      string              true   "Habit ID"
+// @Param        request  body      UndoCheckInRequest  false  "Optional date"
+// @Security     BearerAuth
+// @Success      200  {object}  HabitEnvelope  "The habit"
+// @Failure      404  {object}  ErrorEnvelope  "HABIT_NOT_FOUND"
+// @Failure      422  {object}  ErrorEnvelope  "INVALID_INPUT (future date, outside the backfill window, or archived habit)"
+// @Router       /habits/{id}/check-in [delete]
+func (h *Handler) UndoCheckIn(w http.ResponseWriter, r *http.Request) {
+	var req UndoCheckInRequest
+	if err := decodeOptionalBody(w, r, &req); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	view, err := h.svc.UndoCheckIn(r.Context(), mw.UserIDFromCtx(r.Context()), chi.URLParam(r, "id"), req)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, view)
+}
+
+// decodeOptionalBody decodes a body that may legitimately be absent. Checking in
+// with no body is the common case ("I did it today"), and a DELETE carrying no
+// body is normal for many clients, so an empty read is success rather than a
+// malformed-JSON error.
+func decodeOptionalBody[T CheckInRequest | UndoCheckInRequest](w http.ResponseWriter, r *http.Request, dst *T) error {
+	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBytes)
+
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "invalid request body")
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil
+	}
+
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "invalid request body")
+	}
+	return nil
+}
+
 // polarityProbe reads only the field the update body deliberately lacks. It
 // exists so an attempted polarity change reports *why* it was refused instead of
 // the generic "unknown field" DisallowUnknownFields would produce — the client

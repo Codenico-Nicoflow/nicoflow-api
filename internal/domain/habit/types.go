@@ -61,6 +61,22 @@ const (
 	FreePlanHabitLimit = 3
 )
 
+// Backfill windows. The cap is load-bearing rather than cosmetic: unbounded
+// backfill makes a streak meaningless, because a user could fabricate a
+// 365-day run in one sitting. Forgiving about *logging*, strict about *doing*.
+const (
+	// BackfillDays is how far back a day-scheduled habit may be corrected.
+	BackfillDays = 7
+
+	// BackfillWeeks is the quota-habit equivalent: the current week and the one
+	// before it. A closed quota week locks.
+	BackfillWeeks = 1
+)
+
+// DateLayout is the wire format for a check-in date. Dates are calendar days in
+// the user's zone, never instants.
+const DateLayout = "2006-01-02"
+
 // Habit is the internal domain model.
 //
 // ByWeekday is populated only for ScheduleWeekdays and TimesPerWeek only for
@@ -161,6 +177,49 @@ type UpdateHabitRequest struct {
 	Archived *bool `json:"archived"`
 }
 
+// CheckIn is one dated record of doing (or not doing) a habit.
+//
+// TargetAtCheckIn and Satisfied are frozen at write time. They exist so that
+// editing a habit can never rewrite history — raising a target from 20 to 30
+// minutes must not retroactively fail forty completed days — and so the streak
+// query counts rows instead of re-evaluating every past day.
+type CheckIn struct {
+	ID        string
+	HabitID   string
+	UserID    string
+	Date      time.Time
+	Value     int
+	TargetAt  int
+	Satisfied bool
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// CheckInRequest is the body for POST /habits/{id}/check-in.
+//
+// Date is optional and, when present, is a *backfill*: the client corrects a
+// past day it forgot to log. It can never name today — the server resolves that
+// from users.timezone, because a client-supplied "today" is trivially spoofed to
+// farm streaks and is wrong whenever a device clock drifts or a user travels.
+//
+// Value is optional and defaults to the habit's target, so the common case
+// ("I did it") is an empty body.
+type CheckInRequest struct {
+	Date  *string `json:"date"`
+	Value *int    `json:"value"`
+}
+
+// UndoCheckInRequest is the body for DELETE /habits/{id}/check-in. Date is
+// optional and defaults to the user's today, mirroring CheckInRequest.
+type UndoCheckInRequest struct {
+	Date *string `json:"date"`
+}
+
+// Clock supplies the current instant. Injected so tests can pin "now" and prove
+// the local-date rules without depending on the machine's zone — the UTC answer
+// is right in a UTC container and wrong for a real user in Auckland.
+type Clock func() time.Time
+
 // Broadcaster receives a domain Event for real-time fan-out. Fire-and-forget:
 // implementations must never block or fail the mutation. A nil Broadcaster is a
 // valid no-op seam.
@@ -189,6 +248,16 @@ type Service interface {
 	Create(ctx context.Context, userID, plan string, req CreateHabitRequest) (HabitView, error)
 	Update(ctx context.Context, userID, plan, id string, req UpdateHabitRequest) (HabitView, error)
 	Delete(ctx context.Context, userID, id string) error
+
+	// CheckIn records (or corrects) one dated entry and returns the habit.
+	// Idempotent on (habit, date): a second call updates the value rather than
+	// erroring, so a double-tap is not a duplicate row.
+	CheckIn(ctx context.Context, userID, id string, req CheckInRequest) (HabitView, error)
+
+	// UndoCheckIn removes one dated entry. Idempotent: undoing a date with no
+	// entry succeeds, because the caller's intent — "this day is not done" —
+	// is already true.
+	UndoCheckIn(ctx context.Context, userID, id string, req UndoCheckInRequest) (HabitView, error)
 }
 
 // UpdateParams is one habit edit, already validated and merged by the service.
@@ -245,4 +314,19 @@ type Repository interface {
 	// CountActive returns the user's active (non-archived) habit count, which is
 	// what the free-plan limit is measured against.
 	CountActive(ctx context.Context, userID string) (int, error)
+
+	// UpsertCheckIn writes one dated entry, replacing any existing entry for the
+	// same (habit, date). The unique index on that pair makes the upsert the
+	// idempotency guarantee rather than a read-then-write race.
+	UpsertCheckIn(ctx context.Context, c CheckIn) (CheckIn, error)
+
+	// DeleteCheckIn removes one dated entry scoped to the user. ok=false when no
+	// row matched, which the service treats as success — the day is already not
+	// done.
+	DeleteCheckIn(ctx context.Context, userID, habitID string, date time.Time) (bool, error)
+
+	// UserTimezone returns the user's IANA zone, defaulting to UTC when unset.
+	// Lives on the habit repository rather than reaching into the auth domain:
+	// one column read is not worth a cross-domain dependency.
+	UserTimezone(ctx context.Context, userID string) (string, error)
 }

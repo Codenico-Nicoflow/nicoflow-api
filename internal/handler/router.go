@@ -216,6 +216,8 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		r.Get("/habits/{id}", h.Habit.Get)
 		r.Patch("/habits/{id}", h.Habit.Update)
 		r.Delete("/habits/{id}", h.Habit.Delete)
+		r.Post("/habits/{id}/check-in", h.Habit.CheckIn)
+		r.Delete("/habits/{id}/check-in", h.Habit.UndoCheckIn)
 
 		// Recurrence rules (E-050). Creation is nested under the project that owns
 		// the series; every other verb is flat on the rule id.
