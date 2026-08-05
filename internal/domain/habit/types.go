@@ -298,6 +298,12 @@ type Service interface {
 	Update(ctx context.Context, userID, plan, id string, req UpdateHabitRequest) (HabitView, error)
 	Delete(ctx context.Context, userID, id string) error
 
+	// Today returns the habits due right now, feeding the Today-page strip.
+	// A separate call rather than an extension of the task time-spread: welding
+	// the task service to the habit service would undo the domain separation
+	// this epic is built on, and the client fetches both in parallel anyway.
+	Today(ctx context.Context, userID string) ([]HabitView, error)
+
 	// CheckIn records (or corrects) one dated entry and returns the habit.
 	// Idempotent on (habit, date): a second call updates the value rather than
 	// erroring, so a double-tap is not a duplicate row.

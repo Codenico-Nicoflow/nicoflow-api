@@ -7,6 +7,7 @@ import (
 
 	"github.com/nicoflow/nicoflow-api/internal/domain/area"
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
+	"github.com/nicoflow/nicoflow-api/internal/domain/habit"
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
 	"github.com/nicoflow/nicoflow-api/internal/domain/task"
@@ -111,6 +112,18 @@ func TestAdapters_MapDomainTypeToWireType(t *testing.T) {
 		{"bucket-emitted task.created routes to the task wire event", func() {
 			NewBucketBroadcaster(hub).Broadcast("u1", bucket.Event{Type: bucket.EventTaskCreated})
 		}, EventTaskCreated},
+		{"habit created", func() {
+			NewHabitBroadcaster(hub).Broadcast("u1", habit.Event{Type: habit.EventCreated})
+		}, EventHabitCreated},
+		{"habit updated", func() {
+			NewHabitBroadcaster(hub).Broadcast("u1", habit.Event{Type: habit.EventUpdated})
+		}, EventHabitUpdated},
+		{"habit deleted", func() {
+			NewHabitBroadcaster(hub).Broadcast("u1", habit.Event{Type: habit.EventDeleted})
+		}, EventHabitDeleted},
+		{"habit checked in", func() {
+			NewHabitBroadcaster(hub).Broadcast("u1", habit.Event{Type: habit.EventCheckedIn})
+		}, EventHabitCheckedIn},
 	}
 
 	for _, tt := range tests {

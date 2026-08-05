@@ -1053,6 +1053,137 @@ func TestCheckIn_ReturnsTheRecomputedStreak(t *testing.T) {
 	}
 }
 
+// ── Today feed ───────────────────────────────────────────────────────────────
+
+func TestToday_FiltersByScheduleAndCompletion(t *testing.T) {
+	// A Wednesday. The Mon/Wed/Fri habit is due; a Tue/Thu one would not be.
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	today := date(2026, time.August, 5)
+	archived := now
+
+	habits := []Habit{
+		{ID: "daily", ScheduleKind: ScheduleDaily, Polarity: PolarityBuild, TargetValue: 1},
+		{ID: "onSchedule", ScheduleKind: ScheduleWeekdays, ByWeekday: []int16{1, 3, 5}, Polarity: PolarityBuild, TargetValue: 1},
+		{ID: "offSchedule", ScheduleKind: ScheduleWeekdays, ByWeekday: []int16{2, 4}, Polarity: PolarityBuild, TargetValue: 1},
+		{ID: "alreadyDone", ScheduleKind: ScheduleDaily, Polarity: PolarityBuild, TargetValue: 1},
+		{ID: "archived", ScheduleKind: ScheduleDaily, Polarity: PolarityBuild, TargetValue: 1, ArchivedAt: &archived},
+	}
+
+	repo := &mockRepo{
+		list: func(_ context.Context, _ string, includeArchived bool) ([]Habit, error) {
+			if includeArchived {
+				return habits, nil
+			}
+			return habits[:4], nil
+		},
+		listCheckIns: func(context.Context, string, []string, time.Time) (map[string][]CheckIn, error) {
+			return map[string][]CheckIn{"alreadyDone": {ci(today, 1, true)}}, nil
+		},
+	}
+
+	views, err := pinnedAt(repo, now).Today(context.Background(), "u1")
+	if err != nil {
+		t.Fatalf("Today() error = %v, want nil", err)
+	}
+
+	got := map[string]bool{}
+	for _, v := range views {
+		got[v.ID] = true
+	}
+	if !got["daily"] || !got["onSchedule"] {
+		t.Errorf("feed = %v, want the daily and on-schedule habits present", got)
+	}
+	if got["offSchedule"] {
+		t.Error("an off-schedule habit appeared in the feed, want it excluded")
+	}
+	if got["alreadyDone"] {
+		t.Error("a completed habit appeared in the feed, want it excluded")
+	}
+	if got["archived"] {
+		t.Error("an archived habit appeared in the feed, want it excluded")
+	}
+}
+
+// A quota habit nags every day until the week is met, then goes quiet rather
+// than asking for a fourth session.
+func TestToday_QuotaHabitLeavesTheFeedWhenMet(t *testing.T) {
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	week := date(2026, time.August, 3)
+
+	newRepo := func(done int) *mockRepo {
+		entries := make([]CheckIn, 0, done)
+		for i := range done {
+			entries = append(entries, ci(week.AddDate(0, 0, i), 1, true))
+		}
+		return &mockRepo{
+			list: func(context.Context, string, bool) ([]Habit, error) {
+				return []Habit{{ID: "h1", ScheduleKind: ScheduleWeeklyQuota,
+					TimesPerWeek: i16Ptr(3), Polarity: PolarityBuild, TargetValue: 1}}, nil
+			},
+			listCheckIns: func(context.Context, string, []string, time.Time) (map[string][]CheckIn, error) {
+				return map[string][]CheckIn{"h1": entries}, nil
+			},
+		}
+	}
+
+	partial, err := pinnedAt(newRepo(2), now).Today(context.Background(), "u1")
+	if err != nil {
+		t.Fatalf("Today() error = %v", err)
+	}
+	if len(partial) != 1 {
+		t.Errorf("feed has %d habits at 2 of 3, want 1", len(partial))
+	}
+
+	met, err := pinnedAt(newRepo(3), now).Today(context.Background(), "u1")
+	if err != nil {
+		t.Fatalf("Today() error = %v", err)
+	}
+	if len(met) != 0 {
+		t.Errorf("feed has %d habits at 3 of 3, want none", len(met))
+	}
+}
+
+func TestToday_EmptyIsNeverNull(t *testing.T) {
+	views, err := pinnedAt(&mockRepo{}, time.Now()).Today(context.Background(), "u1")
+	if err != nil {
+		t.Fatalf("Today() error = %v, want nil", err)
+	}
+	if views == nil {
+		t.Error("views is nil, want an empty slice")
+	}
+}
+
+// ── Subject catalog ──────────────────────────────────────────────────────────
+
+func TestSubjectCatalog(t *testing.T) {
+	if len(SubjectCatalog) < 20 {
+		t.Errorf("catalog has %d entries, want at least 20", len(SubjectCatalog))
+	}
+
+	seen := map[string]bool{}
+	for _, s := range SubjectCatalog {
+		if s.Slug == "" || s.LabelKey == "" {
+			t.Errorf("entry %+v has an empty field", s)
+		}
+		if seen[s.Slug] {
+			t.Errorf("duplicate slug %q", s.Slug)
+		}
+		seen[s.Slug] = true
+	}
+
+	// The default subject must exist in the catalog, or a habit created without
+	// one would render as an unknown slug.
+	if !seen[DefaultSubject] {
+		t.Errorf("catalog is missing the default subject %q", DefaultSubject)
+	}
+	// The quit-habit examples the feature was designed around.
+	for _, want := range []string{"reading", "quit_drinking", "quit_smoking"} {
+		if !seen[want] {
+			t.Errorf("catalog is missing %q", want)
+		}
+	}
+}
+
 // A nil broadcaster is a valid no-op seam, not a panic.
 func TestNilBroadcasterIsSafe(t *testing.T) {
 	if _, err := NewService(&mockRepo{}, nil).Create(context.Background(), "u1", "pro",

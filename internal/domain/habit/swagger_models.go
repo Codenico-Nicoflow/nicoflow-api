@@ -27,6 +27,12 @@ type HabitDetailEnvelope struct {
 	Error interface{}     `json:"error"`
 }
 
+// SubjectListEnvelope wraps the subject catalog.
+type SubjectListEnvelope struct {
+	Data  []SubjectView `json:"data"`
+	Error interface{}   `json:"error"`
+}
+
 // HabitListEnvelope wraps the caller's habits.
 type HabitListEnvelope struct {
 	Data  []HabitView `json:"data"`

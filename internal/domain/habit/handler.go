@@ -140,6 +140,35 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// Today godoc
+// @Summary      Habits due today
+// @Description  Returns the habits still owed right now, for the Today-page strip. A weekdays habit appears only on its own days; a weekly-quota habit appears every day until its week's quota is met, then goes quiet. Archived and already-completed habits are excluded.
+// @Tags         habits
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  HabitListEnvelope  "Habits due today"
+// @Router       /habits/today [get]
+func (h *Handler) Today(w http.ResponseWriter, r *http.Request) {
+	views, err := h.svc.Today(r.Context(), mw.UserIDFromCtx(r.Context()))
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, views)
+}
+
+// Subjects godoc
+// @Summary      Habit subject catalog
+// @Description  The canonical subject list. Subjects are cosmetic — they drive the card icon and never scheduling or targets. labelKey is an i18n key, not a display string. A client meeting an unknown slug renders a fallback icon rather than failing, so the catalog can gain entries without a client release.
+// @Tags         habits
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  SubjectListEnvelope  "Subjects"
+// @Router       /habits/subjects [get]
+func (h *Handler) Subjects(w http.ResponseWriter, r *http.Request) {
+	respond.JSON(w, http.StatusOK, SubjectCatalog)
+}
+
 // CheckIn godoc
 // @Summary      Check in to a habit
 // @Description  Records one dated entry. Omit date to check in for today — the server resolves it from the user's timezone and never accepts a client-supplied "today". Omit value to use the habit's target. Idempotent per (habit, date): a repeat call updates the value. A past date is a backfill and must fall inside the window (7 days for daily/weekdays habits, the current and previous week for weekly quota); future dates are refused.

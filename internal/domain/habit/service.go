@@ -54,7 +54,7 @@ func (s *service) List(ctx context.Context, userID string, includeArchived bool)
 		return out, nil
 	}
 
-	today, err := s.today(ctx, userID, hs[0].DayCutoffHour)
+	today, err := s.localToday(ctx, userID, hs[0].DayCutoffHour)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +81,7 @@ func (s *service) Get(ctx context.Context, userID, id string) (HabitDetailView, 
 		return HabitDetailView{}, err
 	}
 
-	today, err := s.today(ctx, userID, h.DayCutoffHour)
+	today, err := s.localToday(ctx, userID, h.DayCutoffHour)
 	if err != nil {
 		return HabitDetailView{}, err
 	}
@@ -114,13 +114,34 @@ func enrich(h Habit, checkIns []CheckIn, today time.Time) HabitView {
 	return v
 }
 
-// today resolves the caller's current local date.
-func (s *service) today(ctx context.Context, userID string, cutoffHour int16) (time.Time, error) {
+// localToday resolves the caller's current local date.
+func (s *service) localToday(ctx context.Context, userID string, cutoffHour int16) (time.Time, error) {
 	tz, err := s.repo.UserTimezone(ctx, userID)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("habit.today timezone: %w", err)
+		return time.Time{}, fmt.Errorf("habit.localToday timezone: %w", err)
 	}
 	return localDate(s.now(), loadLocation(tz), int(cutoffHour)), nil
+}
+
+// Today returns the habits still owed right now.
+//
+// "Due" is a live question, not a stored flag: a weekdays habit is due only on
+// its own days, and a quota habit is due every day until its week's quota is
+// met, after which it goes quiet rather than asking for a fourth session.
+// Archived habits never appear.
+func (s *service) Today(ctx context.Context, userID string) ([]HabitView, error) {
+	views, err := s.List(ctx, userID, false)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]HabitView, 0, len(views))
+	for _, v := range views {
+		if v.DueToday && !v.CompletedToday {
+			out = append(out, v)
+		}
+	}
+	return out, nil
 }
 
 func (s *service) Create(ctx context.Context, userID, plan string, req CreateHabitRequest) (HabitView, error) {

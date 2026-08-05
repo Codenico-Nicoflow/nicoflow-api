@@ -48,6 +48,16 @@ const (
 	EventNoteCreated EventType = "note.created"
 	EventNoteUpdated EventType = "note.updated"
 	EventNoteDeleted EventType = "note.deleted"
+
+	// Habit events (E-055) carry the full HabitView, streak counters included.
+	// habit.checked_in is the reason the payload is full rather than an id: the
+	// streak is recomputed by the write, and a second tab has to show the new
+	// number without a follow-up fetch. deleted carries { id }. FREE on every
+	// plan.
+	EventHabitCreated   EventType = "habit.created"
+	EventHabitUpdated   EventType = "habit.updated"
+	EventHabitDeleted   EventType = "habit.deleted"
+	EventHabitCheckedIn EventType = "habit.checked_in"
 )
 
 // Event is the envelope for every server-pushed WebSocket message.

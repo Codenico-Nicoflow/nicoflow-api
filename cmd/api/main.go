@@ -227,8 +227,7 @@ func main() {
 
 	// Habits (E-055 / NIC-1923). Own domain rather than a recurrence_rules
 	// flavour: habits belong to no project and never materialize task rows.
-	// The broadcaster arrives with the WS events story (NIC-1926); nil until then.
-	habitSvc := habit.NewService(habit.NewRepository(pool), nil)
+	habitSvc := habit.NewService(habit.NewRepository(pool), ws.NewHabitBroadcaster(wsHub))
 
 	// Google Calendar connection (E-052 / NIC-1844). Any credential or the
 	// encryption key missing ⇒ every endpoint returns a typed 503 and nothing

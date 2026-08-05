@@ -10,6 +10,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/attachment"
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
 	"github.com/nicoflow/nicoflow-api/internal/domain/focus"
+	"github.com/nicoflow/nicoflow-api/internal/domain/habit"
 	"github.com/nicoflow/nicoflow-api/internal/domain/note"
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
@@ -55,6 +56,10 @@ var wireTypes = map[string]EventType{
 	note.EventCreated:         EventNoteCreated,
 	note.EventUpdated:         EventNoteUpdated,
 	note.EventDeleted:         EventNoteDeleted,
+	habit.EventCreated:        EventHabitCreated,
+	habit.EventUpdated:        EventHabitUpdated,
+	habit.EventDeleted:        EventHabitDeleted,
+	habit.EventCheckedIn:      EventHabitCheckedIn,
 	"notification.created":    EventNotificationCreated,
 }
 
@@ -198,6 +203,20 @@ func NewNoteBroadcaster(hub *Hub) *NoteBroadcaster {
 }
 
 func (b *NoteBroadcaster) Broadcast(userID string, ev note.Event) {
+	broadcast(b.hub, b.now, userID, ev.Type, ev.Payload)
+}
+
+// HabitBroadcaster adapts the Hub to habit.Broadcaster.
+type HabitBroadcaster struct {
+	hub *Hub
+	now func() time.Time
+}
+
+func NewHabitBroadcaster(hub *Hub) *HabitBroadcaster {
+	return &HabitBroadcaster{hub: hub, now: time.Now}
+}
+
+func (b *HabitBroadcaster) Broadcast(userID string, ev habit.Event) {
 	broadcast(b.hub, b.now, userID, ev.Type, ev.Payload)
 }
 
