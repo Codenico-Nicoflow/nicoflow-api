@@ -54,8 +54,13 @@ type stats struct {
 	longest   int
 	dueToday  bool
 	doneToday bool
-	todayVal  int
-	progress  *PeriodProgress
+	// loggedToday is whether an entry EXISTS for today, which is a different
+	// question from doneToday (is the period satisfied). For a quota habit at
+	// 1 of 3 the week is unmet but today is logged, and a ring that conflates
+	// the two re-checks-in instead of undoing.
+	loggedToday bool
+	todayVal    int
+	progress    *PeriodProgress
 }
 
 // derive computes a habit's counters from its check-ins as of today.
@@ -91,7 +96,7 @@ func deriveDaily(h Habit, checkIns []CheckIn, today time.Time) stats {
 	s := stats{dueToday: IsScheduledOn(h, today)}
 
 	if c, ok := idx[today.Format(DateLayout)]; ok {
-		s.doneToday, s.todayVal = c.Satisfied, c.Value
+		s.doneToday, s.todayVal, s.loggedToday = c.Satisfied, c.Value, true
 	}
 
 	// The current run: walk back from today, skipping unscheduled days, and stop
@@ -169,7 +174,7 @@ func deriveQuota(h Habit, checkIns []CheckIn, today time.Time) stats {
 	}
 
 	if c, ok := byDate(checkIns)[today.Format(DateLayout)]; ok {
-		s.todayVal = c.Value
+		s.todayVal, s.loggedToday = c.Value, true
 	}
 
 	// The current run: this week counts only once its quota is met, but an

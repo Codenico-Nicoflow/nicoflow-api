@@ -250,6 +250,48 @@ func TestDerive_QuotaDueUntilTheWeekIsMet(t *testing.T) {
 
 // Day habits have no accumulating period; a null progress must not be read as
 // 0/0 by the client.
+// The distinction the quota-undo bug turned on: a logged day and a satisfied
+// PERIOD are different questions, and only the first should decide whether a
+// ring offers to undo.
+func TestDerive_LoggedTodayIsNotCompletedToday(t *testing.T) {
+	today := date(2026, time.August, 5)
+	week := date(2026, time.August, 3)
+
+	// One check-in this week against a target of three: today is logged, the
+	// week is not met.
+	got := derive(quotaH(3), []CheckIn{ci(week.AddDate(0, 0, 2), 1, true)}, today)
+
+	if !got.loggedToday {
+		t.Error("loggedToday = false, want true — today has an entry")
+	}
+	if got.doneToday {
+		t.Error("doneToday = true at 1 of 3, want false — the week is not met")
+	}
+}
+
+func TestDerive_LoggedTodayFalseWithoutAnEntry(t *testing.T) {
+	today := date(2026, time.August, 5)
+
+	if got := derive(dailyH(), nil, today); got.loggedToday {
+		t.Error("loggedToday = true with no check-ins, want false")
+	}
+}
+
+// An unsatisfied entry is still an entry: a quit habit that logged a slip has
+// something to undo.
+func TestDerive_LoggedTodayTrueForAnUnsatisfiedEntry(t *testing.T) {
+	today := date(2026, time.August, 5)
+
+	got := derive(dailyH(), []CheckIn{ci(today, 0, false)}, today)
+
+	if !got.loggedToday {
+		t.Error("loggedToday = false for an unsatisfied entry, want true")
+	}
+	if got.doneToday {
+		t.Error("doneToday = true for an unsatisfied entry, want false")
+	}
+}
+
 func TestDerive_DayHabitsHaveNoPeriodProgress(t *testing.T) {
 	today := date(2026, time.August, 5)
 

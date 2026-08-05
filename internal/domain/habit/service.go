@@ -103,6 +103,7 @@ func enrich(h Habit, checkIns []CheckIn, today time.Time, ribbonDays int) HabitV
 
 	v.CurrentStreak, v.LongestStreak = st.current, st.longest
 	v.DueToday, v.CompletedToday, v.TodayValue = st.dueToday, st.doneToday, st.todayVal
+	v.LoggedToday = st.loggedToday
 	v.PeriodProgress = st.progress
 
 	// The rows behind these counters were already walked to derive them, so
@@ -262,6 +263,23 @@ func (s *service) Update(ctx context.Context, userID, plan, id string, req Updat
 
 func (s *service) Delete(ctx context.Context, userID, id string) error {
 	ok, err := s.repo.Archive(ctx, userID, id)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return notFound()
+	}
+	s.emit(userID, Event{Type: EventDeleted, Payload: DeletedPayload{ID: id}})
+	return nil
+}
+
+// DeletePermanently destroys a habit and its whole check-in history.
+//
+// It emits the same habit.deleted event as archiving: a client's job either way
+// is to drop the row, and the two cases differ in what happened on the server,
+// not in what the client must do about it.
+func (s *service) DeletePermanently(ctx context.Context, userID, id string) error {
+	ok, err := s.repo.Delete(ctx, userID, id)
 	if err != nil {
 		return err
 	}
