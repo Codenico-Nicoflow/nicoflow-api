@@ -1184,6 +1184,152 @@ func TestSubjectCatalog(t *testing.T) {
 	}
 }
 
+// ── Heatmap windows ──────────────────────────────────────────────────────────
+
+// The board draws one ribbon per card, so the list has to carry cells. It costs
+// nothing: List already loads HistoryWindow days per habit to derive the
+// streaks, and before this the rows were walked once and discarded.
+func TestList_CarriesTheNarrowRibbonWindow(t *testing.T) {
+	today := date(2026, time.August, 5)
+	repo := &mockRepo{
+		list: func(context.Context, string, bool) ([]Habit, error) {
+			return []Habit{{ID: "h1", Polarity: PolarityBuild, TargetValue: 1, ScheduleKind: ScheduleDaily}}, nil
+		},
+		listCheckIns: func(context.Context, string, []string, time.Time) (map[string][]CheckIn, error) {
+			return map[string][]CheckIn{"h1": run(today, 3)}, nil
+		},
+	}
+
+	views, err := pinnedAt(repo, time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)).
+		List(context.Background(), "u1", false)
+	if err != nil {
+		t.Fatalf("List() error = %v, want nil", err)
+	}
+
+	if len(views[0].Cells) != ListRibbonDays {
+		t.Errorf("list cells = %d, want %d", len(views[0].Cells), ListRibbonDays)
+	}
+	if last := views[0].Cells[len(views[0].Cells)-1]; last.Date != "2026-08-05" || !last.Satisfied {
+		t.Errorf("last cell = %+v, want today satisfied", last)
+	}
+}
+
+// The scalar read is the detail page's window and stays wide, so the two reads
+// differ only in how much history they carry.
+func TestGet_CarriesTheWideRibbonWindow(t *testing.T) {
+	today := date(2026, time.August, 5)
+	repo := &mockRepo{
+		getByID: func(context.Context, string, string) (Habit, error) {
+			return Habit{ID: "h1", UserID: "u1", Polarity: PolarityBuild, TargetValue: 1,
+				ScheduleKind: ScheduleDaily}, nil
+		},
+		listCheckIns: func(context.Context, string, []string, time.Time) (map[string][]CheckIn, error) {
+			return map[string][]CheckIn{"h1": run(today, 3)}, nil
+		},
+	}
+
+	got, err := pinnedAt(repo, time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)).
+		Get(context.Background(), "u1", "h1")
+	if err != nil {
+		t.Fatalf("Get() error = %v, want nil", err)
+	}
+
+	if len(got.Cells) != RibbonDays {
+		t.Errorf("scalar cells = %d, want %d", len(got.Cells), RibbonDays)
+	}
+	if RibbonDays <= ListRibbonDays {
+		t.Error("the scalar window is not wider than the list window")
+	}
+}
+
+// A check-in usually happens on a detail page, so shipping the narrow window
+// back would shrink the ribbon under the user's finger the moment they tapped.
+func TestCheckIn_ResponseCarriesTheWideWindow(t *testing.T) {
+	today := date(2026, time.August, 5)
+	repo := repoFor(dailyHabit(), "UTC")
+	repo.listCheckIns = func(context.Context, string, []string, time.Time) (map[string][]CheckIn, error) {
+		return map[string][]CheckIn{"h1": run(today, 5)}, nil
+	}
+
+	view, err := pinnedAt(repo, time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)).
+		CheckIn(context.Background(), "u1", "h1", CheckInRequest{})
+	if err != nil {
+		t.Fatalf("CheckIn() error = %v, want nil", err)
+	}
+
+	if len(view.Cells) != RibbonDays {
+		t.Errorf("check-in cells = %d, want the scalar window %d", len(view.Cells), RibbonDays)
+	}
+}
+
+// Every habit in a list read gets its own window, keyed correctly — a shared or
+// mis-keyed slice would draw one habit's history on another's card.
+func TestList_CellsArePerHabit(t *testing.T) {
+	today := date(2026, time.August, 5)
+	repo := &mockRepo{
+		list: func(context.Context, string, bool) ([]Habit, error) {
+			return []Habit{
+				{ID: "h1", Polarity: PolarityBuild, TargetValue: 1, ScheduleKind: ScheduleDaily},
+				{ID: "h2", Polarity: PolarityBuild, TargetValue: 1, ScheduleKind: ScheduleDaily},
+			}, nil
+		},
+		listCheckIns: func(context.Context, string, []string, time.Time) (map[string][]CheckIn, error) {
+			return map[string][]CheckIn{"h1": run(today, 3)}, nil
+		},
+	}
+
+	views, err := pinnedAt(repo, time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)).
+		List(context.Background(), "u1", false)
+	if err != nil {
+		t.Fatalf("List() error = %v, want nil", err)
+	}
+
+	satisfied := func(cells []CellView) int {
+		n := 0
+		for _, c := range cells {
+			if c.Satisfied {
+				n++
+			}
+		}
+		return n
+	}
+
+	if got := satisfied(views[0].Cells); got != 3 {
+		t.Errorf("h1 satisfied cells = %d, want 3", got)
+	}
+	if got := satisfied(views[1].Cells); got != 0 {
+		t.Errorf("h2 satisfied cells = %d, want 0 — it has no history", got)
+	}
+}
+
+// A quota habit's window is weeks, not days, at both widths.
+func TestList_QuotaHabitGetsWeekCells(t *testing.T) {
+	week := date(2026, time.August, 3)
+	repo := &mockRepo{
+		list: func(context.Context, string, bool) ([]Habit, error) {
+			return []Habit{{ID: "h1", Polarity: PolarityBuild, TargetValue: 1,
+				ScheduleKind: ScheduleWeeklyQuota, TimesPerWeek: i16Ptr(3)}}, nil
+		},
+		listCheckIns: func(context.Context, string, []string, time.Time) (map[string][]CheckIn, error) {
+			return map[string][]CheckIn{"h1": {ci(week, 1, true), ci(week.AddDate(0, 0, 1), 1, true)}}, nil
+		},
+	}
+
+	views, err := pinnedAt(repo, time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)).
+		List(context.Background(), "u1", false)
+	if err != nil {
+		t.Fatalf("List() error = %v, want nil", err)
+	}
+
+	if len(views[0].Cells) != ListRibbonDays/7 {
+		t.Errorf("quota cells = %d, want %d week cells", len(views[0].Cells), ListRibbonDays/7)
+	}
+	last := views[0].Cells[len(views[0].Cells)-1]
+	if last.Progress == nil || last.Progress.Current != 2 || last.Progress.Target != 3 {
+		t.Errorf("last week progress = %+v, want 2 of 3", last.Progress)
+	}
+}
+
 // A nil broadcaster is a valid no-op seam, not a panic.
 func TestNilBroadcasterIsSafe(t *testing.T) {
 	if _, err := NewService(&mockRepo{}, nil).Create(context.Background(), "u1", "pro",

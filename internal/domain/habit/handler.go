@@ -31,7 +31,7 @@ func NewHandler(svc Service) *Handler { return &Handler{svc: svc} }
 
 // List godoc
 // @Summary      List habits
-// @Description  Returns the caller's habits, newest first. Archived habits are excluded unless includeArchived=true. Free users may hold 3 active habits; a downgraded user keeps every habit visible and checkable, only creation is blocked.
+// @Description  Returns the caller's habits, newest first, each with a short heatmap window (14 cells) alongside its derived counters — enough for a board to draw a ribbon per card without a follow-up request. Archived habits are excluded unless includeArchived=true. Free users may hold 3 active habits; a downgraded user keeps every habit visible and checkable, only creation is blocked.
 // @Tags         habits
 // @Produce      json
 // @Param        includeArchived  query     boolean  false  "Include archived habits"

@@ -141,6 +141,15 @@ type HabitView struct {
 	// habits — the client must not read a missing value as 0/0.
 	PeriodProgress *PeriodProgress `json:"periodProgress"`
 
+	// Cells is the heatmap window. A list read carries ListRibbonDays of it and
+	// a scalar read RibbonDays — same field, different width, so a board and a
+	// detail page render the same component against the same shape.
+	//
+	// Optional rather than required: it is omitted wherever there is no window
+	// to show, and a client that predates it simply renders no ribbon instead of
+	// breaking. Same contract style as periodProgress.
+	Cells []CellView `json:"cells,omitempty"`
+
 	ArchivedAt *time.Time `json:"archivedAt"`
 	CreatedAt  time.Time  `json:"createdAt"`
 	UpdatedAt  time.Time  `json:"updatedAt"`
@@ -156,10 +165,12 @@ type PeriodProgress struct {
 // HabitDetailView adds the heatmap window to the scalar read. Cells are day
 // cells for day habits and week cells for quota habits — the granularity the
 // StreakUnit already announced.
-type HabitDetailView struct {
-	HabitView
-	Cells []CellView `json:"cells"`
-}
+// HabitDetailView is the scalar shape. It is HabitView with a wider Cells
+// window — an alias rather than a distinct struct, because once the list
+// carries cells too the only difference between the two reads is how much
+// history they include, and a second type would imply a difference that no
+// longer exists.
+type HabitDetailView = HabitView
 
 // CellView is one square in the history ribbon.
 //

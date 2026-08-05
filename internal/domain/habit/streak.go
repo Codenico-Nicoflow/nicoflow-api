@@ -26,6 +26,20 @@ const HistoryWindow = 400
 // months of week cells a quota habit renders in the same space.
 const RibbonDays = 84
 
+// ListRibbonDays is the heatmap window carried by a LIST read — narrower than
+// the scalar's, because a board renders one ribbon per habit and only needs
+// enough history to show a shape.
+//
+// Serving it costs nothing extra: the list already loads HistoryWindow days of
+// check-ins per habit to derive the streaks, and without this the rows are
+// walked once and discarded. This is the same data, kept rather than thrown
+// away — not a second query.
+//
+// 14 days on a phone, which is what ribbonWindowSize renders at its narrowest;
+// wider viewports show the same 14 with more room per cell rather than asking
+// the server for more.
+const ListRibbonDays = 14
+
 // streakUnitFor reports which noun a habit's streak counts in.
 func streakUnitFor(h Habit) string {
 	if h.ScheduleKind == ScheduleWeeklyQuota {
