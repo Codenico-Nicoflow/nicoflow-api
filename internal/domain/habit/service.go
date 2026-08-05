@@ -69,7 +69,7 @@ func (s *service) List(ctx context.Context, userID string, includeArchived bool)
 	}
 
 	for _, h := range hs {
-		out = append(out, enrich(h, history[h.ID], today))
+		out = append(out, enrich(h, history[h.ID], today, ListRibbonDays))
 	}
 	return out, nil
 }
@@ -91,21 +91,25 @@ func (s *service) Get(ctx context.Context, userID, id string) (HabitDetailView, 
 		return HabitDetailView{}, err
 	}
 
-	checkIns := history[h.ID]
-	return HabitDetailView{
-		HabitView: enrich(h, checkIns, today),
-		Cells:     buildCells(h, checkIns, today, RibbonDays),
-	}, nil
+	return enrich(h, history[h.ID], today, RibbonDays), nil
 }
 
-// enrich folds a habit's derived counters onto its wire shape.
-func enrich(h Habit, checkIns []CheckIn, today time.Time) HabitView {
+// enrich folds a habit's derived counters and its heatmap window onto the wire
+// shape. ribbonDays is how much history to render — narrow for a list read,
+// wide for a scalar one — and zero omits the window entirely.
+func enrich(h Habit, checkIns []CheckIn, today time.Time, ribbonDays int) HabitView {
 	v := toView(h)
 	st := derive(h, checkIns, today)
 
 	v.CurrentStreak, v.LongestStreak = st.current, st.longest
 	v.DueToday, v.CompletedToday, v.TodayValue = st.dueToday, st.doneToday, st.todayVal
 	v.PeriodProgress = st.progress
+
+	// The rows behind these counters were already walked to derive them, so
+	// building cells from the same slice adds no query and no scan.
+	if ribbonDays > 0 {
+		v.Cells = buildCells(h, checkIns, today, ribbonDays)
+	}
 
 	// An archived habit is history: it is never due, whatever its schedule says.
 	if h.ArchivedAt != nil {
@@ -335,13 +339,17 @@ func (s *service) UndoCheckIn(ctx context.Context, userID, id string, req UndoCh
 // rides it — carry the recomputed streak. A client that just tapped a habit
 // needs the new number without a follow-up fetch, and a second open tab gets it
 // from the event for the same reason.
+//
+// It carries the scalar window: a check-in usually happens on a detail page,
+// and sending the narrow list window would shrink the ribbon under the user's
+// finger the moment they tapped it.
 func (s *service) enrichedAfterWrite(ctx context.Context, userID string, h Habit, today time.Time) (HabitView, error) {
 	history, err := s.repo.ListCheckIns(ctx, userID, []string{h.ID}, today.AddDate(0, 0, -HistoryWindow))
 	if err != nil {
 		return HabitView{}, err
 	}
 
-	view := enrich(h, history[h.ID], today)
+	view := enrich(h, history[h.ID], today, RibbonDays)
 	s.emit(userID, Event{Type: EventCheckedIn, Payload: view})
 	return view, nil
 }
