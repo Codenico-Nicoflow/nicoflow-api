@@ -34,6 +34,7 @@ const (
 	ErrMessageNotFound        = "MESSAGE_NOT_FOUND"
 	ErrNotificationNotFound   = "NOTIFICATION_NOT_FOUND"
 	ErrRecurrenceRuleNotFound = "RECURRENCE_RULE_NOT_FOUND"
+	ErrHabitNotFound          = "HABIT_NOT_FOUND"
 	ErrConflict               = "CONFLICT"
 	ErrEmailAlreadyExists     = "EMAIL_ALREADY_EXISTS"
 	ErrUsernameAlreadyExists  = "USERNAME_ALREADY_EXISTS"

@@ -17,6 +17,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
 	"github.com/nicoflow/nicoflow-api/internal/domain/focus"
 	"github.com/nicoflow/nicoflow-api/internal/domain/googlecal"
+	"github.com/nicoflow/nicoflow-api/internal/domain/habit"
 	"github.com/nicoflow/nicoflow-api/internal/domain/note"
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
@@ -42,6 +43,7 @@ type Handlers struct {
 	Recurrence      *recurrence.Handler
 	Focus           *focus.Handler
 	Note            *note.Handler
+	Habit           *habit.Handler
 	Notification    *notification.Handler
 	GoogleCal       *googlecal.Handler
 	GoogleEvents    *googlecal.EventsHandler
@@ -208,6 +210,12 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		r.Get("/notes/{id}", h.Note.Get)
 		r.Patch("/notes/{id}", h.Note.Update)
 		r.Delete("/notes/{id}", h.Note.Delete)
+
+		r.Get("/habits", h.Habit.List)
+		r.Post("/habits", h.Habit.Create)
+		r.Get("/habits/{id}", h.Habit.Get)
+		r.Patch("/habits/{id}", h.Habit.Update)
+		r.Delete("/habits/{id}", h.Habit.Delete)
 
 		// Recurrence rules (E-050). Creation is nested under the project that owns
 		// the series; every other verb is flat on the rule id.
