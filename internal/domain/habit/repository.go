@@ -252,6 +252,23 @@ func (r *pgRepo) UserTimezone(ctx context.Context, userID string) (string, error
 	return tz, nil
 }
 
+// Delete removes a habit outright. Its check-ins go with it through the
+// ON DELETE CASCADE on habit_check_ins — the streak record is destroyed, which
+// is the difference between this and Archive and the reason the caller is
+// expected to confirm first.
+//
+// ok=false when no row matched: missing, or another user's.
+func (r *pgRepo) Delete(ctx context.Context, userID, id string) (bool, error) {
+	tag, err := r.db.Exec(ctx,
+		`DELETE FROM habits WHERE id = $1 AND user_id = $2`,
+		id, userID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("habit.Delete: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 // CountActive backs the free-plan limit. Archived rows are excluded, which is
 // what lets a user archive one habit to make room for another.
 func (r *pgRepo) CountActive(ctx context.Context, userID string) (int, error) {

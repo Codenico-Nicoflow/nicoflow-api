@@ -17,6 +17,7 @@ type mockRepo struct {
 	create        func(ctx context.Context, h Habit) (Habit, error)
 	update        func(ctx context.Context, p UpdateParams) (Habit, bool, error)
 	archive       func(ctx context.Context, userID, id string) (bool, error)
+	deleteHabit   func(ctx context.Context, userID, id string) (bool, error)
 	countActive   func(ctx context.Context, userID string) (int, error)
 	upsertCheckIn func(ctx context.Context, c CheckIn) (CheckIn, error)
 	deleteCheckIn func(ctx context.Context, userID, habitID string, date time.Time) (bool, error)
@@ -83,6 +84,13 @@ func (m *mockRepo) Update(ctx context.Context, p UpdateParams) (Habit, bool, err
 func (m *mockRepo) Archive(ctx context.Context, userID, id string) (bool, error) {
 	if m.archive != nil {
 		return m.archive(ctx, userID, id)
+	}
+	return true, nil
+}
+
+func (m *mockRepo) Delete(ctx context.Context, userID, id string) (bool, error) {
+	if m.deleteHabit != nil {
+		return m.deleteHabit(ctx, userID, id)
 	}
 	return true, nil
 }

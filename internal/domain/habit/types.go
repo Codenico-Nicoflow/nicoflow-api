@@ -135,7 +135,14 @@ type HabitView struct {
 
 	DueToday       bool `json:"dueToday"`
 	CompletedToday bool `json:"completedToday"`
-	TodayValue     int  `json:"todayValue"`
+
+	// LoggedToday is whether an entry exists for today — NOT whether the period
+	// is satisfied. The two diverge on a quota habit: at 1 of 3 the week is
+	// unmet (CompletedToday false) but today is logged, and a control that
+	// keys off CompletedToday would check in again rather than undo.
+	LoggedToday bool `json:"loggedToday"`
+
+	TodayValue int `json:"todayValue"`
 
 	// PeriodProgress is the quota habit's "2 of 3 this week". Null for day
 	// habits — the client must not read a missing value as 0/0.
@@ -307,7 +314,14 @@ type Service interface {
 	Get(ctx context.Context, userID, id string) (HabitDetailView, error)
 	Create(ctx context.Context, userID, plan string, req CreateHabitRequest) (HabitView, error)
 	Update(ctx context.Context, userID, plan, id string, req UpdateHabitRequest) (HabitView, error)
+	// Delete archives a habit: the row is retired, the history kept, the plan
+	// slot freed. Named for the HTTP verb it serves; DeletePermanently is the
+	// one that actually destroys anything.
 	Delete(ctx context.Context, userID, id string) error
+
+	// DeletePermanently removes a habit and its entire history. There is no
+	// undo and no export, so callers are expected to confirm first.
+	DeletePermanently(ctx context.Context, userID, id string) error
 
 	// Today returns the habits due right now, feeding the Today-page strip.
 	// A separate call rather than an extension of the task time-spread: welding
@@ -376,6 +390,10 @@ type Repository interface {
 	// matched. Archiving keeps the check-in history: it is the user's record of
 	// what they did, and it is what makes un-archiving meaningful.
 	Archive(ctx context.Context, userID, id string) (bool, error)
+
+	// Delete removes a habit and, by cascade, its whole check-in history.
+	// Irreversible — the counterpart to Archive, not a synonym for it.
+	Delete(ctx context.Context, userID, id string) (bool, error)
 
 	// CountActive returns the user's active (non-archived) habit count, which is
 	// what the free-plan limit is measured against.

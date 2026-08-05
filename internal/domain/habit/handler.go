@@ -123,17 +123,28 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 // Delete godoc
-// @Summary      Archive a habit
-// @Description  Soft-deletes a habit by archiving it. The check-in history is retained — it is the user's record of what they did — and archiving frees a plan slot. Cross-user access returns 404, never 403.
+// @Summary      Archive or delete a habit
+// @Description  Archives a habit by default: the row is retired, the check-in history is retained — it is the user's record of what they did — and a plan slot is freed. Pass permanent=true to delete it outright instead, which cascades to every check-in and cannot be undone. The default is the reversible one on purpose. Cross-user access returns 404, never 403.
 // @Tags         habits
 // @Produce      json
-// @Param        id   path      string  true  "Habit ID"
+// @Param        id         path      string   true   "Habit ID"
+// @Param        permanent  query     boolean  false  "Destroy the habit and its history instead of archiving it"
 // @Security     BearerAuth
-// @Success      204  "Archived"
+// @Success      204  "Archived, or deleted when permanent=true"
 // @Failure      404  {object}  ErrorEnvelope  "HABIT_NOT_FOUND"
 // @Router       /habits/{id} [delete]
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
-	if err := h.svc.Delete(r.Context(), mw.UserIDFromCtx(r.Context()), chi.URLParam(r, "id")); err != nil {
+	userID, id := mw.UserIDFromCtx(r.Context()), chi.URLParam(r, "id")
+
+	// Archiving is the default because it is the reversible one: a client that
+	// forgets the flag retires a habit rather than destroying its history.
+	// Permanent deletion has to be asked for explicitly.
+	del := h.svc.Delete
+	if r.URL.Query().Get("permanent") == "true" {
+		del = h.svc.DeletePermanently
+	}
+
+	if err := del(r.Context(), userID, id); err != nil {
 		writeErr(w, r, err)
 		return
 	}
