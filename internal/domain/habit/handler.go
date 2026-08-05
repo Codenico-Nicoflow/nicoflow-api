@@ -50,13 +50,13 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 // Get godoc
 // @Summary      Get a habit
-// @Description  Retrieves a single habit. Cross-user access returns 404, never 403.
+// @Description  Retrieves a single habit with its derived counters and the heatmap window behind them. Cells are day cells for daily/weekdays habits and week cells (carrying quota progress) for weekly_quota habits — the granularity streakUnit announces. Cross-user access returns 404, never 403.
 // @Tags         habits
 // @Produce      json
 // @Param        id   path      string  true  "Habit ID"
 // @Security     BearerAuth
-// @Success      200  {object}  HabitEnvelope  "The habit"
-// @Failure      404  {object}  ErrorEnvelope  "HABIT_NOT_FOUND"
+// @Success      200  {object}  HabitDetailEnvelope  "The habit with its history"
+// @Failure      404  {object}  ErrorEnvelope        "HABIT_NOT_FOUND"
 // @Router       /habits/{id} [get]
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	view, err := h.svc.Get(r.Context(), mw.UserIDFromCtx(r.Context()), chi.URLParam(r, "id"))

@@ -195,6 +195,45 @@ func (r *pgRepo) DeleteCheckIn(ctx context.Context, userID, habitID string, date
 	return tag.RowsAffected() > 0, nil
 }
 
+// ListCheckIns loads history for a set of habits in one query. Batching matters:
+// a list read derives every habit's streak, and one query per habit is the shape
+// that makes derived-on-read expensive enough to regret.
+//
+// Returns an empty map for an empty habit set rather than issuing a query with
+// an empty ANY(), which matches no rows but still costs a round trip.
+func (r *pgRepo) ListCheckIns(ctx context.Context, userID string, habitIDs []string, since time.Time) (map[string][]CheckIn, error) {
+	out := make(map[string][]CheckIn, len(habitIDs))
+	if len(habitIDs) == 0 {
+		return out, nil
+	}
+
+	rows, err := r.db.Query(ctx,
+		`SELECT id, habit_id, user_id, check_in_date, value, target_at_checkin,
+		        satisfied, created_at, updated_at
+		   FROM habit_check_ins
+		  WHERE user_id = $1 AND habit_id = ANY($2) AND check_in_date >= $3
+		  ORDER BY check_in_date ASC`,
+		userID, habitIDs, since,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("habit.ListCheckIns: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var c CheckIn
+		if err := rows.Scan(&c.ID, &c.HabitID, &c.UserID, &c.Date, &c.Value,
+			&c.TargetAt, &c.Satisfied, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("habit.ListCheckIns scan: %w", err)
+		}
+		out[c.HabitID] = append(out[c.HabitID], c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("habit.ListCheckIns rows: %w", err)
+	}
+	return out, nil
+}
+
 // UserTimezone reads the caller's IANA zone. COALESCE guards a NULL column; the
 // service separately falls back to UTC when the stored value no longer resolves,
 // so a tzdata change can never lock a user out of their own habit.

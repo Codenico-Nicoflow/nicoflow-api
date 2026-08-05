@@ -21,6 +21,12 @@ type HabitEnvelope struct {
 	Error interface{} `json:"error"`
 }
 
+// HabitDetailEnvelope wraps a single habit with its heatmap window.
+type HabitDetailEnvelope struct {
+	Data  HabitDetailView `json:"data"`
+	Error interface{}     `json:"error"`
+}
+
 // HabitListEnvelope wraps the caller's habits.
 type HabitListEnvelope struct {
 	Data  []HabitView `json:"data"`

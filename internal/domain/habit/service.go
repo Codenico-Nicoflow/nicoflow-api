@@ -24,12 +24,11 @@ func NewService(repo Repository, bc Broadcaster) Service {
 	return &service{repo: repo, bc: bc, now: time.Now}
 }
 
-// WithClock replaces the time source. Test-only seam: the local-date rules are
-// only provable against a pinned instant, since the ambient answer is correct in
-// a UTC container and wrong for a user thirteen hours away.
-func (s *service) WithClock(c Clock) *service {
-	s.now = c
-	return s
+// NewServiceWithClock builds the service against a supplied time source. The
+// local-date rules are only provable against a pinned instant, since the ambient
+// answer is right in a UTC container and wrong for a user thirteen hours away.
+func NewServiceWithClock(repo Repository, bc Broadcaster, now Clock) Service {
+	return &service{repo: repo, bc: bc, now: now}
 }
 
 func (s *service) emit(userID string, ev Event) {
@@ -42,24 +41,86 @@ func invalid(msg string) error {
 	return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, msg)
 }
 
+// List returns every habit with its derived counters. History for the whole set
+// is loaded in one query, then each habit's streak is walked in memory — N+1
+// queries here would be the thing that makes derived-on-read regrettable.
 func (s *service) List(ctx context.Context, userID string, includeArchived bool) ([]HabitView, error) {
 	hs, err := s.repo.List(ctx, userID, includeArchived)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]HabitView, 0, len(hs))
+	if len(hs) == 0 {
+		return out, nil
+	}
+
+	today, err := s.today(ctx, userID, hs[0].DayCutoffHour)
+	if err != nil {
+		return nil, err
+	}
+
+	ids := make([]string, 0, len(hs))
 	for _, h := range hs {
-		out = append(out, toView(h))
+		ids = append(ids, h.ID)
+	}
+	history, err := s.repo.ListCheckIns(ctx, userID, ids, today.AddDate(0, 0, -HistoryWindow))
+	if err != nil {
+		return nil, err
+	}
+
+	for _, h := range hs {
+		out = append(out, enrich(h, history[h.ID], today))
 	}
 	return out, nil
 }
 
-func (s *service) Get(ctx context.Context, userID, id string) (HabitView, error) {
+// Get returns one habit with its counters and the heatmap window behind them.
+func (s *service) Get(ctx context.Context, userID, id string) (HabitDetailView, error) {
 	h, err := s.repo.GetByID(ctx, userID, id)
 	if err != nil {
-		return HabitView{}, err
+		return HabitDetailView{}, err
 	}
-	return toView(h), nil
+
+	today, err := s.today(ctx, userID, h.DayCutoffHour)
+	if err != nil {
+		return HabitDetailView{}, err
+	}
+
+	history, err := s.repo.ListCheckIns(ctx, userID, []string{h.ID}, today.AddDate(0, 0, -HistoryWindow))
+	if err != nil {
+		return HabitDetailView{}, err
+	}
+
+	checkIns := history[h.ID]
+	return HabitDetailView{
+		HabitView: enrich(h, checkIns, today),
+		Cells:     buildCells(h, checkIns, today, RibbonDays),
+	}, nil
+}
+
+// enrich folds a habit's derived counters onto its wire shape.
+func enrich(h Habit, checkIns []CheckIn, today time.Time) HabitView {
+	v := toView(h)
+	st := derive(h, checkIns, today)
+
+	v.CurrentStreak, v.LongestStreak = st.current, st.longest
+	v.DueToday, v.CompletedToday, v.TodayValue = st.dueToday, st.doneToday, st.todayVal
+	v.PeriodProgress = st.progress
+
+	// An archived habit is history: it is never due, whatever its schedule says.
+	if h.ArchivedAt != nil {
+		v.DueToday = false
+	}
+	return v
+}
+
+// today resolves the caller's current local date.
+func (s *service) today(ctx context.Context, userID string, cutoffHour int16) (time.Time, error) {
+	tz, err := s.repo.UserTimezone(ctx, userID)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("habit.today timezone: %w", err)
+	}
+	return localDate(s.now(), loadLocation(tz), int(cutoffHour)), nil
 }
 
 func (s *service) Create(ctx context.Context, userID, plan string, req CreateHabitRequest) (HabitView, error) {
@@ -225,9 +286,7 @@ func (s *service) CheckIn(ctx context.Context, userID, id string, req CheckInReq
 		return HabitView{}, err
 	}
 
-	view := toView(h)
-	s.emit(userID, Event{Type: EventCheckedIn, Payload: view})
-	return view, nil
+	return s.enrichedAfterWrite(ctx, userID, h, today)
 }
 
 // UndoCheckIn removes one dated entry. A date with no entry is not an error: the
@@ -248,7 +307,20 @@ func (s *service) UndoCheckIn(ctx context.Context, userID, id string, req UndoCh
 		return HabitView{}, err
 	}
 
-	view := toView(h)
+	return s.enrichedAfterWrite(ctx, userID, h, today)
+}
+
+// enrichedAfterWrite re-reads history so the response — and the broadcast that
+// rides it — carry the recomputed streak. A client that just tapped a habit
+// needs the new number without a follow-up fetch, and a second open tab gets it
+// from the event for the same reason.
+func (s *service) enrichedAfterWrite(ctx context.Context, userID string, h Habit, today time.Time) (HabitView, error) {
+	history, err := s.repo.ListCheckIns(ctx, userID, []string{h.ID}, today.AddDate(0, 0, -HistoryWindow))
+	if err != nil {
+		return HabitView{}, err
+	}
+
+	view := enrich(h, history[h.ID], today)
 	s.emit(userID, Event{Type: EventCheckedIn, Payload: view})
 	return view, nil
 }
