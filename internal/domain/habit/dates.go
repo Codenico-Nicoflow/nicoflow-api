@@ -70,7 +70,12 @@ func IsScheduledOn(h Habit, d time.Time) bool {
 	if h.ScheduleKind != ScheduleWeekdays {
 		return true
 	}
-	return slices.Contains(h.ByWeekday, int16(d.Weekday())) // Sunday = 0, matching the stored values
+
+	wd := d.Weekday()
+
+	return slices.ContainsFunc(h.ByWeekday, func(day int16) bool {
+		return time.Weekday(day) == wd
+	})
 }
 
 // satisfies applies the polarity rule. A build habit clears its target from
