@@ -158,11 +158,11 @@ func deriveQuota(h Habit, checkIns []CheckIn, today time.Time) stats {
 	perWeek := map[string]int{}
 	for _, c := range checkIns {
 		if c.Satisfied {
-			perWeek[weekStart(c.Date).Format(DateLayout)]++
+			perWeek[weekStart(c.Date, h.WeekStart).Format(DateLayout)]++
 		}
 	}
 
-	thisWeek := weekStart(today)
+	thisWeek := weekStart(today, h.WeekStart)
 	done := perWeek[thisWeek.Format(DateLayout)]
 
 	s := stats{
@@ -184,21 +184,21 @@ func deriveQuota(h Habit, checkIns []CheckIn, today time.Time) stats {
 	if done < target {
 		w = w.AddDate(0, 0, -7)
 	}
-	for ; !w.Before(weekStart(earliest(checkIns, today))); w = w.AddDate(0, 0, -7) {
+	for ; !w.Before(weekStart(earliest(checkIns, today), h.WeekStart)); w = w.AddDate(0, 0, -7) {
 		if perWeek[w.Format(DateLayout)] < target {
 			break
 		}
 		s.current++
 	}
 
-	s.longest = longestQuotaRun(perWeek, checkIns, today, target, s.current)
+	s.longest = longestQuotaRun(perWeek, checkIns, today, target, s.current, h.WeekStart)
 	return s
 }
 
-func longestQuotaRun(perWeek map[string]int, checkIns []CheckIn, today time.Time, target, current int) int {
+func longestQuotaRun(perWeek map[string]int, checkIns []CheckIn, today time.Time, target, current int, firstDay *int) int {
 	best, run := current, 0
-	thisWeek := weekStart(today)
-	for w := weekStart(earliest(checkIns, today)); !w.After(thisWeek); w = w.AddDate(0, 0, 7) {
+	thisWeek := weekStart(today, firstDay)
+	for w := weekStart(earliest(checkIns, today), firstDay); !w.After(thisWeek); w = w.AddDate(0, 0, 7) {
 		met := perWeek[w.Format(DateLayout)] >= target
 		switch {
 		case met:
@@ -267,11 +267,11 @@ func buildWeekCells(h Habit, checkIns []CheckIn, today time.Time, weeks int) []C
 	perWeek := map[string]int{}
 	for _, c := range checkIns {
 		if c.Satisfied {
-			perWeek[weekStart(c.Date).Format(DateLayout)]++
+			perWeek[weekStart(c.Date, h.WeekStart).Format(DateLayout)]++
 		}
 	}
 
-	thisWeek := weekStart(today)
+	thisWeek := weekStart(today, h.WeekStart)
 	out := make([]CellView, 0, weeks)
 	for i := weeks - 1; i >= 0; i-- {
 		w := thisWeek.AddDate(0, 0, -7*i)

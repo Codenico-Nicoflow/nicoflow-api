@@ -237,19 +237,24 @@ func (r *pgRepo) ListCheckIns(ctx context.Context, userID string, habitIDs []str
 // UserTimezone reads the caller's IANA zone. COALESCE guards a NULL column; the
 // service separately falls back to UTC when the stored value no longer resolves,
 // so a tzdata change can never lock a user out of their own habit.
-func (r *pgRepo) UserTimezone(ctx context.Context, userID string) (string, error) {
-	var tz string
+func (r *pgRepo) UserPrefs(ctx context.Context, userID string) (UserPrefs, error) {
+	prefs := UserPrefs{Timezone: "UTC", WeekStart: DefaultWeekStart}
+
 	err := r.db.QueryRow(ctx,
-		`SELECT COALESCE(timezone, 'UTC') FROM users WHERE id = $1 AND deleted_at IS NULL`,
-		userID,
-	).Scan(&tz)
+		`SELECT COALESCE(timezone, 'UTC'), COALESCE(week_start, $2)
+		   FROM users WHERE id = $1 AND deleted_at IS NULL`,
+		userID, DefaultWeekStart,
+	).Scan(&prefs.Timezone, &prefs.WeekStart)
+
+	// Both settings come from the same row, so they are read together rather
+	// than in two queries on every habit read.
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "UTC", nil
+		return prefs, nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("habit.UserTimezone: %w", err)
+		return UserPrefs{}, fmt.Errorf("habit.UserPrefs: %w", err)
 	}
-	return tz, nil
+	return prefs, nil
 }
 
 // Delete removes a habit outright. Its check-ins go with it through the

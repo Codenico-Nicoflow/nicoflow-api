@@ -101,6 +101,14 @@ type Habit struct {
 	DayCutoffHour     int16
 	ScheduleChangedAt *time.Time
 
+	// WeekStart is the user's first-day-of-week (0=Sunday…6=Saturday), copied
+	// onto the habit at read time rather than stored: quota weeks are scored
+	// against it, and it belongs to the user, not to the habit.
+	//
+	// A pointer because Sunday is 0 and so is the zero value — an unstamped
+	// habit has to fall back to Monday, not become a Sunday-start one.
+	WeekStart *int
+
 	ArchivedAt *time.Time
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
@@ -287,6 +295,13 @@ type UndoCheckInRequest struct {
 // is right in a UTC container and wrong for a real user in Auckland.
 type Clock func() time.Time
 
+// UserPrefs are the per-user settings a habit read is scored against: which
+// calendar day "today" is, and where a quota week begins.
+type UserPrefs struct {
+	Timezone  string
+	WeekStart int
+}
+
 // Broadcaster receives a domain Event for real-time fan-out. Fire-and-forget:
 // implementations must never block or fail the mutation. A nil Broadcaster is a
 // valid no-op seam.
@@ -409,10 +424,10 @@ type Repository interface {
 	// done.
 	DeleteCheckIn(ctx context.Context, userID, habitID string, date time.Time) (bool, error)
 
-	// UserTimezone returns the user's IANA zone, defaulting to UTC when unset.
-	// Lives on the habit repository rather than reaching into the auth domain:
-	// one column read is not worth a cross-domain dependency.
-	UserTimezone(ctx context.Context, userID string) (string, error)
+	// UserPrefs returns the settings habit derivation depends on. Lives on the
+	// habit repository rather than reaching into the auth domain: two column
+	// reads are not worth a cross-domain dependency.
+	UserPrefs(ctx context.Context, userID string) (UserPrefs, error)
 
 	// ListCheckIns returns every check-in from `since` onward for the given
 	// habits, keyed by habit id. One query serves a whole list read — the

@@ -21,7 +21,7 @@ type mockRepo struct {
 	countActive   func(ctx context.Context, userID string) (int, error)
 	upsertCheckIn func(ctx context.Context, c CheckIn) (CheckIn, error)
 	deleteCheckIn func(ctx context.Context, userID, habitID string, date time.Time) (bool, error)
-	userTimezone  func(ctx context.Context, userID string) (string, error)
+	userPrefs     func(ctx context.Context, userID string) (UserPrefs, error)
 	listCheckIns  func(ctx context.Context, userID string, habitIDs []string, since time.Time) (map[string][]CheckIn, error)
 }
 
@@ -46,11 +46,11 @@ func (m *mockRepo) DeleteCheckIn(ctx context.Context, userID, habitID string, da
 	return true, nil
 }
 
-func (m *mockRepo) UserTimezone(ctx context.Context, userID string) (string, error) {
-	if m.userTimezone != nil {
-		return m.userTimezone(ctx, userID)
+func (m *mockRepo) UserPrefs(ctx context.Context, userID string) (UserPrefs, error) {
+	if m.userPrefs != nil {
+		return m.userPrefs(ctx, userID)
 	}
-	return "UTC", nil
+	return UserPrefs{Timezone: "UTC", WeekStart: DefaultWeekStart}, nil
 }
 
 func (m *mockRepo) List(ctx context.Context, userID string, includeArchived bool) ([]Habit, error) {
@@ -594,8 +594,10 @@ func dailyHabit() Habit {
 
 func repoFor(h Habit, tz string) *mockRepo {
 	return &mockRepo{
-		getByID:      func(context.Context, string, string) (Habit, error) { return h, nil },
-		userTimezone: func(context.Context, string) (string, error) { return tz, nil },
+		getByID: func(context.Context, string, string) (Habit, error) { return h, nil },
+		userPrefs: func(context.Context, string) (UserPrefs, error) {
+			return UserPrefs{Timezone: tz, WeekStart: DefaultWeekStart}, nil
+		},
 	}
 }
 
