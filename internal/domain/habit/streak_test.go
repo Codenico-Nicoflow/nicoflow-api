@@ -229,6 +229,42 @@ func TestDerive_QuotaStreaks(t *testing.T) {
 	}
 }
 
+// The whole point of reading users.week_start: the same three check-ins land in
+// one week or two depending on where the user's week begins.
+func TestDeriveQuota_WeekBoundaryFollowsThePreference(t *testing.T) {
+	// Wednesday 5 Aug 2026. Sunday 2nd and Monday 3rd sit on opposite sides of a
+	// Monday boundary, and inside the same week on a Sunday one.
+	today := date(2026, time.August, 5)
+	checkIns := []CheckIn{
+		ci(date(2026, time.August, 2), 1, true), // Sunday
+		ci(date(2026, time.August, 3), 1, true), // Monday
+		ci(date(2026, time.August, 4), 1, true), // Tuesday
+	}
+
+	mondayStart := quotaH(3)
+	mondayStart.WeekStart = intPtr(1)
+	monday := derive(mondayStart, checkIns, today)
+
+	sundayStart := quotaH(3)
+	sundayStart.WeekStart = intPtr(0)
+	sunday := derive(sundayStart, checkIns, today)
+
+	// Monday-start: the Sunday belongs to the previous week, so this week has 2.
+	if monday.progress == nil || monday.progress.Current != 2 {
+		t.Errorf("monday-start progress = %+v, want 2 of 3", monday.progress)
+	}
+	// Sunday-start: all three fall in the current week, so the quota is met.
+	if sunday.progress == nil || sunday.progress.Current != 3 {
+		t.Errorf("sunday-start progress = %+v, want 3 of 3", sunday.progress)
+	}
+	if !sunday.doneToday {
+		t.Error("sunday-start week reads unmet at 3 of 3, want met")
+	}
+	if monday.doneToday {
+		t.Error("monday-start week reads met at 2 of 3, want unmet")
+	}
+}
+
 // A quota habit drops out of "due" once its week is met — it stops nagging for
 // the rest of the week rather than asking for a fourth session.
 func TestDerive_QuotaDueUntilTheWeekIsMet(t *testing.T) {

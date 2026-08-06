@@ -50,14 +50,31 @@ func parseDate(s string) (time.Time, error) {
 	return d, nil
 }
 
-// weekStart returns the Monday of the week containing d. Quota habits are scored
-// per week, so this is the key a week's check-ins group under.
+// DefaultWeekStart is Monday, matching the users.week_start column default.
+const DefaultWeekStart = 1
+
+// weekStart returns the first day of the week containing d, where firstDay is a
+// weekday index (0=Sunday … 6=Saturday) taken from users.week_start.
 //
-// Monday is fixed rather than read from users.week_start: the boundary decides
-// which check-ins count toward a quota, so a user changing their display
-// preference must not silently redraw the weeks their streak was built from.
-func weekStart(d time.Time) time.Time {
-	offset := (int(d.Weekday()) + 6) % 7 // Monday = 0
+// It follows the user's own setting rather than a fixed Monday because the work
+// week is Mon–Fri across most of Europe but Sun–Thu in Israel, and the product
+// ships Hebrew. A Sunday-start user whose habit weeks silently began on Monday
+// would see "3× this week" straddle what they consider two different weeks.
+//
+// The cost is real and worth stating: this boundary decides which check-ins
+// count toward a quota, so changing the setting redraws historical weeks and a
+// quota streak can shift. Freezing the boundary onto each habit at creation —
+// the trick target_at_checkin already uses — is the fix if that becomes a
+// problem in practice.
+// firstDay is a POINTER because Sunday is 0 and so is the zero value: a habit
+// nobody stamped a preference onto must fall back to Monday rather than
+// silently becoming a Sunday-start habit.
+func weekStart(d time.Time, firstDay *int) time.Time {
+	start := DefaultWeekStart
+	if firstDay != nil && *firstDay >= 0 && *firstDay <= 6 {
+		start = *firstDay
+	}
+	offset := (int(d.Weekday()) - start + 7) % 7
 	return d.AddDate(0, 0, -offset)
 }
 
@@ -100,7 +117,7 @@ func validateCheckInDate(h Habit, date, today time.Time) error {
 	}
 
 	if h.ScheduleKind == ScheduleWeeklyQuota {
-		earliest := weekStart(today).AddDate(0, 0, -7*BackfillWeeks)
+		earliest := weekStart(today, h.WeekStart).AddDate(0, 0, -7*BackfillWeeks)
 		if date.Before(earliest) {
 			return invalid(fmt.Sprintf(
 				"cannot check in earlier than the previous week (from %s)", earliest.Format(DateLayout)))

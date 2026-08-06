@@ -113,11 +113,49 @@ func TestWeekStart(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := weekStart(tt.in); !got.Equal(tt.want) {
+			if got := weekStart(tt.in, nil); !got.Equal(tt.want) {
 				t.Errorf("weekStart(%s) = %s, want %s",
 					tt.in.Format(DateLayout), got.Format(DateLayout), tt.want.Format(DateLayout))
 			}
 		})
+	}
+}
+
+// The boundary follows users.week_start because the work week is Sun–Thu in
+// Israel and the product ships Hebrew. A Sunday-start user whose habit weeks
+// began on Monday would see "3x this week" straddle two of their weeks.
+func TestWeekStart_FollowsTheUserPreference(t *testing.T) {
+	wednesday := date(2026, time.August, 5)
+
+	tests := []struct {
+		name     string
+		firstDay *int
+		want     time.Time
+	}{
+		{name: "monday start", firstDay: intPtr(1), want: date(2026, time.August, 3)},
+		{name: "sunday start", firstDay: intPtr(0), want: date(2026, time.August, 2)},
+		{name: "saturday start", firstDay: intPtr(6), want: date(2026, time.August, 1)},
+		// Sunday is 0 and so is the zero value, so an unstamped habit must fall
+		// back to Monday rather than silently becoming Sunday-start.
+		{name: "unset falls back to monday", firstDay: nil, want: date(2026, time.August, 3)},
+		{name: "out of range falls back to monday", firstDay: intPtr(9), want: date(2026, time.August, 3)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := weekStart(wednesday, tt.firstDay); !got.Equal(tt.want) {
+				t.Errorf("weekStart = %s, want %s", got.Format(DateLayout), tt.want.Format(DateLayout))
+			}
+		})
+	}
+}
+
+// A day that IS the boundary is its own week start, not the previous week's.
+func TestWeekStart_OnTheBoundaryItself(t *testing.T) {
+	sunday := date(2026, time.August, 2)
+
+	if got := weekStart(sunday, intPtr(0)); !got.Equal(sunday) {
+		t.Errorf("weekStart = %s, want the Sunday itself", got.Format(DateLayout))
 	}
 }
 

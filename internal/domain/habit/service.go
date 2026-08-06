@@ -54,7 +54,7 @@ func (s *service) List(ctx context.Context, userID string, includeArchived bool)
 		return out, nil
 	}
 
-	today, err := s.localToday(ctx, userID, hs[0].DayCutoffHour)
+	today, prefs, err := s.resolveToday(ctx, userID, hs[0].DayCutoffHour)
 	if err != nil {
 		return nil, err
 	}
@@ -69,6 +69,7 @@ func (s *service) List(ctx context.Context, userID string, includeArchived bool)
 	}
 
 	for _, h := range hs {
+		h.WeekStart = &prefs.WeekStart
 		out = append(out, enrich(h, history[h.ID], today, ListRibbonDays))
 	}
 	return out, nil
@@ -81,10 +82,11 @@ func (s *service) Get(ctx context.Context, userID, id string) (HabitDetailView, 
 		return HabitDetailView{}, err
 	}
 
-	today, err := s.localToday(ctx, userID, h.DayCutoffHour)
+	today, prefs, err := s.resolveToday(ctx, userID, h.DayCutoffHour)
 	if err != nil {
 		return HabitDetailView{}, err
 	}
+	h.WeekStart = &prefs.WeekStart
 
 	history, err := s.repo.ListCheckIns(ctx, userID, []string{h.ID}, today.AddDate(0, 0, -HistoryWindow))
 	if err != nil {
@@ -119,13 +121,15 @@ func enrich(h Habit, checkIns []CheckIn, today time.Time, ribbonDays int) HabitV
 	return v
 }
 
-// localToday resolves the caller's current local date.
-func (s *service) localToday(ctx context.Context, userID string, cutoffHour int16) (time.Time, error) {
-	tz, err := s.repo.UserTimezone(ctx, userID)
+// resolveToday reads the caller's settings and returns both their current local
+// date and the preferences it was derived from — quota scoring needs the week
+// boundary as much as the day, and they come from the same row.
+func (s *service) resolveToday(ctx context.Context, userID string, cutoffHour int16) (time.Time, UserPrefs, error) {
+	prefs, err := s.repo.UserPrefs(ctx, userID)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("habit.localToday timezone: %w", err)
+		return time.Time{}, UserPrefs{}, fmt.Errorf("habit.resolveToday prefs: %w", err)
 	}
-	return localDate(s.now(), loadLocation(tz), int(cutoffHour)), nil
+	return localDate(s.now(), loadLocation(prefs.Timezone), int(cutoffHour)), prefs, nil
 }
 
 // Today returns the habits still owed right now.
@@ -383,12 +387,14 @@ func (s *service) habitAndToday(ctx context.Context, userID, id string) (Habit, 
 		return Habit{}, time.Time{}, invalid("cannot check in on an archived habit")
 	}
 
-	tz, err := s.repo.UserTimezone(ctx, userID)
+	today, prefs, err := s.resolveToday(ctx, userID, h.DayCutoffHour)
 	if err != nil {
-		return Habit{}, time.Time{}, fmt.Errorf("habit.checkIn timezone: %w", err)
+		return Habit{}, time.Time{}, err
 	}
 
-	today := localDate(s.now(), loadLocation(tz), int(h.DayCutoffHour))
+	// The backfill window for a quota habit is expressed in weeks, so it needs
+	// the same boundary the scoring uses.
+	h.WeekStart = &prefs.WeekStart
 	return h, today, nil
 }
 

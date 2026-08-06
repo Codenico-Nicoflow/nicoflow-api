@@ -605,40 +605,54 @@ func TestCheckInDateIsADateColumn(t *testing.T) {
 	}
 }
 
-func TestUserTimezone(t *testing.T) {
+func TestUserPrefs(t *testing.T) {
 	repo, pool := newRepo(t)
 	ctx := context.Background()
 	userID := seedUser(t, pool)
 
-	// Seeded users take the column default.
-	tz, err := repo.UserTimezone(ctx, userID)
+	// Seeded users take the column defaults.
+	prefs, err := repo.UserPrefs(ctx, userID)
 	if err != nil {
-		t.Fatalf("UserTimezone: %v", err)
+		t.Fatalf("UserPrefs: %v", err)
 	}
-	if tz != "UTC" {
-		t.Errorf("timezone = %q, want the UTC default", tz)
+	if prefs.Timezone != "UTC" {
+		t.Errorf("timezone = %q, want the UTC default", prefs.Timezone)
+	}
+	if prefs.WeekStart != habit.DefaultWeekStart {
+		t.Errorf("weekStart = %d, want the Monday default", prefs.WeekStart)
 	}
 
+	// Both settings live on the same row and are read together.
 	if _, err := pool.Exec(ctx,
-		`UPDATE users SET timezone = 'Pacific/Auckland' WHERE id = $1`, userID); err != nil {
-		t.Fatalf("update timezone: %v", err)
+		`UPDATE users SET timezone = 'Pacific/Auckland', week_start = 0 WHERE id = $1`, userID); err != nil {
+		t.Fatalf("update prefs: %v", err)
 	}
-	if tz, err = repo.UserTimezone(ctx, userID); err != nil || tz != "Pacific/Auckland" {
-		t.Errorf("timezone = %q (err=%v), want Pacific/Auckland", tz, err)
+
+	prefs, err = repo.UserPrefs(ctx, userID)
+	if err != nil {
+		t.Fatalf("UserPrefs: %v", err)
+	}
+	if prefs.Timezone != "Pacific/Auckland" {
+		t.Errorf("timezone = %q, want Pacific/Auckland", prefs.Timezone)
+	}
+	// Sunday is a legitimate value, and 0 must survive the read rather than
+	// being mistaken for "unset" and coerced back to Monday.
+	if prefs.WeekStart != 0 {
+		t.Errorf("weekStart = %d, want 0 (Sunday)", prefs.WeekStart)
 	}
 }
 
-// A missing user resolves to UTC rather than erroring: the caller is already
-// authenticated, so this is a defensive default, not a real code path.
-func TestUserTimezone_UnknownUserDefaultsToUTC(t *testing.T) {
+// A missing user resolves to the defaults rather than erroring: the caller is
+// already authenticated, so this is a defensive fallback, not a real code path.
+func TestUserPrefs_UnknownUserDefaults(t *testing.T) {
 	repo, _ := newRepo(t)
 
-	tz, err := repo.UserTimezone(context.Background(), uuid.NewString())
+	prefs, err := repo.UserPrefs(context.Background(), uuid.NewString())
 	if err != nil {
-		t.Fatalf("UserTimezone: %v", err)
+		t.Fatalf("UserPrefs: %v", err)
 	}
-	if tz != "UTC" {
-		t.Errorf("timezone = %q, want UTC", tz)
+	if prefs.Timezone != "UTC" || prefs.WeekStart != habit.DefaultWeekStart {
+		t.Errorf("prefs = %+v, want UTC/Monday", prefs)
 	}
 }
 
