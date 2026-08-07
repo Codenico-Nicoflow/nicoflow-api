@@ -78,6 +78,10 @@ type SendMessageRequest struct {
 type PromptContext struct {
 	Language  string
 	OpenTasks int
+	// Timezone is the user's IANA zone (users.timezone, default "UTC"). "Today"
+	// in the prompt must be the user's local calendar date, not the server's —
+	// a user east of UTC has already crossed midnight while the server hasn't.
+	Timezone string
 }
 
 // SSE event payloads streamed over the response body (type-discriminated).

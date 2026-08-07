@@ -111,3 +111,28 @@ func TestBuildSystemPrompt_LanguageDefault(t *testing.T) {
 		t.Error("empty language should default to en")
 	}
 }
+
+// A user east of UTC has already crossed into the next local day while the
+// server's UTC clock hasn't — "today" in the prompt must follow the user's
+// zone, not the server's, or the assistant states the wrong calendar date.
+func TestBuildSystemPrompt_UsesUserTimezoneNotUTC(t *testing.T) {
+	// 22:00 UTC on the 25th is already 01:00 on the 26th in Asia/Jerusalem (UTC+3).
+	now := time.Date(2026, 7, 25, 22, 0, 0, 0, time.UTC)
+	got := buildSystemPrompt(PromptContext{Language: "en", Timezone: "Asia/Jerusalem"}, now)
+
+	if !strings.Contains(got, "2026-07-26") {
+		t.Errorf("expected the user's local date 2026-07-26, got: %s", got)
+	}
+	if strings.Contains(got, "2026-07-25") {
+		t.Error("prompt still shows the server's UTC date instead of the user's local date")
+	}
+}
+
+func TestBuildSystemPrompt_UnknownTimezoneFallsBackToUTC(t *testing.T) {
+	now := time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC)
+	got := buildSystemPrompt(PromptContext{Language: "en", Timezone: "Not/AZone"}, now)
+
+	if !strings.Contains(got, "2026-07-26") {
+		t.Errorf("unresolvable timezone should fall back to UTC, got: %s", got)
+	}
+}
