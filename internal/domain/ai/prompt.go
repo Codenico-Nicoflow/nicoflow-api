@@ -46,7 +46,9 @@ func buildSystemPrompt(pc PromptContext, now time.Time) string {
 	var b strings.Builder
 	b.WriteString(systemPromptBase)
 	b.WriteString("\n\n---\nContext:\n")
-	fmt.Fprintf(&b, "- Today's date: %s\n", now.In(loc).Format("2006-01-02"))
+	// Weekday spelled out explicitly — an LLM deriving it from the ISO date
+	// itself is unreliable and has been observed naming the wrong day.
+	fmt.Fprintf(&b, "- Today's date: %s (%s)\n", now.In(loc).Format("2006-01-02"), now.In(loc).Format("Monday"))
 	fmt.Fprintf(&b, "- User's preferred language: %s (reply in this language)\n", lang)
 	fmt.Fprintf(&b, "- Open tasks: %d", pc.OpenTasks)
 	return b.String()
