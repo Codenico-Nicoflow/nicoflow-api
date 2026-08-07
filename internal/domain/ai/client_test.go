@@ -30,10 +30,12 @@ func (s *fakeStream) Next() bool {
 	return true
 }
 
-func (s *fakeStream) Text() string { return s.chunks[s.i-1] }
-func (s *fakeStream) Err() error   { return nil }
-func (s *fakeStream) Usage() Usage { return Usage{InputTokens: 3, OutputTokens: 5} }
-func (s *fakeStream) Close() error { return nil }
+func (s *fakeStream) Text() string             { return s.chunks[s.i-1] }
+func (s *fakeStream) Err() error               { return nil }
+func (s *fakeStream) Usage() Usage             { return Usage{InputTokens: 3, OutputTokens: 5} }
+func (s *fakeStream) Close() error             { return nil }
+func (s *fakeStream) ToolUses() []ToolUseBlock { return nil }
+func (s *fakeStream) StopReason() string       { return "end_turn" }
 
 func TestClient_MockableStream(t *testing.T) {
 	fc := fakeClient{enabled: true, stream: &fakeStream{chunks: []string{"Hello", " world"}}}

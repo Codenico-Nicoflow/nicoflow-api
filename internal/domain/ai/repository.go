@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -40,12 +41,30 @@ type Repository interface {
 	// AppendAssistantMessage inserts the assistant turn and bumps the session's
 	// updated_at, so a completed (or aborted-with-partial) stream is one write.
 	AppendAssistantMessage(ctx context.Context, sessionID, msgID, content string) error
+	// AppendAssistantMessageWithBlocks is the tool-aware assistant append:
+	// content holds the concatenated visible text (backward-compat, may be
+	// empty when the turn was tool_use only), contentJSON losslessly records
+	// the ordered blocks (text + tool_use) for a faithful history replay.
+	AppendAssistantMessageWithBlocks(ctx context.Context, sessionID, msgID, content string, contentJSON json.RawMessage) error
+	// AppendToolResultsMessage inserts a user role turn whose content is
+	// empty and whose content_json is the ordered tool_result blocks —
+	// what Claude expects between an assistant tool_use and the next
+	// assistant turn.
+	AppendToolResultsMessage(ctx context.Context, sessionID, msgID string, contentJSON json.RawMessage) error
+	// HistoryForWithBlocks returns the session's messages newest-first, with
+	// content_json populated when present so the tool round-trip survives
+	// the persistence boundary.
+	HistoryForWithBlocks(ctx context.Context, sessionID string, limit int) ([]SessionMessage, error)
 	// HistoryFor returns the session's messages, newest-first, capped at limit
 	// rows — the budget builder trims further by character count.
 	HistoryFor(ctx context.Context, sessionID string, limit int) ([]SessionMessage, error)
 	// PromptContext returns the volatile system-prompt inputs for a user: their
 	// language and open-task COUNT(*). One round-trip, row-isolated by user_id.
 	PromptContext(ctx context.Context, userID string) (PromptContext, error)
+
+	// Tool-call proposals (write tools require explicit user confirmation).
+	// See toolcall_repo.go for the full contracts.
+	ToolCallRepository
 }
 
 type pgRepo struct{ db *pgxpool.Pool }
@@ -273,6 +292,67 @@ func (r *pgRepo) AppendUserMessage(ctx context.Context, sessionID, msgID, conten
 		return fmt.Errorf("ai.AppendUserMessage commit: %w", err)
 	}
 	return nil
+}
+
+func (r *pgRepo) AppendAssistantMessageWithBlocks(ctx context.Context, sessionID, msgID, content string, contentJSON json.RawMessage) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("ai.AppendAssistantMessageWithBlocks begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO ai_messages (id, session_id, role, content, content_json, created_at)
+		 VALUES ($1, $2, 'assistant', $3, $4, NOW())`,
+		msgID, sessionID, content, contentJSON,
+	); err != nil {
+		return fmt.Errorf("ai.AppendAssistantMessageWithBlocks insert: %w", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE ai_sessions SET updated_at = NOW() WHERE id = $1`, sessionID,
+	); err != nil {
+		return fmt.Errorf("ai.AppendAssistantMessageWithBlocks touch: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("ai.AppendAssistantMessageWithBlocks commit: %w", err)
+	}
+	return nil
+}
+
+func (r *pgRepo) AppendToolResultsMessage(ctx context.Context, sessionID, msgID string, contentJSON json.RawMessage) error {
+	if _, err := r.db.Exec(ctx,
+		`INSERT INTO ai_messages (id, session_id, role, content, content_json, created_at)
+		 VALUES ($1, $2, 'user', '', $3, NOW())`,
+		msgID, sessionID, contentJSON,
+	); err != nil {
+		return fmt.Errorf("ai.AppendToolResultsMessage: %w", err)
+	}
+	return nil
+}
+
+func (r *pgRepo) HistoryForWithBlocks(ctx context.Context, sessionID string, limit int) ([]SessionMessage, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, session_id, role, content, content_json, created_at
+		FROM ai_messages
+		WHERE session_id = $1
+		ORDER BY created_at DESC, id DESC
+		LIMIT $2`,
+		sessionID, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("ai.HistoryForWithBlocks query: %w", err)
+	}
+	defer rows.Close()
+
+	msgs := []SessionMessage{}
+	for rows.Next() {
+		var m SessionMessage
+		if err := rows.Scan(&m.ID, &m.SessionID, &m.Role, &m.Content, &m.ContentJSON, &m.CreatedAt); err != nil {
+			return nil, fmt.Errorf("ai.HistoryForWithBlocks scan: %w", err)
+		}
+		msgs = append(msgs, m)
+	}
+	return msgs, rows.Err()
 }
 
 func (r *pgRepo) AppendAssistantMessage(ctx context.Context, sessionID, msgID, content string) error {

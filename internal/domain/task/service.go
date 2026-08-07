@@ -76,6 +76,9 @@ type Service interface {
 	// WithFocusTotals injects the focus-totals reader that enriches Focus +
 	// GetTask responses with totalFocusSeconds. Wired once in main.go.
 	WithFocusTotals(f FocusTotals) Service
+	// ListForUser is the cross-project user-scoped read backing the AI tool
+	// executor's list_tasks. See user_list.go.
+	ListForUser(ctx context.Context, userID string, f UserListFilter) (ListTasksResponse, error)
 }
 
 type service struct {

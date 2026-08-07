@@ -1,7 +1,10 @@
 // Package ai contains the AI assistant domain.
 package ai
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Session is a persisted AI conversation. status/title default in migration 009.
 type Session struct {
@@ -14,12 +17,18 @@ type Session struct {
 
 // SessionMessage is one persisted turn of a conversation (ai_messages, mig 010).
 // Distinct from the streaming Message in client.go, which never touches the DB.
+//
+// ContentJSON is the tool-aware companion column (migration 046): when set,
+// it holds the ordered blocks (text + tool_use for assistant, tool_result for
+// user) exactly as Claude sees them. Nil ⇒ pre-tool-loop turn where Content
+// alone is the whole message.
 type SessionMessage struct {
-	ID        string
-	SessionID string
-	Role      string
-	Content   string
-	CreatedAt time.Time
+	ID          string
+	SessionID   string
+	Role        string
+	Content     string
+	ContentJSON json.RawMessage
+	CreatedAt   time.Time
 }
 
 // SessionView is the wire shape for a session. IDs are application-generated strings.
@@ -88,6 +97,16 @@ type (
 	errorEvent struct {
 		Type string `json:"type"` // "error"
 		Code string `json:"code"`
+	}
+	// toolProposalEvent surfaces one pending write-tool proposal to the client
+	// — the confirm/reject UI card is driven off this. Input is passed through
+	// verbatim from the model.
+	toolProposalEvent struct {
+		Type               string          `json:"type"` // "tool_proposal"
+		AssistantMessageID string          `json:"assistantMessageId"`
+		ToolUseID          string          `json:"toolUseId"`
+		ToolName           string          `json:"toolName"`
+		Input              json.RawMessage `json:"input"`
 	}
 )
 

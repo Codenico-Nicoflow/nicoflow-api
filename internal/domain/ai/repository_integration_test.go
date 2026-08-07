@@ -22,6 +22,7 @@ const testEmailDomain = "@ai-integration.test"
 func cleanAITestData(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	queries := []string{
+		`DELETE FROM ai_tool_calls WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%' || $1)`,
 		`DELETE FROM ai_messages WHERE session_id IN (
 			SELECT s.id FROM ai_sessions s JOIN users u ON u.id = s.user_id
 			WHERE u.email LIKE '%' || $1)`,

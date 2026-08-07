@@ -99,6 +99,78 @@ func (h *Handler) Usage(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ListMessages(w http.ResponseWriter, r *http.Request) { notImplemented(w, r) }
 func (h *Handler) ParseNLP(w http.ResponseWriter, r *http.Request)     { notImplemented(w, r) }
 
+// ListToolCalls returns the session's pending write-tool proposals. Read;
+// includes only status=pending — resolved rows are audit data.
+func (h *Handler) ListToolCalls(w http.ResponseWriter, r *http.Request) {
+	userID := mw.UserIDFromCtx(r.Context())
+	sessionID := chi.URLParam(r, "id")
+
+	views, err := h.svc.ListPendingToolCalls(r.Context(), userID, sessionID)
+	if err != nil {
+		writeAppError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, views)
+}
+
+// ConfirmToolCall streams the follow-up assistant response after executing a
+// pending proposal. Same SSE shape as SendMessage.
+func (h *Handler) ConfirmToolCall(w http.ResponseWriter, r *http.Request) {
+	h.resolveToolCall(w, r, true)
+}
+
+// RejectToolCall streams the follow-up assistant response after marking the
+// proposal rejected. Same SSE shape as SendMessage.
+func (h *Handler) RejectToolCall(w http.ResponseWriter, r *http.Request) {
+	h.resolveToolCall(w, r, false)
+}
+
+// resolveToolCall is the shared body of Confirm/Reject: run the service action,
+// stream the follow-up over SSE. Pre-stream errors return a normal envelope;
+// once tokens flow (or a new tool_proposal fires), terminal outcomes ride the
+// event stream. No additional quota is reserved — the original SendMessage
+// already paid for this whole user-turn.
+func (h *Handler) resolveToolCall(w http.ResponseWriter, r *http.Request, confirm bool) {
+	userID := mw.UserIDFromCtx(r.Context())
+	plan := mw.PlanFromCtx(r.Context())
+	sessionID := chi.URLParam(r, "id")
+	toolUseID := chi.URLParam(r, "toolUseId")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		respond.Error(w, http.StatusInternalServerError, apperror.ErrInternalServerError, "streaming unsupported")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), wholeStreamCeiling)
+	defer cancel()
+
+	sink := &sseSink{w: w, flusher: flusher}
+	var messageID string
+	var err error
+	if confirm {
+		messageID, err = h.svc.ConfirmToolCall(ctx, userID, plan, sessionID, toolUseID, sink)
+	} else {
+		messageID, err = h.svc.RejectToolCall(ctx, userID, plan, sessionID, toolUseID, sink)
+	}
+
+	if !sink.committed {
+		if err != nil {
+			writeAppError(w, r, err)
+			return
+		}
+		sink.commit()
+		sink.writeDone(messageID, h.usage(r.Context(), userID, plan))
+		return
+	}
+	if err != nil {
+		log.Warn().Err(err).Str("request_id", mw.GetRequestID(r.Context())).Msg("ai tool-call resolve error after commit")
+		sink.writeError(StreamErrorCode(err))
+		return
+	}
+	sink.writeDone(messageID, h.usage(r.Context(), userID, plan))
+}
+
 // wholeStreamCeiling caps the entire completion; a runaway stream is cut here.
 const wholeStreamCeiling = 90 * time.Second
 
@@ -173,6 +245,24 @@ func (s *sseSink) Delta(text string) error {
 		s.commit()
 	}
 	if err := s.writeEvent(deltaEvent{Type: "delta", Text: text}); err != nil {
+		return err
+	}
+	s.flusher.Flush()
+	return nil
+}
+
+// ToolProposal writes one tool_proposal SSE frame. Committing (like Delta)
+// transitions the response to a streaming body — the sink is the only place
+// the HTTP status becomes 200 for this endpoint.
+func (s *sseSink) ToolProposal(assistantMessageID, toolUseID, toolName string, input json.RawMessage) error {
+	if !s.committed {
+		s.commit()
+	}
+	ev := toolProposalEvent{
+		Type: "tool_proposal", AssistantMessageID: assistantMessageID,
+		ToolUseID: toolUseID, ToolName: toolName, Input: input,
+	}
+	if err := s.writeEvent(ev); err != nil {
 		return err
 	}
 	s.flusher.Flush()

@@ -2,10 +2,12 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
 )
@@ -27,10 +29,12 @@ func (s *scriptStream) Next() bool {
 	s.i++
 	return true
 }
-func (s *scriptStream) Text() string { return s.deltas[s.i-1] }
-func (s *scriptStream) Err() error   { return s.err }
-func (s *scriptStream) Usage() Usage { return Usage{InputTokens: 1, OutputTokens: 2} }
-func (s *scriptStream) Close() error { s.closed = true; return nil }
+func (s *scriptStream) Text() string             { return s.deltas[s.i-1] }
+func (s *scriptStream) Err() error               { return s.err }
+func (s *scriptStream) Usage() Usage             { return Usage{InputTokens: 1, OutputTokens: 2} }
+func (s *scriptStream) Close() error             { s.closed = true; return nil }
+func (s *scriptStream) ToolUses() []ToolUseBlock { return nil }
+func (s *scriptStream) StopReason() string       { return "end_turn" }
 
 // scriptClient hands back a scripted stream, or an at-start error.
 type scriptClient struct {
@@ -57,6 +61,11 @@ func (s *captureSink) Delta(text string) error {
 	if s.failAt > 0 && len(s.got) == s.failAt {
 		return errors.New("client gone")
 	}
+	return nil
+}
+
+func (s *captureSink) ToolProposal(_, _, _ string, _ json.RawMessage) error {
+	// Text-only tests never hit this; if they did, treat as observable.
 	return nil
 }
 
@@ -110,6 +119,33 @@ func (r *stubRepo) HistoryFor(context.Context, string, int) ([]SessionMessage, e
 }
 func (r *stubRepo) PromptContext(context.Context, string) (PromptContext, error) {
 	return PromptContext{Language: "en"}, nil
+}
+func (r *stubRepo) AppendAssistantMessageWithBlocks(_ context.Context, _, _, content string, _ json.RawMessage) error {
+	r.assistantSaved = content
+	return nil
+}
+func (r *stubRepo) AppendToolResultsMessage(context.Context, string, string, json.RawMessage) error {
+	return nil
+}
+func (r *stubRepo) HistoryForWithBlocks(context.Context, string, int) ([]SessionMessage, error) {
+	return nil, nil
+}
+func (r *stubRepo) InsertPending(context.Context, ToolCall) error { return nil }
+func (r *stubRepo) CountForAssistantMessage(context.Context, string, string) (int, error) {
+	return 0, nil
+}
+func (r *stubRepo) ClaimPending(context.Context, string, string, string, string) (ToolCall, error) {
+	return ToolCall{}, apperror.New(http.StatusConflict, apperror.ErrConflict, "not pending")
+}
+func (r *stubRepo) SaveResult(context.Context, string, json.RawMessage) error { return nil }
+func (r *stubRepo) ListPendingForSession(context.Context, string, string) ([]ToolCall, error) {
+	return nil, nil
+}
+func (r *stubRepo) GetByToolUseID(context.Context, string, string, string) (ToolCall, error) {
+	return ToolCall{}, apperror.New(http.StatusNotFound, apperror.ErrResourceNotFound, "not found")
+}
+func (r *stubRepo) ExpirePendingOlderThan(context.Context, time.Time) (int, error) {
+	return 0, nil
 }
 
 func newSvc(repo Repository, client Client) *service {
@@ -213,10 +249,12 @@ func (s *blockStream) Next() bool {
 	s.done = true
 	return false
 }
-func (s *blockStream) Text() string { return "" }
-func (s *blockStream) Err() error   { return nil }
-func (s *blockStream) Usage() Usage { return Usage{} }
-func (s *blockStream) Close() error { return nil }
+func (s *blockStream) Text() string             { return "" }
+func (s *blockStream) Err() error               { return nil }
+func (s *blockStream) Usage() Usage             { return Usage{} }
+func (s *blockStream) Close() error             { return nil }
+func (s *blockStream) ToolUses() []ToolUseBlock { return nil }
+func (s *blockStream) StopReason() string       { return "end_turn" }
 
 // ── quota exhausted ────────────────────────────────────────────────────────────
 

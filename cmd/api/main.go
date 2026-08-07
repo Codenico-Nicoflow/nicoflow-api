@@ -187,7 +187,8 @@ func main() {
 	} else {
 		log.Warn().Msg("ai assistant: disabled (unset ANTHROPIC_API_KEY) — /v1/ai/* returns 503")
 	}
-	aiSvc := ai.NewService(ai.NewRepository(pool), aiClient, cfg.AIModel, ws.NewAIBroadcaster(wsHub))
+	aiRepo := ai.NewRepository(pool)
+	aiSvc := ai.NewService(aiRepo, aiClient, cfg.AIModel, ws.NewAIBroadcaster(wsHub))
 
 	// Task recurrence (E-050 / NIC-1772). Rule CRUD; creating a rule materializes
 	// instance #1 in the same transaction. FREE on every plan for reads; the
@@ -229,6 +230,16 @@ func main() {
 	// flavour: habits belong to no project and never materialize task rows.
 	habitSvc := habit.NewService(habit.NewRepository(pool), ws.NewHabitBroadcaster(wsHub))
 
+	// AI tool executor (NIC-ai-tool-use). Wired post-construction so the task
+	// service is already fully composed (cleaner/materializer/focusTotals) before
+	// the executor calls into it. The executor is only useful when the provider
+	// is enabled — a disabled aiClient still gets it, but the kill switch keeps
+	// every /v1/ai/* endpoint at 503, so it never runs.
+	aiSvc = aiSvc.WithExecutor(ai.NewToolExecutor(
+		aiTaskAdapter{tasks: taskSvc},
+		aiProjectAdapter{projects: projectSvc},
+	))
+
 	// Google Calendar connection (E-052 / NIC-1844). Any credential or the
 	// encryption key missing ⇒ every endpoint returns a typed 503 and nothing
 	// else in the app notices.
@@ -262,7 +273,8 @@ func main() {
 		GoogleCalendars: googlecal.NewCalendarsHandler(googleCalendarsSvc),
 		Jobs: jobs.NewHandler(dueDateNotifier, overdueNotifier, dayStartNotifier, inboxNotifier, summaryNotifier, attachmentGCAdapter{svc: attachmentSvc}).
 			WithRecurrence(recurrenceSweepAdapter{m: recurrenceMaterializer}).
-			WithFocusStale(focusStaleAdapter{svc: focusSvc}),
+			WithFocusStale(focusStaleAdapter{svc: focusSvc}).
+			WithAIToolExpiry(aiToolExpiryAdapter{repo: aiRepo, ttl: 7 * 24 * time.Hour}),
 		WS: ws.NewHandler(wsHub, cfg.JWTSecret, cfg.CORSOrigins),
 	}
 
@@ -414,6 +426,102 @@ func (a recurrenceSweepAdapter) Run(ctx context.Context, dryRun bool) (*jobs.Rec
 		SkippedNotDue:    res.SkippedNotDue,
 		SkippedBadZone:   res.SkippedBadZone,
 	}, nil
+}
+
+// aiTaskAdapter adapts the task service to ai.TaskCommands so the ai domain
+// never imports task. Each method boxes the concrete task.TaskView /
+// task.ListTasksResponse into the opaque JSON-carrier the executor uses; the
+// AI package re-marshals through json.Marshal, staying oblivious to the wire
+// schema of another domain.
+type aiTaskAdapter struct {
+	tasks task.Service
+}
+
+func (a aiTaskAdapter) Get(ctx context.Context, userID, id string) (ai.TaskViewJSON, error) {
+	v, err := a.tasks.Get(ctx, userID, id)
+	if err != nil {
+		return ai.TaskViewJSON{}, err
+	}
+	return ai.TaskViewJSON{Value: v}, nil
+}
+
+func (a aiTaskAdapter) Create(ctx context.Context, userID, projectID, plan string, req ai.CreateTaskInput) (ai.TaskViewJSON, error) {
+	v, err := a.tasks.Create(ctx, userID, projectID, plan, task.CreateTaskRequest{
+		Title:            req.Title,
+		Notes:            req.Notes,
+		Status:           req.Status,
+		Priority:         req.Priority,
+		Energy:           req.Energy,
+		RollsOver:        req.RollsOver,
+		ScheduledFor:     req.ScheduledFor,
+		ScheduledTime:    req.ScheduledTime,
+		EstimatedMinutes: req.EstimatedMinutes,
+		URL:              req.URL,
+	})
+	if err != nil {
+		return ai.TaskViewJSON{}, err
+	}
+	return ai.TaskViewJSON{Value: v}, nil
+}
+
+func (a aiTaskAdapter) SetStatus(ctx context.Context, userID, id, plan, status string) (ai.TaskViewJSON, error) {
+	v, err := a.tasks.SetStatus(ctx, userID, id, plan, status)
+	if err != nil {
+		return ai.TaskViewJSON{}, err
+	}
+	return ai.TaskViewJSON{Value: v}, nil
+}
+
+func (a aiTaskAdapter) Schedule(ctx context.Context, userID, id, plan string, req ai.ScheduleInput) (ai.TaskViewJSON, error) {
+	v, err := a.tasks.Schedule(ctx, userID, id, plan, task.ScheduleRequest{
+		ScheduledFor: req.ScheduledFor, ScheduledTime: req.ScheduledTime, RollsOver: req.RollsOver,
+	})
+	if err != nil {
+		return ai.TaskViewJSON{}, err
+	}
+	return ai.TaskViewJSON{Value: v}, nil
+}
+
+func (a aiTaskAdapter) ListForUser(ctx context.Context, userID string, f ai.UserListInput) (ai.TaskListJSON, error) {
+	list, err := a.tasks.ListForUser(ctx, userID, task.UserListFilter{
+		Status: f.Status, Priority: f.Priority, Energy: f.Energy,
+		ProjectID: f.ProjectID, ScheduledFrom: f.ScheduledFrom, ScheduledTo: f.ScheduledTo,
+		Search: f.Search, Limit: f.Limit,
+	})
+	if err != nil {
+		return ai.TaskListJSON{}, err
+	}
+	return ai.TaskListJSON{Value: list}, nil
+}
+
+// aiProjectAdapter adapts the project service to ai.ProjectCommands. Returns a
+// large page (200) — the ai list_projects tool is a "list everything" surface,
+// and 200 covers every real user; if it ever isn't enough the tool description
+// steers the model to narrow with list_tasks + projectId instead.
+type aiProjectAdapter struct {
+	projects project.Service
+}
+
+const aiProjectListLimit = 200
+
+func (a aiProjectAdapter) List(ctx context.Context, userID string) (ai.ProjectListJSON, error) {
+	list, err := a.projects.List(ctx, userID, project.ListProjectsFilter{Limit: aiProjectListLimit})
+	if err != nil {
+		return ai.ProjectListJSON{}, err
+	}
+	return ai.ProjectListJSON{Value: list}, nil
+}
+
+// aiToolExpiryAdapter adapts the ai repository to jobs.AIToolExpirySweeper so
+// the nightly cron can flip 7-day-stale pending proposals to 'expired' without
+// jobs importing the ai domain.
+type aiToolExpiryAdapter struct {
+	repo ai.Repository
+	ttl  time.Duration
+}
+
+func (a aiToolExpiryAdapter) ExpireStale(ctx context.Context) (int, error) {
+	return a.repo.ExpirePendingOlderThan(ctx, time.Now().Add(-a.ttl))
 }
 
 // attachmentGCAdapter adapts the attachment service to jobs.AttachmentGC,

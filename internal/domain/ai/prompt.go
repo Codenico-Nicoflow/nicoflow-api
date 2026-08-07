@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -22,8 +23,13 @@ const (
 const systemPromptBase = `You are Nicoflow's assistant, a focused productivity companion inside a GTD-inspired task manager.
 Help the user capture, clarify, organise, and plan their work: tasks, projects, and areas of responsibility.
 Stay on productivity and task-management topics; if asked to do something unrelated, gently steer back.
-Be concise and actionable. You cannot read or modify the user's tasks directly — advise, don't claim to act.
-Never invent task or project details you were not given.`
+Be concise and actionable.
+
+You have tools to read and to propose changes to the user's data:
+- Read tools (list_tasks, get_task, list_projects) run inline. Use them to ground answers in real data instead of guessing.
+- Write tools (complete_task, reschedule_task, create_task) do NOT execute directly. They open a confirmation card the user must approve. Never say a task is done, rescheduled, or created until the user confirms. If the user rejects a proposal, acknowledge and adjust; do not re-propose the same change immediately.
+
+Prefer a quick read before proposing a write (e.g. list_projects before create_task, get_task before reschedule_task) so the proposal references real ids. Never invent task or project details you were not given.`
 
 // buildSystemPrompt returns the static base followed by the volatile per-request
 // context block. Keeping volatile data last preserves the cacheable prefix.
@@ -68,6 +74,80 @@ func buildHistory(rows []SessionMessage) []Message {
 		msgs[len(msgs)-1].CacheBreakpoint = true
 	}
 	return msgs
+}
+
+// buildHistoryWithBlocks is buildHistory's tool-aware sibling. It preserves
+// tool_use blocks (assistant turns) and tool_result blocks (user turns) so a
+// multi-turn tool loop is faithful across retries and follow-ups.
+func buildHistoryWithBlocks(rows []SessionMessage) []Message {
+	var picked []SessionMessage
+	total := 0
+	for _, m := range rows {
+		if len(picked) >= historyMaxMessages {
+			break
+		}
+		// Approximate size by the visible content plus the raw block bytes;
+		// tool payloads can be non-trivial and shouldn't sneak past the budget.
+		total += len(m.Content) + len(m.ContentJSON)
+		if total > historyCharBudget && len(picked) > 0 {
+			break
+		}
+		picked = append(picked, m)
+	}
+	// Chronological (oldest-first) for the provider.
+	msgs := make([]Message, len(picked))
+	for i, m := range picked {
+		msgs[len(picked)-1-i] = decodeHistoryMessage(m)
+	}
+	// Cache breakpoint on the newest included message.
+	if len(msgs) > 0 {
+		msgs[len(msgs)-1].CacheBreakpoint = true
+	}
+	return msgs
+}
+
+// decodeHistoryMessage turns one persisted turn back into a provider Message.
+// If content_json is absent, we fall back to the plain text (pre-tool-loop rows
+// stay compatible). If present, we parse the blocks and re-hydrate tool_use /
+// tool_result faithfully.
+func decodeHistoryMessage(m SessionMessage) Message {
+	msg := Message{Role: Role(m.Role), Text: m.Content}
+	if len(m.ContentJSON) == 0 {
+		return msg
+	}
+	var blocks []struct {
+		Type      string          `json:"type"`
+		Text      string          `json:"text,omitempty"`
+		ID        string          `json:"id,omitempty"`
+		Name      string          `json:"name,omitempty"`
+		Input     json.RawMessage `json:"input,omitempty"`
+		ToolUseID string          `json:"tool_use_id,omitempty"`
+		Content   string          `json:"content,omitempty"`
+		IsError   bool            `json:"is_error,omitempty"`
+	}
+	if err := json.Unmarshal(m.ContentJSON, &blocks); err != nil {
+		return msg // best-effort — fall back to plain text
+	}
+	// Recompute text from blocks so it can't drift from the stored JSON.
+	var sb strings.Builder
+	for _, b := range blocks {
+		switch b.Type {
+		case "text":
+			sb.WriteString(b.Text)
+		case "tool_use":
+			msg.ToolUses = append(msg.ToolUses, ToolUseBlock{
+				ID: b.ID, Name: b.Name, Input: b.Input,
+			})
+		case "tool_result":
+			msg.ToolResults = append(msg.ToolResults, ToolResultBlock{
+				ToolUseID: b.ToolUseID, Content: b.Content, IsError: b.IsError,
+			})
+		}
+	}
+	if txt := sb.String(); txt != "" {
+		msg.Text = txt
+	}
+	return msg
 }
 
 // deriveTitle is the first-message title: trimmed, word-boundary-truncated to

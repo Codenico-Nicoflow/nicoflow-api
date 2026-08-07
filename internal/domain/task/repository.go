@@ -47,6 +47,9 @@ type Repository interface {
 	// focus time, i.e. it is not in a terminal status. A task the user does not
 	// own is indistinguishable from a missing one.
 	IsOpenable(ctx context.Context, userID, id string) (bool, error)
+	// ListForUser returns tasks the user owns, filtered by the optional
+	// UserListFilter fields. Backs the AI tool executor's list_tasks.
+	ListForUser(ctx context.Context, userID string, f UserListFilter) ([]Task, error)
 }
 
 type pgRepo struct{ db *pgxpool.Pool }
