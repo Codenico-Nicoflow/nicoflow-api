@@ -411,9 +411,10 @@ func (r *pgRepo) PromptContext(ctx context.Context, userID string) (PromptContex
 	err := r.db.QueryRow(ctx, `
 		SELECT
 			COALESCE((SELECT language FROM users WHERE id = $1 AND deleted_at IS NULL), 'en'),
+			COALESCE((SELECT timezone FROM users WHERE id = $1 AND deleted_at IS NULL), 'UTC'),
 			(SELECT COUNT(*) FROM tasks WHERE user_id = $1 AND status NOT IN ('done', 'cancelled'))`,
 		userID,
-	).Scan(&pc.Language, &pc.OpenTasks)
+	).Scan(&pc.Language, &pc.Timezone, &pc.OpenTasks)
 	if err != nil {
 		return PromptContext{}, fmt.Errorf("ai.PromptContext: %w", err)
 	}
