@@ -4,6 +4,7 @@ package ai_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"testing"
@@ -45,10 +46,12 @@ func (s *fakeProviderStream) Next() bool {
 	s.i++
 	return true
 }
-func (s *fakeProviderStream) Text() string    { return s.deltas[s.i-1] }
-func (s *fakeProviderStream) Err() error      { return s.err }
-func (s *fakeProviderStream) Usage() ai.Usage { return ai.Usage{InputTokens: 4, OutputTokens: 6} }
-func (s *fakeProviderStream) Close() error    { return nil }
+func (s *fakeProviderStream) Text() string                   { return s.deltas[s.i-1] }
+func (s *fakeProviderStream) Err() error                     { return s.err }
+func (s *fakeProviderStream) Usage() ai.Usage                { return ai.Usage{InputTokens: 4, OutputTokens: 6} }
+func (s *fakeProviderStream) Close() error                   { return nil }
+func (s *fakeProviderStream) ToolUses() []ai.ToolUseBlock    { return nil }
+func (s *fakeProviderStream) StopReason() string             { return "end_turn" }
 
 // collectSink records every delta; failAfter>0 simulates a client drop.
 type collectSink struct {
@@ -63,6 +66,8 @@ func (s *collectSink) Delta(text string) error {
 	}
 	return nil
 }
+
+func (s *collectSink) ToolProposal(_, _, _ string, _ json.RawMessage) error { return nil }
 
 func messageRows(t *testing.T, pool *pgxpool.Pool, sessionID string) []struct {
 	Role    string

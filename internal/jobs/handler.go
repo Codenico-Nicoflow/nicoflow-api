@@ -53,6 +53,18 @@ type FocusStaleSweeper interface {
 	SweepStale(ctx context.Context, dryRun bool) (FocusSweepResult, error)
 }
 
+// AIToolExpirySweeper flips pending AI tool-call proposals older than the TTL
+// (7 days by design, wired at construction) to 'expired'. Defined here (the
+// consumer) so jobs never imports the ai domain. Nil skips the step.
+type AIToolExpirySweeper interface {
+	ExpireStale(ctx context.Context) (int, error)
+}
+
+// AIToolExpiryResult is the sweep's tiny tally.
+type AIToolExpiryResult struct {
+	Expired int `json:"expired"`
+}
+
 // FocusSweepResult mirrors focus.SweepBreakdown. Considered and Closed diverge
 // under dryRun, and when a segment's own client closed it mid-sweep.
 type FocusSweepResult struct {
@@ -72,6 +84,7 @@ type Handler struct {
 	attachmentGC     AttachmentGC
 	recurrence       RecurrenceSweep
 	focusStale       FocusStaleSweeper
+	aiToolExpiry     AIToolExpirySweeper
 }
 
 // NewHandler builds the jobs Handler. attachmentGC may be nil (attachment
@@ -100,6 +113,30 @@ func (h *Handler) WithRecurrence(s RecurrenceSweep) *Handler {
 func (h *Handler) WithFocusStale(s FocusStaleSweeper) *Handler {
 	h.focusStale = s
 	return h
+}
+
+// WithAIToolExpiry injects the AI tool-call expiry sweep and returns the handler
+// for chaining. Nil leaves the step out of run-all.
+func (h *Handler) WithAIToolExpiry(s AIToolExpirySweeper) *Handler {
+	h.aiToolExpiry = s
+	return h
+}
+
+// AIToolExpiry runs one AI tool-call expiry sweep — flips pending write
+// proposals older than the TTL to 'expired'. Idempotent (a second sweep in
+// the same day finds no rows).
+func (h *Handler) AIToolExpiry(w http.ResponseWriter, r *http.Request) {
+	if h.aiToolExpiry == nil {
+		respond.JSON(w, http.StatusOK, AIToolExpiryResult{})
+		return
+	}
+	n, err := h.aiToolExpiry.ExpireStale(r.Context())
+	if err != nil {
+		log.Error().Err(err).Str("request_id", mw.GetRequestID(r.Context())).Msg("ai-tool-expiry sweep failed")
+		respond.Error(w, http.StatusInternalServerError, apperror.ErrInternalServerError, "sweep failed")
+		return
+	}
+	respond.JSON(w, http.StatusOK, AIToolExpiryResult{Expired: n})
 }
 
 // FocusStale runs one focus stale-sweep directly (ops/debug); the cron reaches it
@@ -213,6 +250,7 @@ type RunAllResult struct {
 	AttachmentGC *GCSummary                 `json:"attachmentGc,omitempty"`
 	Recurrence   *RecurrenceResult          `json:"recurrence,omitempty"`
 	FocusStale   *FocusSweepResult          `json:"focusStale,omitempty"`
+	AIToolExpiry *AIToolExpiryResult        `json:"aiToolExpiry,omitempty"`
 }
 
 // RunAll runs every sweep in sequence and returns a combined result. The single
@@ -268,6 +306,17 @@ func (h *Handler) RunAll(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result.FocusStale = &res
+	}
+
+	// AI tool-call expiry — idempotent, skipped under dryRun (no read-only mode).
+	if !dryRun && h.aiToolExpiry != nil {
+		n, err := h.aiToolExpiry.ExpireStale(r.Context())
+		if err != nil {
+			log.Error().Err(err).Str("request_id", mw.GetRequestID(r.Context())).Msg("ai-tool-expiry sweep failed")
+			respond.Error(w, http.StatusInternalServerError, apperror.ErrInternalServerError, "sweep failed")
+			return
+		}
+		result.AIToolExpiry = &AIToolExpiryResult{Expired: n}
 	}
 
 	// GC mutates the object store, so it's skipped under dryRun. A nil GC (feature

@@ -29,6 +29,7 @@ type mockRepo struct {
 	listByDateRange  func(ctx context.Context, userID, from, to string) ([]Task, error)
 	existsByID       func(ctx context.Context, id string) (bool, error)
 	isOpenable       func(ctx context.Context, userID, id string) (bool, error)
+	listForUser      func(ctx context.Context, userID string, f UserListFilter) ([]Task, error)
 }
 
 func (m *mockRepo) ListByProject(ctx context.Context, userID, projectID string, f ListTasksFilter) ([]Task, error) {
@@ -85,6 +86,12 @@ func (m *mockRepo) IsOpenable(ctx context.Context, userID, id string) (bool, err
 		return m.isOpenable(ctx, userID, id)
 	}
 	return false, nil
+}
+func (m *mockRepo) ListForUser(ctx context.Context, userID string, f UserListFilter) ([]Task, error) {
+	if m.listForUser != nil {
+		return m.listForUser(ctx, userID, f)
+	}
+	return nil, nil
 }
 
 func appErr(err error) *apperror.AppError {

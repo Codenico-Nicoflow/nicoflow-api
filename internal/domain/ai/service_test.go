@@ -2,6 +2,7 @@ package ai_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"testing"
@@ -83,6 +84,35 @@ func (m *mockRepo) PromptContext(ctx context.Context, userID string) (ai.PromptC
 		return ai.PromptContext{}, nil
 	}
 	return m.promptContext(ctx, userID)
+}
+
+// Tool-aware repository methods added for the tool-loop rewrite. The existing
+// service tests never exercise these paths, so the default no-op is enough.
+func (m *mockRepo) AppendAssistantMessageWithBlocks(ctx context.Context, sessionID, msgID, content string, _ json.RawMessage) error {
+	return m.AppendAssistantMessage(ctx, sessionID, msgID, content)
+}
+func (m *mockRepo) AppendToolResultsMessage(context.Context, string, string, json.RawMessage) error {
+	return nil
+}
+func (m *mockRepo) HistoryForWithBlocks(ctx context.Context, sessionID string, limit int) ([]ai.SessionMessage, error) {
+	return m.HistoryFor(ctx, sessionID, limit)
+}
+func (m *mockRepo) InsertPending(context.Context, ai.ToolCall) error { return nil }
+func (m *mockRepo) CountForAssistantMessage(context.Context, string, string) (int, error) {
+	return 0, nil
+}
+func (m *mockRepo) ClaimPending(context.Context, string, string, string, string) (ai.ToolCall, error) {
+	return ai.ToolCall{}, apperror.New(http.StatusConflict, apperror.ErrConflict, "not pending")
+}
+func (m *mockRepo) SaveResult(context.Context, string, json.RawMessage) error { return nil }
+func (m *mockRepo) ListPendingForSession(context.Context, string, string) ([]ai.ToolCall, error) {
+	return nil, nil
+}
+func (m *mockRepo) GetByToolUseID(context.Context, string, string, string) (ai.ToolCall, error) {
+	return ai.ToolCall{}, apperror.New(http.StatusNotFound, apperror.ErrResourceNotFound, "not found")
+}
+func (m *mockRepo) ExpirePendingOlderThan(context.Context, time.Time) (int, error) {
+	return 0, nil
 }
 
 func requireAppErr(t *testing.T, err error) *apperror.AppError {

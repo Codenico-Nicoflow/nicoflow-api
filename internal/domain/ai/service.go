@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -44,6 +45,21 @@ type Service interface {
 	// failures surface as an *apperror.AppError so the handler can still set an
 	// HTTP status; once tokens flow the sink owns the terminal event.
 	SendMessage(ctx context.Context, userID, plan, sessionID string, req SendMessageRequest, sink StreamSink) (string, error)
+	// ConfirmToolCall claims a pending proposal, runs its tool via the executor,
+	// stores the result, and re-streams the follow-up assistant response over
+	// sink. Idempotent: a second confirm → 409 CONFLICT. Does NOT reserve
+	// additional quota — it completes the same paid turn as the original
+	// SendMessage.
+	ConfirmToolCall(ctx context.Context, userID, plan, sessionID, toolUseID string, sink StreamSink) (string, error)
+	// RejectToolCall claims a pending proposal as rejected, appends a
+	// user_rejected tool_result, and re-streams the assistant's follow-up.
+	// Same idempotency + no-quota rules as ConfirmToolCall.
+	RejectToolCall(ctx context.Context, userID, plan, sessionID, toolUseID string, sink StreamSink) (string, error)
+	// ListPendingToolCalls returns the session's still-pending write proposals.
+	ListPendingToolCalls(ctx context.Context, userID, sessionID string) ([]ToolCallView, error)
+	// WithExecutor injects the tool executor (post-construction) and returns
+	// the service for chaining. Nil disables tool_use.
+	WithExecutor(e ToolExecutor) Service
 }
 
 // StreamSink is the handler-owned transport the service relays a completion
@@ -53,6 +69,10 @@ type StreamSink interface {
 	// Delta writes one text chunk and flushes. The first call transitions the
 	// response to a committed SSE stream.
 	Delta(text string) error
+	// ToolProposal writes one tool_proposal SSE frame — a write tool the model
+	// wants to run pending user confirmation. Emitted at most once per
+	// tool_use block; the loop stops after emitting write proposals.
+	ToolProposal(assistantMessageID, toolUseID, toolName string, input json.RawMessage) error
 }
 
 // Broadcaster emits a real-time event to a user's live connections. The ws
@@ -80,6 +100,7 @@ type service struct {
 	model       string
 	broadcaster Broadcaster
 	now         func() time.Time
+	executor    ToolExecutor // nil ⇒ no tool support (tools omitted from every request)
 
 	// active guards one in-flight stream per session (single-stream guard). A
 	// second concurrent stream on the same session → 409 AI_STREAM_ACTIVE.
@@ -100,6 +121,15 @@ func NewService(repo Repository, client Client, model string, broadcaster Broadc
 		now:         time.Now,
 		active:      make(map[string]struct{}),
 	}
+}
+
+// WithExecutor injects the tool executor and returns the service for chaining.
+// Post-construction because the executor depends on task/project services that
+// meet the ai service only in main.go — mirrors WithCleaner on the task service.
+// Nil executor disables tool_use entirely (tools omitted from ChatRequest).
+func (s *service) WithExecutor(e ToolExecutor) Service {
+	s.executor = e
+	return s
 }
 
 func (s *service) CreateSession(ctx context.Context, userID string, req CreateSessionRequest) (SessionView, error) {

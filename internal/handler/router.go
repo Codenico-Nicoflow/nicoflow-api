@@ -108,6 +108,7 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/attachment-gc", h.Jobs.AttachmentGC)
 	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/recurrence", h.Jobs.Recurrence)
 	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/focus-stale", h.Jobs.FocusStale)
+	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/ai-tool-expiry", h.Jobs.AIToolExpiry)
 	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/run-all", h.Jobs.RunAll)
 
 	// Auth — stricter per-endpoint IP rate limits
@@ -285,6 +286,13 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 			// Send is the metered streaming endpoint — stricter per-user bucket on
 			// top of the global user limiter (burst 10, 10/min).
 			r.With(mw.RateLimitUser(10, 10)).Post("/ai/sessions/{id}/messages", h.AI.SendMessage)
+
+			// Tool-call proposals (NIC-ai-tool-use). Confirm/reject each stream
+			// the follow-up assistant response over SSE, same shape as SendMessage;
+			// no additional quota is reserved — they complete the same paid turn.
+			r.Get("/ai/sessions/{id}/tool-calls", h.AI.ListToolCalls)
+			r.With(mw.RateLimitUser(10, 10)).Post("/ai/sessions/{id}/tool-calls/{toolUseId}/confirm", h.AI.ConfirmToolCall)
+			r.With(mw.RateLimitUser(10, 10)).Post("/ai/sessions/{id}/tool-calls/{toolUseId}/reject", h.AI.RejectToolCall)
 
 			// NLP smart scheduling (Pro only — PlanEnforcer added in E-028)
 			r.Post("/nlp/parse", h.AI.ParseNLP)
