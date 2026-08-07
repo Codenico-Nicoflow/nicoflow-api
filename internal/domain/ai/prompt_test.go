@@ -92,16 +92,28 @@ func TestBuildHistory_Empty(t *testing.T) {
 }
 
 func TestBuildSystemPrompt(t *testing.T) {
-	now := time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC) // a Sunday
 	got := buildSystemPrompt(PromptContext{Language: "he", OpenTasks: 7}, now)
 
 	if !strings.HasPrefix(got, systemPromptBase) {
 		t.Error("system prompt must start with the static base (cacheable prefix)")
 	}
-	for _, want := range []string{"2026-07-26", "he", "Open tasks: 7"} {
+	for _, want := range []string{"2026-07-26", "Sunday", "he", "Open tasks: 7"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("system prompt missing %q", want)
 		}
+	}
+}
+
+// Claude deriving the weekday itself from a bare ISO date has been observed
+// naming the wrong day — the prompt must spell it out so there's nothing to
+// get wrong.
+func TestBuildSystemPrompt_SpellsOutWeekday(t *testing.T) {
+	now := time.Date(2026, 8, 7, 10, 0, 0, 0, time.UTC) // a Friday
+	got := buildSystemPrompt(PromptContext{Language: "en"}, now)
+
+	if !strings.Contains(got, "2026-08-07 (Friday)") {
+		t.Errorf("expected the weekday spelled out next to the date, got: %s", got)
 	}
 }
 
