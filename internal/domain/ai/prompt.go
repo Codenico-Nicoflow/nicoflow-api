@@ -38,10 +38,15 @@ func buildSystemPrompt(pc PromptContext, now time.Time) string {
 	if lang == "" {
 		lang = "en"
 	}
+	loc, err := time.LoadLocation(pc.Timezone)
+	if err != nil {
+		loc = time.UTC
+	}
+
 	var b strings.Builder
 	b.WriteString(systemPromptBase)
 	b.WriteString("\n\n---\nContext:\n")
-	fmt.Fprintf(&b, "- Today's date: %s\n", now.UTC().Format("2006-01-02"))
+	fmt.Fprintf(&b, "- Today's date: %s\n", now.In(loc).Format("2006-01-02"))
 	fmt.Fprintf(&b, "- User's preferred language: %s (reply in this language)\n", lang)
 	fmt.Fprintf(&b, "- Open tasks: %d", pc.OpenTasks)
 	return b.String()
