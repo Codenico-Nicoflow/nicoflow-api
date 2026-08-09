@@ -85,10 +85,11 @@ func (d *pushDispatcher) Send(ctx context.Context, userID string, view Notificat
 	}
 
 	payload, err := json.Marshal(struct {
-		Title string `json:"title"`
-		Body  string `json:"body"`
-		Type  string `json:"type"`
-	}{Title: view.Title, Body: view.Body, Type: view.Type})
+		Title    string          `json:"title"`
+		Body     string          `json:"body"`
+		Type     string          `json:"type"`
+		Metadata json.RawMessage `json:"metadata,omitempty"`
+	}{Title: view.Title, Body: view.Body, Type: view.Type, Metadata: view.Metadata})
 	if err != nil {
 		return err
 	}
