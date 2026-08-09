@@ -96,8 +96,8 @@ func TestUpdate_TaskCompletedMetadataAndDedupe(t *testing.T) {
 	if n.DedupeKey == nil || *n.DedupeKey != "task_completed:t1" {
 		t.Errorf("dedupeKey = %v, want task_completed:t1", n.DedupeKey)
 	}
-	if string(n.Metadata) != `{"taskId":"t1"}` {
-		t.Errorf("metadata = %s, want {\"taskId\":\"t1\"}", n.Metadata)
+	if string(n.Metadata) != `{"projectId":"p1","taskId":"t1"}` {
+		t.Errorf("metadata = %s, want {\"projectId\":\"p1\",\"taskId\":\"t1\"}", n.Metadata)
 	}
 }
 
