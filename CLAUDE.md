@@ -197,7 +197,7 @@ recover → request_id → logger → security_headers → cors → ratelimit_ip
 
 | Limiter             | Scope  | Limit         | Burst |
 | ------------------- | ------ | ------------- | ----- |
-| IP-based (global)   | IP     | 100 req/min   | 20    |
+| IP-based (global)   | IP     | 600 req/min   | 120   |
 | User-based (global) | UserID | 1000 req/min  | 100   |
 
 Auth-specific stricter per-IP buckets (via `r.With(mw.RateLimitIP(n, n, trustedProxies))`):

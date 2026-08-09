@@ -67,10 +67,11 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 	r.Use(mw.SecurityHeaders)
 	// 5. CORS — Allow-Origin headers
 	r.Use(mw.CORS(cfg.CORSOrigins))
-	// 6. Rate limit by IP (global)
+	// 6. Rate limit by IP (global). Burst 120 / 600 per min (10/s) — sized for a
+	// dozen concurrent XHRs per page load behind a shared proxy IP, not just one.
 	trustedProxies := splitCSV(cfg.TrustedProxyCIDRs)
 	mw.SetRateLimitBypassToken(cfg.RateLimitBypassToken)
-	r.Use(mw.RateLimitIP(100, 20, trustedProxies))
+	r.Use(mw.RateLimitIP(600, 120, trustedProxies))
 
 	// ── Public routes ──────────────────────────────────────────────────────────
 	r.Get("/v1/health", Health(pool))
