@@ -368,7 +368,7 @@ func TestBucket_ProcessNote_NoLonger501(t *testing.T) {
 func TestBucket_ProcessToTask_PlanCap_403_LeavesUnprocessed(t *testing.T) {
 	env := newBucketServer(t, "free")
 
-	// Fill the project to the 50 active/inbox cap directly via the API.
+	// Fill the project to the 50 active-task cap directly via the API.
 	for i := 0; i < 50; i++ {
 		r := do(t, env.srv, http.MethodPost, "/v1/projects/"+env.projectID+"/tasks", map[string]any{"title": "t"}, env.token)
 		assertStatus(t, r, http.StatusCreated)

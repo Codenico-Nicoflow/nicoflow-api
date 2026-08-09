@@ -53,9 +53,9 @@ func TestIntegration_TimeSpread_BucketsAndRollForward(t *testing.T) {
 	tomorrow := createTask(t, env, map[string]any{"title": "tomorrow-task", "status": "active"})
 	patchTask(t, env, "/v1/tasks/"+tomorrow.ID+"/schedule", map[string]any{"scheduledFor": isoDay(1)})
 
-	// someday must never appear.
-	someday := createTask(t, env, map[string]any{"title": "someday-task", "status": "someday"})
-	patchTask(t, env, "/v1/tasks/"+someday.ID+"/schedule", map[string]any{"scheduledFor": isoDay(0)})
+	// cancelled must never appear, even when scheduled for today.
+	cancelled := createTask(t, env, map[string]any{"title": "cancelled-task", "status": "cancelled"})
+	patchTask(t, env, "/v1/tasks/"+cancelled.ID+"/schedule", map[string]any{"scheduledFor": isoDay(0)})
 
 	ts := timeSpread(t, env)
 
@@ -75,7 +75,7 @@ func TestIntegration_TimeSpread_BucketsAndRollForward(t *testing.T) {
 	if all("dropped") {
 		t.Error("non-rollsOver past task should drop off entirely")
 	}
-	if all("someday-task") {
-		t.Error("someday task must be excluded from all buckets")
+	if all("cancelled-task") {
+		t.Error("cancelled task must be excluded from all buckets")
 	}
 }

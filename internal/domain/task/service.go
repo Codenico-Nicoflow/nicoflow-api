@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	// FreePlanTaskLimit counts only active+inbox tasks per project (calm limit).
+	// FreePlanTaskLimit counts only active tasks per project (calm limit).
 	// Exported so the recurrence materializer enforces the same ceiling rather
 	// than duplicating the number.
 	FreePlanTaskLimit = 50
@@ -23,14 +23,12 @@ const (
 	// in this package compares against.
 	planFree = "free"
 
-	statusDone = "done"
-	// statusMissed is a recurring occurrence whose window closed without
-	// completion. Deliberately distinct from "cancelled" (the user decided
-	// against it) — the streak calculation has to tell them apart.
-	statusMissed   = "missed"
-	defaultStatus  = "inbox"
-	defaultPriorty = "medium"
-	defaultEnergy  = "medium"
+	statusActive    = "active"
+	statusDone      = "done"
+	statusCancelled = "cancelled"
+	defaultStatus   = statusActive
+	defaultPriorty  = "medium"
+	defaultEnergy   = "medium"
 
 	maxTitleLen = 255
 	maxNotesLen = 2000
@@ -41,11 +39,9 @@ const (
 )
 
 var (
-	allowedStatuses   = map[string]bool{"inbox": true, "active": true, "someday": true, "done": true, "cancelled": true, statusMissed: true}
+	allowedStatuses   = map[string]bool{statusActive: true, statusDone: true, statusCancelled: true}
 	allowedPriorities = map[string]bool{"low": true, "medium": true, "high": true}
 	allowedEnergies   = map[string]bool{"low": true, "medium": true, "deep": true}
-	// activeInboxStatuses are the statuses that count against the plan limit.
-	activeInboxStatuses = map[string]bool{"active": true, "inbox": true}
 )
 
 // Service defines the task business logic interface.
@@ -201,8 +197,8 @@ func (s *service) CreateWithoutEvent(ctx context.Context, userID, projectID, pla
 		return TaskView{}, apperror.New(http.StatusNotFound, apperror.ErrProjectNotFound, "project not found")
 	}
 
-	// Plan limit: a new active/inbox task must not exceed the free cap.
-	if plan == "free" && activeInboxStatuses[req.Status] {
+	// Plan limit: a new active task must not exceed the free cap.
+	if plan == "free" && req.Status == statusActive {
 		if err := s.enforceTaskLimit(ctx, userID, projectID); err != nil {
 			return TaskView{}, err
 		}
@@ -272,9 +268,9 @@ func (s *service) update(ctx context.Context, userID, id, plan string, req Updat
 	// PATCH, so a new estimate must still respect an already-stored time.
 	req.EstimatedMinutes = clampUpdateEstimate(req, *current)
 
-	// Plan limit applies when a PATCH moves a task INTO active/inbox.
+	// Plan limit applies when a PATCH moves a task INTO active.
 	if plan == "free" && req.Status != nil &&
-		activeInboxStatuses[*req.Status] && !activeInboxStatuses[current.Status] {
+		*req.Status == statusActive && current.Status != statusActive {
 		if err := s.enforceTaskLimit(ctx, userID, current.ProjectID); err != nil {
 			return TaskView{}, err
 		}
@@ -317,9 +313,9 @@ const (
 	maxFocusLimit     = 20
 )
 
-// Focus returns a deterministically-ranked short list of the user's active+inbox
+// Focus returns a deterministically-ranked short list of the user's active
 // tasks that fit the given time/energy. Candidate set spans all projects;
-// someday/done/cancelled are excluded at the repo. Scoring is pure (focus.go).
+// done/cancelled are excluded at the repo. Scoring is pure (focus.go).
 func (s *service) Focus(ctx context.Context, userID string, p FocusParams) (ListTasksResponse, error) {
 	if p.Energy != "" && !allowedEnergies[p.Energy] {
 		return ListTasksResponse{}, errInvalidEnergy()
@@ -334,7 +330,7 @@ func (s *service) Focus(ctx context.Context, userID string, p FocusParams) (List
 		p.Limit = maxFocusLimit
 	}
 
-	candidates, err := s.repo.ListActiveInboxByUser(ctx, userID)
+	candidates, err := s.repo.ListActiveByUser(ctx, userID)
 	if err != nil {
 		return ListTasksResponse{}, err
 	}
@@ -371,7 +367,7 @@ func (s *service) ListByDateRange(ctx context.Context, userID, from, to string) 
 	return ListTasksResponse{Items: items}, nil
 }
 
-// TimeSpread buckets the user's active+inbox tasks into today/tomorrow/this-week
+// TimeSpread buckets the user's active tasks into today/tomorrow/this-week
 // with the no-guilt roll-forward. Bucketing is pure (timespread.go); the clock
 // is injected so tests are reproducible. `loc` sets which day boundary counts as
 // "today" — the injected now is anchored to it before bucketing.
@@ -379,16 +375,16 @@ func (s *service) TimeSpread(ctx context.Context, userID string, loc *time.Locat
 	if loc == nil {
 		loc = time.UTC
 	}
-	candidates, err := s.repo.ListActiveInboxByUser(ctx, userID)
+	candidates, err := s.repo.ListActiveByUser(ctx, userID)
 	if err != nil {
 		return TimeSpreadResponse{}, err
 	}
 	return bucketTimeSpread(candidates, s.now().In(loc)), nil
 }
 
-// SetStatus is a shorthand for a status-only PATCH (checkbox toggle, move to
-// someday, etc.). It reuses Update so completedAt side-effects and the plan
-// limit on moving into active/inbox are applied identically.
+// SetStatus is a shorthand for a status-only PATCH (checkbox toggle, cancel,
+// etc.). It reuses Update so completedAt side-effects and the plan limit on
+// moving into active are applied identically.
 func (s *service) SetStatus(ctx context.Context, userID, id, plan, status string) (TaskView, error) {
 	if status == "" {
 		return TaskView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "status is required")
@@ -457,7 +453,7 @@ func (s *service) ReorderOne(ctx context.Context, userID, id string, displayOrde
 }
 
 func (s *service) enforceTaskLimit(ctx context.Context, userID, projectID string) error {
-	count, err := s.repo.CountActiveInbox(ctx, userID, projectID)
+	count, err := s.repo.CountActive(ctx, userID, projectID)
 	if err != nil {
 		return fmt.Errorf("task plan-limit count: %w", err)
 	}
@@ -569,7 +565,7 @@ func validateOptional(notes *string, estimatedMinutes *int, url *string) error {
 }
 
 func errInvalidStatus() error {
-	return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidStatus, "status must be one of: inbox, active, someday, done, cancelled")
+	return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidStatus, "status must be one of: active, done, cancelled")
 }
 
 func errInvalidPriority() error {

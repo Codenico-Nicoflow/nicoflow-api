@@ -452,7 +452,7 @@ func TestIntegration_Project_Delete_NullsTaskProjectID(t *testing.T) {
 		`INSERT INTO tasks (id, user_id, project_id, title, status)
 		 VALUES (gen_random_uuid()::text,
 		         (SELECT id FROM users WHERE email = $1),
-		         $2, 'My Task', 'inbox')`,
+		         $2, 'My Task', 'active')`,
 		"usera@project-integration.test", p.ID,
 	)
 	if err != nil {

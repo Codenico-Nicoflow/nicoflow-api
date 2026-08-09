@@ -180,7 +180,6 @@ func TestHandler_OpenRejectsUnownedAndTerminal(t *testing.T) {
 		{"nonexistent task", `{"taskId":"` + uuid.NewString() + `"}`, http.StatusNotFound, apperror.ErrTaskNotFound},
 		{"done task", `{"taskId":"` + seedTaskWithStatus(t, pool, userID, "done") + `"}`, http.StatusNotFound, apperror.ErrTaskNotFound},
 		{"cancelled task", `{"taskId":"` + seedTaskWithStatus(t, pool, userID, "cancelled") + `"}`, http.StatusNotFound, apperror.ErrTaskNotFound},
-		{"missed task", `{"taskId":"` + seedTaskWithStatus(t, pool, userID, "missed") + `"}`, http.StatusNotFound, apperror.ErrTaskNotFound},
 		{"empty taskId", `{"taskId":""}`, http.StatusBadRequest, apperror.ErrInvalidInput},
 		{"malformed body", `{`, http.StatusBadRequest, apperror.ErrInvalidInput},
 		{"unknown field", `{"taskId":"x","durationSeconds":9999}`, http.StatusBadRequest, apperror.ErrInvalidInput},

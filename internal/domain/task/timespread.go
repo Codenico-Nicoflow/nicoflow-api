@@ -9,7 +9,7 @@ type TimeSpreadResponse struct {
 	ThisWeek []TaskView `json:"thisWeek"`
 }
 
-// bucketTimeSpread sorts the candidate set (already active+inbox only) into
+// bucketTimeSpread sorts the candidate set (already active-only) into
 // today / tomorrow / this-week relative to `now`, applying the no-guilt
 // roll-forward. Pure: `now` is injected, never read here.
 //

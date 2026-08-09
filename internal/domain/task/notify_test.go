@@ -58,7 +58,7 @@ func TestUpdate_EmitsOnDoneEdge(t *testing.T) {
 		{"active->done, last one: task+project completed", "active", "done", 0,
 			[]string{notification.TypeTaskCompleted, notification.TypeProjectCompleted}},
 		{"done->done: no edge, nothing fires", "done", "done", 0, nil},
-		{"active->someday: not done, nothing fires", "active", "someday", 0, nil},
+		{"active->cancelled: not done, nothing fires", "active", "cancelled", 0, nil},
 		{"done->active (reopen): nothing fires", "done", "active", 5, nil},
 	}
 	for _, tt := range tests {

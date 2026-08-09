@@ -32,7 +32,7 @@ func NewHandler(svc Service, subtaskSvc SubtaskService) *Handler {
 // @Tags         tasks
 // @Produce      json
 // @Param        projectId  path      string  true   "Project ID"
-// @Param        status     query     string  false  "Filter by status (inbox|active|someday|done|cancelled)"
+// @Param        status     query     string  false  "Filter by status (active|done|cancelled)"
 // @Param        priority   query     string  false  "Filter by priority (low|medium|high)"
 // @Param        energy     query     string  false  "Filter by energy (low|medium|deep)"
 // @Param        search     query     string  false  "ILIKE search over title + notes"
@@ -100,7 +100,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 
 // Create godoc
 // @Summary      Create a task
-// @Description  Creates a task in a project. Title-only is valid (quick-add); other fields default server-side (status=inbox, priority=medium, energy=medium, rollsOver=true). Free plan allows 50 active+inbox tasks per project.
+// @Description  Creates a task in a project. Title-only is valid (quick-add); other fields default server-side (status=active, priority=medium, energy=medium, rollsOver=true). Free plan allows 50 active tasks per project.
 // @Tags         tasks
 // @Accept       json
 // @Produce      json
@@ -133,7 +133,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 
 // Update godoc
 // @Summary      Update a task
-// @Description  Partial update of any mutable field. status→done sets completedAt server-side; moving away from done clears it. A PATCH that moves a task into active/inbox is subject to the plan limit.
+// @Description  Partial update of any mutable field. status→done sets completedAt server-side; moving away from done clears it. A PATCH that moves a task into active is subject to the plan limit.
 // @Tags         tasks
 // @Accept       json
 // @Produce      json
@@ -186,7 +186,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 
 // SetStatus godoc
 // @Summary      Set task status (shorthand)
-// @Description  Status-only update (checkbox toggle, move to someday). Same completedAt side-effects and plan-limit semantics as the full PATCH.
+// @Description  Status-only update (checkbox toggle, cancel). Same completedAt side-effects and plan-limit semantics as the full PATCH.
 // @Tags         tasks
 // @Accept       json
 // @Produce      json
@@ -284,7 +284,7 @@ func (h *Handler) ReorderOne(w http.ResponseWriter, r *http.Request) {
 
 // Focus godoc
 // @Summary      Focus — what can I do right now?
-// @Description  Returns a deterministically-ranked short list of the user's active+inbox tasks (across all projects) that fit the given time/energy. Scoring: energy match, time-budget fit (over-budget excluded), due/overdue escalation, scheduled proximity, priority tiebreak.
+// @Description  Returns a deterministically-ranked short list of the user's active tasks (across all projects) that fit the given time/energy. Scoring: energy match, time-budget fit (over-budget excluded), due/overdue escalation, scheduled proximity, priority tiebreak.
 // @Tags         tasks
 // @Produce      json
 // @Param        available  query     int     false  "Minutes available (over-budget tasks excluded)"
@@ -349,7 +349,7 @@ func (h *Handler) ListByDateRange(w http.ResponseWriter, r *http.Request) {
 
 // TimeSpread godoc
 // @Summary      Time spread (today / tomorrow / this week)
-// @Description  Buckets the user's active+inbox tasks into today/tomorrow/thisWeek with the no-guilt roll-forward (a past soft-scheduled task with rollsOver=true carries to today instead of going overdue). someday/done/cancelled are excluded.
+// @Description  Buckets the user's active tasks into today/tomorrow/thisWeek with the no-guilt roll-forward (a past soft-scheduled task with rollsOver=true carries to today instead of going overdue). done/cancelled are excluded.
 // @Tags         tasks
 // @Produce      json
 // @Security     BearerAuth

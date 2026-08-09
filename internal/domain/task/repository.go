@@ -21,11 +21,10 @@ type Repository interface {
 	Delete(ctx context.Context, userID, id string) error
 	// ProjectOwned reports whether the project exists and belongs to the user.
 	ProjectOwned(ctx context.Context, userID, projectID string) (bool, error)
-	// CountActiveInbox counts only active+inbox tasks in a project (the calm plan limit).
-	CountActiveInbox(ctx context.Context, userID, projectID string) (int, error)
-	// CountNonTerminalByProject counts a project's tasks that are NOT done/cancelled
-	// (i.e. inbox/active/someday). Zero means the project is fully complete — the
-	// signal for the project_completed notification.
+	// CountActive counts only active tasks in a project (the calm plan limit).
+	CountActive(ctx context.Context, userID, projectID string) (int, error)
+	// CountNonTerminalByProject counts a project's active tasks. Zero means the
+	// project is fully complete — the signal for the project_completed notification.
 	CountNonTerminalByProject(ctx context.Context, userID, projectID string) (int, error)
 	// NextDisplayOrder returns the order to append a new task at the end of a project.
 	NextDisplayOrder(ctx context.Context, userID, projectID string) (int, error)
@@ -37,9 +36,9 @@ type Repository interface {
 	ListByDateRange(ctx context.Context, userID, from, to string) ([]Task, error)
 	// Repack moves a task to targetOrder and renumbers its project siblings 0..n-1.
 	Repack(ctx context.Context, userID, id string, targetOrder int) (Task, error)
-	// ListActiveInboxByUser returns the user's active+inbox tasks across ALL
-	// projects — the candidate set for Focus and Time-Spread.
-	ListActiveInboxByUser(ctx context.Context, userID string) ([]Task, error)
+	// ListActiveByUser returns the user's active tasks across ALL projects —
+	// the candidate set for Focus and Time-Spread.
+	ListActiveByUser(ctx context.Context, userID string) ([]Task, error)
 	// ExistsByID reports whether a task exists, system-wide (no user scope). Used
 	// by the attachment GC sweep to detect dead owners; not for user requests.
 	ExistsByID(ctx context.Context, id string) (bool, error)
@@ -103,14 +102,14 @@ func (r *pgRepo) ListByProject(ctx context.Context, userID, projectID string, f 
 	return tasks, rows.Err()
 }
 
-func (r *pgRepo) ListActiveInboxByUser(ctx context.Context, userID string) ([]Task, error) {
+func (r *pgRepo) ListActiveByUser(ctx context.Context, userID string) ([]Task, error) {
 	rows, err := r.db.Query(ctx,
 		`SELECT`+taskSelectCols+`FROM tasks
-		 WHERE user_id = @userID AND status IN ('active', 'inbox')`,
+		 WHERE user_id = @userID AND status = 'active'`,
 		pgx.NamedArgs{"userID": userID},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("task.ListActiveInboxByUser: %w", err)
+		return nil, fmt.Errorf("task.ListActiveByUser: %w", err)
 	}
 	defer rows.Close()
 
@@ -118,7 +117,7 @@ func (r *pgRepo) ListActiveInboxByUser(ctx context.Context, userID string) ([]Ta
 	for rows.Next() {
 		var t Task
 		if err := scanTask(rows, &t); err != nil {
-			return nil, fmt.Errorf("task.ListActiveInboxByUser scan: %w", err)
+			return nil, fmt.Errorf("task.ListActiveByUser scan: %w", err)
 		}
 		tasks = append(tasks, t)
 	}
@@ -314,15 +313,14 @@ func (r *pgRepo) ExistsByID(ctx context.Context, id string) (bool, error) {
 }
 
 // IsOpenable gates opening a focus segment: the caller must own the task and it
-// must not be terminal. `missed` counts as terminal alongside done/cancelled —
-// its window has closed, so it can no longer accrue time.
+// must not be terminal (done/cancelled).
 func (r *pgRepo) IsOpenable(ctx context.Context, userID, id string) (bool, error) {
 	var openable bool
 	err := r.db.QueryRow(ctx,
 		`SELECT EXISTS(
 			SELECT 1 FROM tasks
 			WHERE id = @id AND user_id = @user_id
-			  AND status NOT IN ('done', 'cancelled', 'missed')
+			  AND status NOT IN ('done', 'cancelled')
 		)`,
 		pgx.NamedArgs{"id": id, "user_id": userID},
 	).Scan(&openable)
@@ -344,15 +342,15 @@ func (r *pgRepo) ProjectOwned(ctx context.Context, userID, projectID string) (bo
 	return exists, nil
 }
 
-func (r *pgRepo) CountActiveInbox(ctx context.Context, userID, projectID string) (int, error) {
+func (r *pgRepo) CountActive(ctx context.Context, userID, projectID string) (int, error) {
 	var count int
 	err := r.db.QueryRow(ctx,
 		`SELECT COUNT(*) FROM tasks
-		 WHERE user_id = @userID AND project_id = @projectID AND status IN ('active', 'inbox')`,
+		 WHERE user_id = @userID AND project_id = @projectID AND status = 'active'`,
 		pgx.NamedArgs{"userID": userID, "projectID": projectID},
 	).Scan(&count)
 	if err != nil {
-		return 0, fmt.Errorf("task.CountActiveInbox: %w", err)
+		return 0, fmt.Errorf("task.CountActive: %w", err)
 	}
 	return count, nil
 }

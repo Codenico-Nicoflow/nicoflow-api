@@ -14,7 +14,7 @@ import (
 func timedRepo(stored Task, persisted *Task) *mockRepo {
 	return &mockRepo{
 		projectOwned:     func(context.Context, string, string) (bool, error) { return true, nil },
-		countActiveInbox: func(context.Context, string, string) (int, error) { return 0, nil },
+		countActive:      func(context.Context, string, string) (int, error) { return 0, nil },
 		nextDisplayOrder: func(context.Context, string, string) (int, error) { return 0, nil },
 		getByID: func(context.Context, string, string) (*Task, error) {
 			t := stored

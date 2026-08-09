@@ -75,8 +75,11 @@ func (r *pgRepository) SearchTasks(ctx context.Context, userID, term string, lim
 		  AND t.search_vector @@ to_tsquery('simple', $2)
 		  -- Terminal recurrence occurrences stay out of search (E-050): years of
 		  -- history would drown the live results. Reachable from the rule detail
-		  -- view instead. One-off done tasks are unaffected.
-		  AND (t.recurrence_rule_id IS NULL OR t.status NOT IN ('done', 'missed'))
+		  -- view instead. A user-cancelled occurrence (status='cancelled',
+		  -- occurrence_status NULL) is distinct from a reaped/missed one
+		  -- (status='cancelled', occurrence_status='missed') and stays searchable.
+		  -- One-off done tasks are unaffected.
+		  AND (t.recurrence_rule_id IS NULL OR (t.status != 'done' AND t.occurrence_status IS DISTINCT FROM 'missed'))
 		ORDER BY ts_rank(t.search_vector, to_tsquery('simple', $2)) DESC, t.created_at DESC
 		LIMIT $3`
 

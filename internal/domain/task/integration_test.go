@@ -226,7 +226,7 @@ func TestIntegration_Task_QuickAdd_TitleOnly(t *testing.T) {
 	if v.Title != "Buy milk" {
 		t.Errorf("title = %q", v.Title)
 	}
-	if v.Status != "inbox" || v.Priority != "medium" || v.Energy != "medium" || !v.RollsOver {
+	if v.Status != "active" || v.Priority != "medium" || v.Energy != "medium" || !v.RollsOver {
 		t.Errorf("defaults wrong: %+v", v)
 	}
 }
@@ -371,9 +371,9 @@ func TestIntegration_Task_PlanLimit_ActiveInboxOnly(t *testing.T) {
 	assertStatus(t, resp, http.StatusForbidden)
 	assertErrCode(t, resp, "PLAN_LIMIT_EXCEEDED")
 
-	// someday does NOT count -> still allowed at the cap.
+	// done does NOT count -> still allowed at the cap.
 	resp = do(t, env.srv, http.MethodPost, "/v1/projects/"+env.projectID+"/tasks",
-		map[string]any{"title": "later", "status": "someday"}, env.token)
+		map[string]any{"title": "later", "status": "done"}, env.token)
 	assertStatus(t, resp, http.StatusCreated)
 }
 
@@ -419,7 +419,7 @@ func patchTask(t *testing.T, env taskEnv, path string, body any) task.TaskView {
 
 func TestIntegration_Task_StatusToggle(t *testing.T) {
 	env := newTaskServer(t, "pro")
-	created := createTask(t, env, map[string]any{"title": "t", "status": "inbox"})
+	created := createTask(t, env, map[string]any{"title": "t", "status": "cancelled"})
 
 	active := patchTask(t, env, "/v1/tasks/"+created.ID+"/status", map[string]any{"status": "active"})
 	if active.Status != "active" || active.CompletedAt != nil {
@@ -475,7 +475,7 @@ func TestIntegration_Task_FilterSortSearch(t *testing.T) {
 	env := newTaskServer(t, "pro")
 	createTask(t, env, map[string]any{"title": "Write spec", "status": "active", "energy": "deep", "priority": "high"})
 	createTask(t, env, map[string]any{"title": "Quick reply", "status": "active", "energy": "low", "priority": "low"})
-	createTask(t, env, map[string]any{"title": "Read notes", "notes": "review the spec doc", "status": "inbox", "energy": "low"})
+	createTask(t, env, map[string]any{"title": "Read notes", "notes": "review the spec doc", "status": "cancelled", "energy": "low"})
 
 	if got := listTasks(t, env, "?energy=low"); len(got) != 2 {
 		t.Errorf("energy=low len = %d, want 2", len(got))
@@ -558,12 +558,9 @@ func TestIntegration_Task_IsOpenable(t *testing.T) {
 		taskID string
 		want   bool
 	}{
-		{"inbox is openable", seed(ownerID, "inbox"), true},
 		{"active is openable", seed(ownerID, "active"), true},
-		{"someday is openable", seed(ownerID, "someday"), true},
 		{"done is terminal", seed(ownerID, "done"), false},
 		{"cancelled is terminal", seed(ownerID, "cancelled"), false},
-		{"missed is terminal", seed(ownerID, "missed"), false},
 		{"another user's task", seed(otherID, "active"), false},
 		{"nonexistent task", uuid.New().String(), false},
 	}

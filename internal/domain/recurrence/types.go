@@ -28,9 +28,14 @@ const (
 	EventDeleted = "recurrence.deleted"
 )
 
-// Occurrence statuses this domain reads or writes. They mirror the task domain's
-// enum; duplicated as constants here so recurrence never imports task (the
-// dependency runs the other way, via the task package's Materializer seam).
+// Occurrence statuses this domain reads. Active/Done/Cancelled mirror the task
+// domain's status enum; duplicated as constants here so recurrence never
+// imports task (the dependency runs the other way, via the task package's
+// Materializer seam). Missed is synthetic — never a tasks.status value, always
+// COALESCE(occurrence_status, status) in this package's queries — because a
+// reaped occurrence's real status is 'cancelled' (so it behaves like any other
+// cancelled task everywhere outside this package) while occurrence_status
+// carries the "it lapsed, not the user" distinction the streak calc needs.
 const (
 	StatusActive    = "active"
 	StatusDone      = "done"

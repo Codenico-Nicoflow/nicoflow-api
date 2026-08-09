@@ -496,11 +496,15 @@ func seedUserTZ(t *testing.T, pool *pgxpool.Pool, tz string) string {
 	return id
 }
 
+// taskStatus returns the occurrence's effective status the way the streak
+// calculator sees it: COALESCE(occurrence_status, status), so a reaped/missed
+// occurrence reads as "missed" even though its real status column is
+// 'cancelled'.
 func taskStatus(t *testing.T, pool *pgxpool.Pool, ruleID, occDate string) string {
 	t.Helper()
 	var s string
 	if err := pool.QueryRow(context.Background(),
-		`SELECT status FROM tasks WHERE recurrence_rule_id = $1 AND occurrence_date = $2`,
+		`SELECT COALESCE(occurrence_status, status) FROM tasks WHERE recurrence_rule_id = $1 AND occurrence_date = $2`,
 		ruleID, occDate,
 	).Scan(&s); err != nil {
 		t.Fatalf("taskStatus(%s): %v", occDate, err)
@@ -759,12 +763,22 @@ func TestRepo_OccurrenceStatsAndStreak(t *testing.T) {
 	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02")); err != nil {
 		t.Fatalf("create: %v", err)
 	}
+	// add seeds an occurrence row with the given *effective* status (what the
+	// streak calculator sees). "missed" is synthetic — never a real status
+	// value — so it lands in occurrence_status with status='cancelled',
+	// matching what Materialize's reap actually writes.
 	add := func(d, status string) {
+		realStatus, occStatus := status, (*string)(nil)
+		if status == "missed" {
+			realStatus = "cancelled"
+			m := "missed"
+			occStatus = &m
+		}
 		if _, err := pool.Exec(ctx, `
-			INSERT INTO tasks (id, user_id, project_id, title, status, priority, energy,
-				display_order, recurrence_rule_id, occurrence_date)
-			VALUES ($1, $2, $3, 'occ', $4, 'medium', 'medium', 0, $5, $6::date)`,
-			uuid.NewString(), userID, projectID, status, rule.ID, d,
+			INSERT INTO tasks (id, user_id, project_id, title, status, occurrence_status,
+				priority, energy, display_order, recurrence_rule_id, occurrence_date)
+			VALUES ($1, $2, $3, 'occ', $4, $5, 'medium', 'medium', 0, $6, $7::date)`,
+			uuid.NewString(), userID, projectID, realStatus, occStatus, rule.ID, d,
 		); err != nil {
 			t.Fatalf("add %s: %v", d, err)
 		}

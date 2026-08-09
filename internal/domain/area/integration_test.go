@@ -405,7 +405,7 @@ func TestIntegration_Area_Delete_CascadesProjectsAndTasks(t *testing.T) {
 		}
 		if _, err := pool.Exec(context.Background(), `
 			INSERT INTO tasks (id, user_id, project_id, title, status)
-			VALUES ($1, $2, $3, $4, 'inbox')`,
+			VALUES ($1, $2, $3, $4, 'active')`,
 			taskIDs[i], userID, pid, fmt.Sprintf("Task %d", i+1),
 		); err != nil {
 			t.Fatalf("insert task: %v", err)
