@@ -20,12 +20,12 @@ type mockRepo struct {
 	update           func(ctx context.Context, userID, id string, req UpdateTaskRequest, ca completedAtChange) (Task, error)
 	deleteFn         func(ctx context.Context, userID, id string) error
 	projectOwned     func(ctx context.Context, userID, projectID string) (bool, error)
-	countActiveInbox func(ctx context.Context, userID, projectID string) (int, error)
+	countActive      func(ctx context.Context, userID, projectID string) (int, error)
 	countNonTerminal func(ctx context.Context, userID, projectID string) (int, error)
 	nextDisplayOrder func(ctx context.Context, userID, projectID string) (int, error)
 	updateSchedule   func(ctx context.Context, userID, id string, scheduledFor, scheduledTime *string, rollsOver *bool) (Task, error)
 	repack           func(ctx context.Context, userID, id string, targetOrder int) (Task, error)
-	listActiveInbox  func(ctx context.Context, userID string) ([]Task, error)
+	listActiveByUser func(ctx context.Context, userID string) ([]Task, error)
 	listByDateRange  func(ctx context.Context, userID, from, to string) ([]Task, error)
 	existsByID       func(ctx context.Context, id string) (bool, error)
 	isOpenable       func(ctx context.Context, userID, id string) (bool, error)
@@ -48,8 +48,8 @@ func (m *mockRepo) Delete(ctx context.Context, userID, id string) error {
 func (m *mockRepo) ProjectOwned(ctx context.Context, userID, projectID string) (bool, error) {
 	return m.projectOwned(ctx, userID, projectID)
 }
-func (m *mockRepo) CountActiveInbox(ctx context.Context, userID, projectID string) (int, error) {
-	return m.countActiveInbox(ctx, userID, projectID)
+func (m *mockRepo) CountActive(ctx context.Context, userID, projectID string) (int, error) {
+	return m.countActive(ctx, userID, projectID)
 }
 func (m *mockRepo) CountNonTerminalByProject(ctx context.Context, userID, projectID string) (int, error) {
 	if m.countNonTerminal == nil {
@@ -72,8 +72,8 @@ func (m *mockRepo) ListByDateRange(ctx context.Context, userID, from, to string)
 func (m *mockRepo) Repack(ctx context.Context, userID, id string, targetOrder int) (Task, error) {
 	return m.repack(ctx, userID, id, targetOrder)
 }
-func (m *mockRepo) ListActiveInboxByUser(ctx context.Context, userID string) ([]Task, error) {
-	return m.listActiveInbox(ctx, userID)
+func (m *mockRepo) ListActiveByUser(ctx context.Context, userID string) ([]Task, error) {
+	return m.listActiveByUser(ctx, userID)
 }
 func (m *mockRepo) ExistsByID(ctx context.Context, id string) (bool, error) {
 	if m.existsByID != nil {
@@ -124,7 +124,7 @@ func TestService_Create(t *testing.T) {
 			req:        CreateTaskRequest{Title: "Buy milk"},
 			owned:      true,
 			count:      0,
-			wantStatus: "inbox",
+			wantStatus: "active",
 		},
 		{
 			name:     "empty title rejected",
@@ -163,7 +163,7 @@ func TestService_Create(t *testing.T) {
 			plan:       "free",
 			req:        CreateTaskRequest{Title: "x", ScheduledFor: ptr("2026-07-15")},
 			owned:      true,
-			wantStatus: "inbox",
+			wantStatus: "active",
 		},
 		{
 			name:     "project not owned -> 404",
@@ -174,7 +174,7 @@ func TestService_Create(t *testing.T) {
 			wantCode: apperror.ErrProjectNotFound,
 		},
 		{
-			name:     "free plan limit at 50 active/inbox",
+			name:     "free plan limit at 50 active",
 			plan:     "free",
 			req:      CreateTaskRequest{Title: "x", Status: "active"},
 			owned:    true,
@@ -191,14 +191,6 @@ func TestService_Create(t *testing.T) {
 			wantStatus: "active",
 		},
 		{
-			name:       "someday does not count toward limit",
-			plan:       "free",
-			req:        CreateTaskRequest{Title: "x", Status: "someday"},
-			owned:      true,
-			count:      50,
-			wantStatus: "someday",
-		},
-		{
 			name:       "status=done sets completedAt",
 			plan:       "free",
 			req:        CreateTaskRequest{Title: "x", Status: "done"},
@@ -213,7 +205,7 @@ func TestService_Create(t *testing.T) {
 			var persisted Task
 			repo := &mockRepo{
 				projectOwned:     func(_ context.Context, _, _ string) (bool, error) { return tt.owned, nil },
-				countActiveInbox: func(_ context.Context, _, _ string) (int, error) { return tt.count, nil },
+				countActive:      func(_ context.Context, _, _ string) (int, error) { return tt.count, nil },
 				nextDisplayOrder: func(_ context.Context, _, _ string) (int, error) { return 3, nil },
 				create: func(_ context.Context, task Task) (Task, error) {
 					persisted = task
@@ -273,7 +265,7 @@ func TestService_Update_CompletedAtTransitions(t *testing.T) {
 	}{
 		{"active -> done sets now", "active", ptr("done"), completedAtSetNow},
 		{"done -> active clears", "done", ptr("active"), completedAtClear},
-		{"active -> someday keeps", "active", ptr("someday"), completedAtKeep},
+		{"active -> cancelled keeps", "active", ptr("cancelled"), completedAtKeep},
 		{"no status change keeps", "active", nil, completedAtKeep},
 		{"done -> done keeps", "done", ptr("done"), completedAtKeep},
 	}
@@ -285,7 +277,7 @@ func TestService_Update_CompletedAtTransitions(t *testing.T) {
 				getByID: func(_ context.Context, _, _ string) (*Task, error) {
 					return &Task{ID: "t1", ProjectID: "p1", Status: tt.currentStatus}, nil
 				},
-				countActiveInbox: func(_ context.Context, _, _ string) (int, error) { return 0, nil },
+				countActive: func(_ context.Context, _, _ string) (int, error) { return 0, nil },
 				update: func(_ context.Context, _, _ string, _ UpdateTaskRequest, ca completedAtChange) (Task, error) {
 					gotChange = ca
 					return Task{ID: "t1", Status: "x"}, nil
@@ -304,14 +296,14 @@ func TestService_Update_CompletedAtTransitions(t *testing.T) {
 	}
 }
 
-// ── Update plan limit on move into active/inbox ────────────────────────────────
+// ── Update plan limit on move into active ───────────────────────────────────────
 
 func TestService_Update_PlanLimitOnMoveIntoActive(t *testing.T) {
 	repo := &mockRepo{
 		getByID: func(_ context.Context, _, _ string) (*Task, error) {
-			return &Task{ID: "t1", ProjectID: "p1", Status: "someday"}, nil
+			return &Task{ID: "t1", ProjectID: "p1", Status: "cancelled"}, nil
 		},
-		countActiveInbox: func(_ context.Context, _, _ string) (int, error) { return 50, nil },
+		countActive: func(_ context.Context, _, _ string) (int, error) { return 50, nil },
 		update: func(_ context.Context, _, _ string, _ UpdateTaskRequest, _ completedAtChange) (Task, error) {
 			t.Fatal("update should not be called when limit exceeded")
 			return Task{}, nil
@@ -358,7 +350,7 @@ func TestService_SetStatus_DelegatesToUpdate(t *testing.T) {
 		getByID: func(_ context.Context, _, _ string) (*Task, error) {
 			return &Task{ID: "t1", ProjectID: "p1", Status: "active"}, nil
 		},
-		countActiveInbox: func(_ context.Context, _, _ string) (int, error) { return 0, nil },
+		countActive: func(_ context.Context, _, _ string) (int, error) { return 0, nil },
 		update: func(_ context.Context, _, _ string, _ UpdateTaskRequest, ca completedAtChange) (Task, error) {
 			gotChange = ca
 			return Task{ID: "t1", Status: "done"}, nil
@@ -469,7 +461,7 @@ func TestService_Focus(t *testing.T) {
 			candidates[i] = Task{ID: string(rune('a' + i)), Energy: "low", Priority: "low", Status: "active"}
 		}
 		repo := &mockRepo{
-			listActiveInbox: func(_ context.Context, _ string) ([]Task, error) { return candidates, nil },
+			listActiveByUser: func(_ context.Context, _ string) ([]Task, error) { return candidates, nil },
 		}
 		svc := NewServiceWithClock(repo, now)
 		resp, err := svc.Focus(context.Background(), "u1", FocusParams{}) // no limit → default 5
@@ -484,7 +476,7 @@ func TestService_Focus(t *testing.T) {
 	t.Run("excludes nothing extra — repo provides candidate set", func(t *testing.T) {
 		var gotUser string
 		repo := &mockRepo{
-			listActiveInbox: func(_ context.Context, userID string) ([]Task, error) {
+			listActiveByUser: func(_ context.Context, userID string) ([]Task, error) {
 				gotUser = userID
 				return nil, nil
 			},
@@ -593,7 +585,7 @@ func setStatusSvc(t *testing.T, stored Task, m RecurrenceMaterializer) Service {
 			}
 			return out, nil
 		},
-		countActiveInbox: func(context.Context, string, string) (int, error) { return 0, nil },
+		countActive: func(context.Context, string, string) (int, error) { return 0, nil },
 	}
 	return NewService(repo, nil, nil).WithMaterializer(m)
 }
@@ -659,7 +651,6 @@ func TestSetStatus_SuccessorNotTriggered(t *testing.T) {
 	}{
 		{"recurring but cancelled", recurringStored(), "cancelled"},
 		{"recurring but merely active", recurringStored(), "active"},
-		{"recurring but missed", recurringStored(), statusMissed},
 		{"non-recurring completed", Task{ID: "t1", UserID: "u1", ProjectID: "p1", Status: "active"}, statusDone},
 	}
 	for _, tt := range tests {
@@ -697,16 +688,5 @@ func TestSetStatus_NilMaterializerIsSafe(t *testing.T) {
 	svc := setStatusSvc(t, recurringStored(), nil)
 	if _, err := svc.SetStatus(context.Background(), "u1", "t1", "free", statusDone); err != nil {
 		t.Fatalf("SetStatus: %v", err)
-	}
-}
-
-// `missed` is a valid status on the enum but must never count against the plan
-// limit — an ignored daily rule would otherwise fill the 50-task cap invisibly.
-func TestMissedStatus_AllowedButNotPlanCounted(t *testing.T) {
-	if !allowedStatuses[statusMissed] {
-		t.Error("missed must be an accepted status")
-	}
-	if activeInboxStatuses[statusMissed] {
-		t.Error("missed must not count against the plan limit")
 	}
 }

@@ -41,10 +41,10 @@ func focusTotalsRepo() *mockRepo {
 	candidates := []Task{
 		{ID: "a", Energy: "low", Priority: "low", Status: "active"},
 		{ID: "b", Energy: "low", Priority: "low", Status: "active"},
-		{ID: "c", Energy: "low", Priority: "low", Status: "inbox"},
+		{ID: "c", Energy: "low", Priority: "low", Status: "active"},
 	}
 	return &mockRepo{
-		listActiveInbox: func(_ context.Context, _ string) ([]Task, error) { return candidates, nil },
+		listActiveByUser: func(_ context.Context, _ string) ([]Task, error) { return candidates, nil },
 	}
 }
 
@@ -109,7 +109,7 @@ func TestService_Focus_TotalFocusSeconds_Edges(t *testing.T) {
 
 	t.Run("empty focus list never queries totals", func(t *testing.T) {
 		emptyRepo := &mockRepo{
-			listActiveInbox: func(_ context.Context, _ string) ([]Task, error) { return nil, nil },
+			listActiveByUser: func(_ context.Context, _ string) ([]Task, error) { return nil, nil },
 		}
 		totals := &fakeFocusTotals{}
 		svc := NewServiceWithClock(emptyRepo, now).WithFocusTotals(totals)

@@ -49,7 +49,7 @@ func DefaultTools() []ToolDefinition {
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
-					"status":        {"type": "string", "enum": ["inbox", "active", "someday", "done", "cancelled", "missed"], "description": "Filter by status."},
+					"status":        {"type": "string", "enum": ["active", "done", "cancelled"], "description": "Filter by status."},
 					"priority":      {"type": "string", "enum": ["low", "medium", "high"], "description": "Filter by priority."},
 					"energy":        {"type": "string", "enum": ["low", "medium", "deep"], "description": "Filter by required energy level."},
 					"projectId":     {"type": "string", "description": "Restrict to tasks in this project."},
@@ -114,7 +114,7 @@ func DefaultTools() []ToolDefinition {
 					"projectId":        {"type": "string", "description": "The project the task should live in."},
 					"title":            {"type": "string", "description": "Task title (1..255 chars)."},
 					"notes":            {"type": "string", "description": "Optional notes (<= 2000 chars)."},
-					"status":           {"type": "string", "enum": ["inbox", "active", "someday"], "description": "Initial status (defaults to inbox)."},
+					"status":           {"type": "string", "enum": ["active", "done", "cancelled"], "description": "Initial status (defaults to active)."},
 					"priority":         {"type": "string", "enum": ["low", "medium", "high"]},
 					"energy":           {"type": "string", "enum": ["low", "medium", "deep"]},
 					"rollsOver":        {"type": "boolean"},

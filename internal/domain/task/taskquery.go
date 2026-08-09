@@ -32,11 +32,12 @@ func buildListQuery(userID, projectID string, f ListTasksFilter) (string, pgx.Na
 		clauses = append(clauses, "status = @status")
 		args["status"] = *f.Status
 	} else {
-		// No explicit status filter → hide the terminal recurrence states. Years of
-		// occurrence history would otherwise bury the working view. Only recurring
-		// rows are hidden: a one-off `done` task still lists as it always has, so
+		// No explicit status filter → hide done and reaped/missed recurring
+		// occurrences. Years of occurrence history would otherwise bury the
+		// working view. A user-cancelled occurrence (occurrence_status NULL)
+		// still lists, same as a one-off `done` task lists as it always has —
 		// this changes nothing for non-recurring projects.
-		clauses = append(clauses, "(recurrence_rule_id IS NULL OR status NOT IN ('done', 'missed'))")
+		clauses = append(clauses, "(recurrence_rule_id IS NULL OR (status != 'done' AND occurrence_status IS DISTINCT FROM 'missed'))")
 	}
 	if f.Priority != nil {
 		clauses = append(clauses, "priority = @priority")

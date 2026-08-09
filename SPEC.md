@@ -695,7 +695,9 @@ Delete a project and all its tasks.
 
 ### 3.4 Tasks
 
-> **Calm / energy-aware contract.** Tasks carry an **`energy`** dimension (`low|medium|deep`) alongside `priority`, and a single **soft `scheduledFor`** intention (a date you *mean* to do it) — there is no hard deadline on a task. A past `scheduledFor` does **not** go overdue — with **`rollsOver: true`** (the default) it carries forward to today, no guilt. Two extra statuses support this: **`someday`** (parked, off the active list) and **`cancelled`**.
+> **Calm / energy-aware contract.** Tasks carry an **`energy`** dimension (`low|medium|deep`) alongside `priority`, and a single **soft `scheduledFor`** intention (a date you *mean* to do it) — there is no hard deadline on a task. A past `scheduledFor` does **not** go overdue — with **`rollsOver: true`** (the default) it carries forward to today, no guilt.
+>
+> **⚠️ Status simplified (2026-08-09).** `status` is exactly three values: **`active | done | cancelled`**. A task is always created `active` — there is no separate "unprocessed" status (that's the `bucket`/Inbox capture table, a different entity entirely) and no "someday" parking state. **Scheduled-ness is orthogonal to status, not a status value**: whether a task is scheduled or not is derived client-side from `scheduledFor` being non-null — the frontend's "Scheduled / Unscheduled" filter is computed, never a stored field. Likewise there is no `missed` task status: a recurring occurrence whose window closes unfinished is reaped to `status: "cancelled"` (so it behaves like any other cancelled task in every list/count/search), with the "it lapsed" distinction recorded only in the backend's internal `occurrence_status` — that field never appears in `ITask` and the frontend has no reason to know it exists. A "carried over / overdue" indicator, if the UI wants one, is likewise derived — `active && scheduledFor < today` — never a stored status.
 
 > **`ITask` shape** — all IDs are strings.
 > ```ts
@@ -704,7 +706,7 @@ Delete a project and all its tasks.
 >   projectId: string;
 >   title: string;
 >   notes?: string | null;
->   status: "inbox" | "active" | "someday" | "done" | "cancelled" | "missed";
+>   status: "active" | "done" | "cancelled";
 >   recurrenceRuleId: string | null;  // set only on a materialized occurrence
 >   occurrenceDate: string | null;    // YYYY-MM-DD
 >   priority: "low" | "medium" | "high";          // default "medium"
@@ -731,12 +733,6 @@ Delete a project and all its tasks.
 
 > **List envelope.** List endpoints (`GET …/tasks`, `GET /focus`) return `{ "items": ITask[] }` inside the standard `data` envelope — i.e. `data.items`, **not** a bare `data: ITask[]`. The frontend `transformResponse` must unwrap to `.data.items`.
 
-> **⚠️ E-014 frontend type fix required (NIC-1382/1383/1384).** The live frontend `ITask` (`src/lib/types/interfaces/index.ts`) and `tasks/type.ts` are **out of sync** with the contract above and must be aligned (no `Number()`/string coercion — fix the types):
-> - `status` is typed off `TaskStatus { TODO, IN_PROGRESS, DONE }` → must become `"inbox" | "active" | "someday" | "done" | "cancelled" | "missed"`.
-> - `scheduledFor` is typed `'today' | 'tomorrow' | 'this_week' | null` (an enum) → must become an **ISO date string** `string | null`. The `ScheduledFor` constant and its uses are obsolete; today/tomorrow/thisWeek is a *view* (`/time-spread`), not a stored field.
-> - Add the missing fields: **`energy: "low"|"medium"|"deep"`** and **`rollsOver: boolean`** (plus on the create/update request types).
-> - List responses unwrap to `.data.items` (currently typed `ITask[]`).
-
 #### GET /v1/projects/:projectId/tasks
 
 List all tasks within a project.
@@ -747,7 +743,7 @@ List all tasks within a project.
 
 | Param       | Type   | Description                                                            |
 | ----------- | ------ | --------------------------------------------------------------------- |
-| `status`    | string | Filter by `inbox` \| `active` \| `someday` \| `done` \| `cancelled` \| `missed` |
+| `status`    | string | Filter by `active` \| `done` \| `cancelled`                            |
 | `priority`  | string | Filter by `low` \| `medium` \| `high`                                 |
 | `energy`    | string | Filter by `low` \| `medium` \| `deep`                                 |
 | `search`    | string | Case-insensitive ILIKE over `title` + `notes`                         |
@@ -777,7 +773,7 @@ Retrieve a single task.
 Create a task inside a project. **Title-only is valid** (quick-add); everything else defaults server-side.
 
 - **Auth required:** Yes
-- **Plan limit:** Free plan allows **50 active+inbox tasks per project**. Only `active` and `inbox` count — `someday`, `done`, `cancelled`, and `missed` are free. (`missed` being uncounted is load-bearing: without it an ignored daily recurrence would silently fill the cap with rows the user cannot see.) Exceeding it (or a PATCH that moves a task *into* active/inbox over the cap) returns `PLAN_LIMIT_EXCEEDED` (403).
+- **Plan limit:** Free plan allows **50 active tasks per project**. Only `active` counts — `done` and `cancelled` are free (a reaped recurring occurrence flips to `cancelled`, so an ignored daily recurrence never silently fills the cap). Exceeding it (or a PATCH that moves a task *into* active over the cap) returns `PLAN_LIMIT_EXCEEDED` (403).
 
 **Request body**
 
@@ -798,7 +794,7 @@ Create a task inside a project. **Title-only is valid** (quick-add); everything 
 | ------------------ | ------- | -------- | ----------------------------------------------------------------- |
 | `title`            | string  | Yes      | 1–255 characters (trimmed)                                        |
 | `notes`            | string  | No       | ≤ 2000 characters                                                 |
-| `status`           | string  | No       | `inbox` \| `active` \| `someday` \| `done` \| `cancelled` \| `missed` — default `inbox` |
+| `status`           | string  | No       | `active` \| `done` \| `cancelled` — default `active`                  |
 | `priority`         | string  | No       | `low` \| `medium` \| `high` — default `medium`                    |
 | `energy`           | string  | No       | `low` \| `medium` \| `deep` — default `medium`                    |
 | `rollsOver`        | boolean | No       | default `true` (a past `scheduledFor` carries forward)            |
@@ -814,7 +810,7 @@ Create a task inside a project. **Title-only is valid** (quick-add); everything 
 
 #### PATCH /v1/tasks/:id
 
-Partial update of any mutable field. `status→done` sets `completedAt` server-side; moving away from `done` clears it. A PATCH that moves a task into `active`/`inbox` is subject to the plan limit.
+Partial update of any mutable field. `status→done` sets `completedAt` server-side; moving away from `done` clears it. A PATCH that moves a task into `active` is subject to the plan limit.
 
 - **Auth required:** Yes
 
@@ -840,7 +836,7 @@ Partial update of any mutable field. `status→done` sets `completedAt` server-s
 
 #### PATCH /v1/tasks/:id/status
 
-Status-only shorthand (checkbox toggle, move to someday). Same `completedAt` side-effects and plan-limit semantics as the full PATCH.
+Status-only shorthand (checkbox toggle, cancel). Same `completedAt` side-effects and plan-limit semantics as the full PATCH.
 
 - **Auth required:** Yes
 
@@ -852,7 +848,7 @@ Status-only shorthand (checkbox toggle, move to someday). Same `completedAt` sid
 
 | Field    | Type   | Required | Values                                                       |
 | -------- | ------ | -------- | ------------------------------------------------------------ |
-| `status` | string | Yes      | `inbox` \| `active` \| `someday` \| `done` \| `cancelled` \| `missed` |
+| `status` | string | Yes      | `active` \| `done` \| `cancelled`                             |
 
 **Response — 200 OK** — Updated `ITask`
 
@@ -1142,7 +1138,7 @@ Delete an inbox item.
 
 ### 3.7 Focus & Time Spread View
 
-These two read-only endpoints derive their lists from the user's `active`+`inbox` tasks **across all projects**; `someday`/`done`/`cancelled` are excluded at the source. Both read the clock once, server-side (the result is deterministic for a given "now"), so no client date is sent.
+These two read-only endpoints derive their lists from the user's `active` tasks **across all projects**; `done`/`cancelled` are excluded at the source. Both read the clock once, server-side (the result is deterministic for a given "now"), so no client date is sent.
 
 #### GET /v1/focus
 
@@ -1226,7 +1222,7 @@ Opens a segment, auto-closing any other open one for the user.
 
 **Response — 201 Created** — `SessionView` (the newly-opened segment)
 
-**Errors:** `INVALID_INPUT` (400 — missing/blank `taskId`, malformed body, unknown field) · `TASK_NOT_FOUND` (404 — not owned, missing, or terminal `done`/`cancelled`/`missed`) · `UNAUTHORIZED` (401)
+**Errors:** `INVALID_INPUT` (400 — missing/blank `taskId`, malformed body, unknown field) · `TASK_NOT_FOUND` (404 — not owned, missing, or terminal `done`/`cancelled`) · `UNAUTHORIZED` (401)
 
 ##### POST /v1/focus/sessions/current/close
 
@@ -1869,8 +1865,15 @@ materializations, not completions, and drift the moment either trigger retries.
 
 `streak` walks occurrences newest-first and counts consecutive `done`. The
 still-open instance (`active`) is skipped rather than breaking it — today being
-unfinished is not a failure yet — and `cancelled` is skipped too, since opting out
-deliberately is not the same as letting the window lapse.
+unfinished is not a failure yet — and a user-cancelled occurrence is skipped too,
+since opting out deliberately is not the same as letting the window lapse.
+**⚠️ Implementation note (2026-08-09):** `missed` is no longer a `tasks.status`
+value — `tasks.status` is exactly `active | done | cancelled`. A reaped
+occurrence's `status` is `cancelled`; the "it lapsed rather than was cancelled"
+distinction this endpoint needs lives in a backend-internal `occurrence_status`
+column (`recurrence` domain only, never exposed on `ITask`). This endpoint's
+JSON response is unaffected — `missed` still appears in the stats payload as a
+derived label.
 
 **Errors:** `RECURRENCE_RULE_NOT_FOUND` (404)
 
@@ -1884,9 +1887,12 @@ they are the user's record of what they did. Broadcasts `recurrence.deleted`.
 
 **Response — 204 No Content** · **Errors:** `RECURRENCE_RULE_NOT_FOUND` (404)
 
-**No skip endpoint.** Ignoring an occurrence yields `missed` (time ran out); an
-explicit "no" is `PATCH /tasks/:id/status` → `cancelled` (the user decided against
-it). The two are deliberately distinct — the streak calculation tells them apart.
+**No skip endpoint.** Ignoring an occurrence yields the reap (see Materialization
+below) — `status` becomes `cancelled` same as an explicit "no" via
+`PATCH /tasks/:id/status`, but the reap additionally stamps `occurrence_status =
+'missed'`. The two are deliberately distinguishable at the storage layer — the
+streak calculation tells them apart — even though both read as `cancelled` on
+the wire.
 
 #### Materialization (E-050 / NIC-1773)
 
@@ -1910,8 +1916,9 @@ Both are safe to race: the partial unique index on
 `(recurrence_rule_id, occurrence_date)` means the loser inserts nothing.
 
 Per due rule the materializer: skips if an un-done instance already exists →
-**reaps** the lapsed instance (`active` → `missed`) → inserts the new task from
-the template (`status='active'`, `scheduled_for = occurrence_date`) → advances
+**reaps** the lapsed instance (`status: active → cancelled`,
+`occurrence_status → 'missed'`) → inserts the new task from the template
+(`status='active'`, `scheduled_for = occurrence_date`) → advances
 `next_occurrence`, nulling it when `end_date` is spent.
 
 **"Due" is decided in the owner's timezone**, not UTC's — a rule fires on the
@@ -1936,14 +1943,16 @@ you**:
 - on its `occurrenceDate` → **Today**, as normal;
 - past its date and still `active` → **no bucket**. It stays completable from the
   project view and search, but stops occupying Today. `rollsOver` is not read on
-  this path — `missed` supersedes it.
+  this path — the reap (see above) supersedes it once the window actually closes.
 
 Non-recurring tasks keep their existing roll-forward behaviour, unchanged.
 
-`done` and `missed` **occurrences** are excluded from the default project task
-list and from search, so years of history never clutter the working views (a
-one-off `done` task is unaffected). History stays reachable from the rule detail
-view; occurrence rows are kept forever — there is no purge job.
+Completed (`status='done'`) and reaped (`occurrence_status='missed'`)
+**occurrences** are excluded from the default project task list and from
+search, so years of history never clutter the working views (a one-off `done`
+task, or a user-cancelled occurrence with no `occurrence_status`, is
+unaffected). History stays reachable from the rule detail view; occurrence
+rows are kept forever — there is no purge job.
 
 ---
 

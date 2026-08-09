@@ -341,11 +341,16 @@ func (r *pgRepo) Materialize(ctx context.Context, rule Rule, occ Occurrence, lim
 
 	// The horizon is one live instance per rule. If an un-done one already exists
 	// for a *different* date, the window hasn't closed yet — leave it alone.
+	// occurrence_status IS NULL excludes rows already reaped as missed (those
+	// also carry status='cancelled', but checking occurrence_status directly
+	// keeps this query correct even if a future caller cancels a task some
+	// other way).
 	var liveDate *time.Time
 	err = tx.QueryRow(ctx, `
 		SELECT occurrence_date FROM tasks
 		WHERE recurrence_rule_id = $1 AND user_id = $2
-		  AND status NOT IN ('done', 'cancelled', 'missed')
+		  AND status NOT IN ('done', 'cancelled')
+		  AND occurrence_status IS NULL
 		ORDER BY occurrence_date DESC LIMIT 1`,
 		rule.ID, rule.UserID,
 	).Scan(&liveDate)
@@ -367,7 +372,7 @@ func (r *pgRepo) Materialize(ctx context.Context, rule Rule, occ Occurrence, lim
 			COALESCE((SELECT MAX(display_order) + 1 FROM tasks WHERE user_id = $2 AND project_id = $3), 0),
 			$10, $8::date
 		WHERE (SELECT COUNT(*) FROM tasks
-		       WHERE user_id = $2 AND project_id = $3 AND status IN ('active', 'inbox')) < $11
+		       WHERE user_id = $2 AND project_id = $3 AND status = 'active') < $11
 		ON CONFLICT (recurrence_rule_id, occurrence_date) WHERE recurrence_rule_id IS NOT NULL
 		DO NOTHING`,
 		occ.ID, occ.UserID, occ.ProjectID, occ.Title, occ.Notes, occ.Priority, occ.Energy,
@@ -380,14 +385,17 @@ func (r *pgRepo) Materialize(ctx context.Context, rule Rule, occ Occurrence, lim
 		return classifyNoInsert(ctx, tx, rule.ID, occ.OccurrenceDate)
 	}
 
-	// Reap the window that just closed: the prior un-done instance becomes
-	// `missed`, not `cancelled`. It stops counting against the plan limit and
-	// leaves every Time Spread bucket while staying in the DB as history.
+	// Reap the window that just closed: the prior un-done instance is marked
+	// occurrence_status='missed' (the streak calculator's signal that it lapsed
+	// rather than was cancelled) and its status flips to 'cancelled' so it drops
+	// out of the plan-limit count, Focus, and Time Spread exactly like any other
+	// cancelled task — no special-casing needed in the task domain's queries.
 	reap, err := tx.Exec(ctx, `
-		UPDATE tasks SET status = 'missed', updated_at = NOW()
+		UPDATE tasks SET status = 'cancelled', occurrence_status = 'missed', updated_at = NOW()
 		WHERE recurrence_rule_id = $1 AND user_id = $2
 		  AND occurrence_date < $3
-		  AND status NOT IN ('done', 'cancelled', 'missed')`,
+		  AND status NOT IN ('done', 'cancelled')
+		  AND occurrence_status IS NULL`,
 		rule.ID, rule.UserID, occ.OccurrenceDate,
 	)
 	if err != nil {
@@ -430,9 +438,9 @@ func classifyNoInsert(ctx context.Context, tx pgx.Tx, ruleID string, occDate tim
 
 func (r *pgRepo) CountOccurrencesByStatus(ctx context.Context, userID, ruleID string) (map[string]int, error) {
 	rows, err := r.db.Query(ctx,
-		`SELECT status, COUNT(*) FROM tasks
+		`SELECT COALESCE(occurrence_status, status), COUNT(*) FROM tasks
 		 WHERE recurrence_rule_id = $1 AND user_id = $2
-		 GROUP BY status`,
+		 GROUP BY COALESCE(occurrence_status, status)`,
 		ruleID, userID,
 	)
 	if err != nil {
@@ -456,7 +464,7 @@ func (r *pgRepo) CountOccurrencesByStatus(ctx context.Context, userID, ruleID st
 // order the streak walk needs.
 func (r *pgRepo) ListOccurrenceStatuses(ctx context.Context, userID, ruleID string) ([]string, error) {
 	rows, err := r.db.Query(ctx,
-		`SELECT status FROM tasks
+		`SELECT COALESCE(occurrence_status, status) FROM tasks
 		 WHERE recurrence_rule_id = $1 AND user_id = $2
 		 ORDER BY occurrence_date DESC`,
 		ruleID, userID,

@@ -52,18 +52,18 @@ func TestIntegration_Focus_EnergyRanksFirst(t *testing.T) {
 	}
 }
 
-func TestIntegration_Focus_ExcludesSomedayDoneCancelled(t *testing.T) {
+func TestIntegration_Focus_ExcludesDoneCancelled(t *testing.T) {
 	env := newTaskServer(t, "pro")
 	createTask(t, env, map[string]any{"title": "active1", "status": "active"})
-	createTask(t, env, map[string]any{"title": "someday1", "status": "someday"})
+	createTask(t, env, map[string]any{"title": "cancelled1", "status": "cancelled"})
 	createTask(t, env, map[string]any{"title": "done1", "status": "done"})
 
 	got := titles(focusList(t, env, ""))
 	if !got["active1"] {
 		t.Errorf("active task should appear; got %v", got)
 	}
-	if got["someday1"] || got["done1"] {
-		t.Errorf("someday/done must be excluded; got %v", got)
+	if got["cancelled1"] || got["done1"] {
+		t.Errorf("cancelled/done must be excluded; got %v", got)
 	}
 }
 

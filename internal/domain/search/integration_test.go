@@ -111,7 +111,7 @@ func seedAreaProjectTask(t *testing.T, pool *pgxpool.Pool, userID, areaName, pro
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO tasks (id, user_id, project_id, title, notes, status)
-		VALUES ($1, $2, $3, $4, $5, 'inbox')`,
+		VALUES ($1, $2, $3, $4, $5, 'active')`,
 		taskID, userID, projectID, taskTitle, taskNotes,
 	); err != nil {
 		t.Fatalf("seed task: %v", err)
