@@ -165,7 +165,7 @@ func TestRepo_ListMessages_OrderByCreatedAtAsc(t *testing.T) {
 	seedMessage(t, pool, sess.ID, "assistant", "second", base.Add(time.Minute))
 	seedMessage(t, pool, sess.ID, "user", "first", base)
 
-	msgs, err := repo.ListMessages(ctx, sess.ID)
+	msgs, _, err := repo.ListMessages(ctx, sess.ID, ai.ListMessagesFilter{})
 	if err != nil {
 		t.Fatalf("ListMessages: %v", err)
 	}

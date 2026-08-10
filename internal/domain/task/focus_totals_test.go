@@ -211,8 +211,8 @@ func TestService_Get_TotalFocusSeconds(t *testing.T) {
 func TestService_ListByProject_NoFocusTotalsQuery(t *testing.T) {
 	repo := &mockRepo{
 		projectOwned: func(_ context.Context, _, _ string) (bool, error) { return true, nil },
-		listByProject: func(_ context.Context, _, _ string, _ ListTasksFilter) ([]Task, error) {
-			return []Task{{ID: "a", Status: "active"}}, nil
+		listByProject: func(_ context.Context, _, _ string, _ ListTasksFilter) ([]Task, string, error) {
+			return []Task{{ID: "a", Status: "active"}}, "", nil
 		},
 	}
 	totals := &fakeFocusTotals{}

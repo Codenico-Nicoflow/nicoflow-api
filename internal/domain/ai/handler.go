@@ -13,6 +13,7 @@ import (
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
 	mw "github.com/nicoflow/nicoflow-api/internal/middleware"
+	"github.com/nicoflow/nicoflow-api/pkg/cursorutil"
 	"github.com/nicoflow/nicoflow-api/pkg/respond"
 )
 
@@ -96,8 +97,28 @@ func (h *Handler) Usage(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, view)
 }
 
-func (h *Handler) ListMessages(w http.ResponseWriter, r *http.Request) { notImplemented(w, r) }
-func (h *Handler) ParseNLP(w http.ResponseWriter, r *http.Request)     { notImplemented(w, r) }
+// ListMessages returns a page of messages for a session, oldest-first (ASC).
+// Cursor semantics: nextCursor is non-empty when older messages exist; pass it
+// as ?cursor= to load the next (older) page.
+func (h *Handler) ListMessages(w http.ResponseWriter, r *http.Request) {
+	cursor, limit, err := cursorutil.ParsePageParams(r)
+	if err != nil {
+		respond.Error(w, http.StatusUnprocessableEntity, apperror.ErrInvalidInput, err.Error())
+		return
+	}
+	result, err := h.svc.ListSessionMessages(
+		r.Context(),
+		mw.UserIDFromCtx(r.Context()),
+		chi.URLParam(r, "id"),
+		ListMessagesFilter{Cursor: cursor, Limit: limit},
+	)
+	if err != nil {
+		writeAppError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, result)
+}
+func (h *Handler) ParseNLP(w http.ResponseWriter, r *http.Request) { notImplemented(w, r) }
 
 // ListToolCalls returns the session's pending write-tool proposals. Read;
 // includes only status=pending — resolved rows are audit data.

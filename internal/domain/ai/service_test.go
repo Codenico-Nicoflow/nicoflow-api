@@ -18,7 +18,7 @@ type mockRepo struct {
 	createSession   func(ctx context.Context, s ai.Session) (ai.Session, error)
 	listSessions    func(ctx context.Context, userID string) ([]ai.Session, error)
 	getSession      func(ctx context.Context, userID, id string) (*ai.Session, error)
-	listMessages    func(ctx context.Context, sessionID string) ([]ai.SessionMessage, error)
+	listMessages    func(ctx context.Context, sessionID string, f ai.ListMessagesFilter) ([]ai.SessionMessage, string, error)
 	deleteSession   func(ctx context.Context, userID, id string) error
 	usageSum        func(ctx context.Context, userID string) (int, error)
 	usageForMonth   func(ctx context.Context, userID, month string) (int, error)
@@ -40,8 +40,11 @@ func (m *mockRepo) ListSessions(ctx context.Context, userID string) ([]ai.Sessio
 func (m *mockRepo) GetSession(ctx context.Context, userID, id string) (*ai.Session, error) {
 	return m.getSession(ctx, userID, id)
 }
-func (m *mockRepo) ListMessages(ctx context.Context, sessionID string) ([]ai.SessionMessage, error) {
-	return m.listMessages(ctx, sessionID)
+func (m *mockRepo) ListMessages(ctx context.Context, sessionID string, f ai.ListMessagesFilter) ([]ai.SessionMessage, string, error) {
+	if m.listMessages == nil {
+		return nil, "", nil
+	}
+	return m.listMessages(ctx, sessionID, f)
 }
 func (m *mockRepo) DeleteSession(ctx context.Context, userID, id string) error {
 	return m.deleteSession(ctx, userID, id)
@@ -187,11 +190,11 @@ func TestService_GetSession_WithMessages(t *testing.T) {
 		getSession: func(_ context.Context, _, id string) (*ai.Session, error) {
 			return &ai.Session{ID: id, Title: "T"}, nil
 		},
-		listMessages: func(_ context.Context, sessionID string) ([]ai.SessionMessage, error) {
+		listMessages: func(_ context.Context, sessionID string, _ ai.ListMessagesFilter) ([]ai.SessionMessage, string, error) {
 			return []ai.SessionMessage{
 				{ID: "m1", SessionID: sessionID, Role: "user", Content: "hi"},
 				{ID: "m2", SessionID: sessionID, Role: "assistant", Content: "hello"},
-			}, nil
+			}, "", nil
 		},
 	}
 	svc := ai.NewService(repo, nil, "", nil)

@@ -70,7 +70,8 @@ type TaskView struct {
 
 // ListTasksResponse is the list response for tasks within a project.
 type ListTasksResponse struct {
-	Items []TaskView `json:"items"`
+	Items      []TaskView `json:"items"`
+	NextCursor string     `json:"nextCursor"`
 }
 
 // ListTasksFilter holds the parsed query params for the project task list.
@@ -83,6 +84,11 @@ type ListTasksFilter struct {
 	Search    string
 	SortField string
 	SortOrder string
+	// Cursor / Limit drive keyset pagination on (created_at, id) DESC.
+	// The cursor key is independent of SortField/SortOrder so a drag-reorder
+	// that mutates display_order cannot corrupt an in-flight cursor.
+	Cursor string
+	Limit  int
 }
 
 // CreateTaskRequest is the body for POST /projects/:projectId/tasks.

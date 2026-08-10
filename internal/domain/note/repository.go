@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
+	"github.com/nicoflow/nicoflow-api/pkg/cursorutil"
 )
 
 type pgRepo struct{ db *pgxpool.Pool }
@@ -40,15 +41,30 @@ func notFound() error {
 
 // ListByProject is scoped by user_id as well as project_id: matching only the
 // project would let a guessed project id list someone else's notes.
-func (r *pgRepo) ListByProject(ctx context.Context, userID, projectID string) ([]Note, error) {
+// Keyset pagination on (updated_at DESC, id DESC): an edit re-tops the list,
+// so a note being edited mid-scroll can appear on two consecutive pages — this
+// is documented and acceptable, not a bug.
+func (r *pgRepo) ListByProject(ctx context.Context, userID, projectID string, f ListNotesFilter) ([]Note, string, error) {
+	limit := f.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+
+	cursorUpdated, cursorID, err := cursorutil.DecodeTime(f.Cursor)
+	if err != nil {
+		return nil, "", apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "invalid cursor")
+	}
+
 	rows, err := r.db.Query(ctx,
 		`SELECT`+listCols+`FROM notes
 		 WHERE user_id = $1 AND project_id = $2
-		 ORDER BY updated_at DESC`,
-		userID, projectID,
+		   AND (NOT $3 OR (updated_at, id) < ($4, $5))
+		 ORDER BY updated_at DESC, id DESC
+		 LIMIT $6`,
+		userID, projectID, f.Cursor != "", cursorUpdated, cursorID, limit+1,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("note.ListByProject: %w", err)
+		return nil, "", fmt.Errorf("note.ListByProject: %w", err)
 	}
 	defer rows.Close()
 
@@ -56,14 +72,21 @@ func (r *pgRepo) ListByProject(ctx context.Context, userID, projectID string) ([
 	for rows.Next() {
 		var n Note
 		if err := scanList(rows, &n); err != nil {
-			return nil, fmt.Errorf("note.ListByProject scan: %w", err)
+			return nil, "", fmt.Errorf("note.ListByProject scan: %w", err)
 		}
 		out = append(out, n)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("note.ListByProject rows: %w", err)
+		return nil, "", fmt.Errorf("note.ListByProject rows: %w", err)
 	}
-	return out, nil
+
+	var next string
+	if len(out) > limit {
+		last := out[limit-1]
+		next = cursorutil.EncodeTime(last.UpdatedAt, last.ID)
+		out = out[:limit]
+	}
+	return out, next, nil
 }
 
 func (r *pgRepo) GetByID(ctx context.Context, userID, id string) (Note, error) {

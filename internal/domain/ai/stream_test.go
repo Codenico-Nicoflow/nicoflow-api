@@ -87,10 +87,12 @@ func (r *stubRepo) GetSession(ctx context.Context, userID, id string) (*Session,
 	}
 	return &Session{ID: id, UserID: userID}, nil
 }
-func (r *stubRepo) ListMessages(context.Context, string) ([]SessionMessage, error) { return nil, nil }
-func (r *stubRepo) DeleteSession(context.Context, string, string) error            { return nil }
-func (r *stubRepo) UsageSum(context.Context, string) (int, error)                  { return 0, nil }
-func (r *stubRepo) UsageForMonth(context.Context, string, string) (int, error)     { return 0, nil }
+func (r *stubRepo) ListMessages(_ context.Context, _ string, _ ListMessagesFilter) ([]SessionMessage, string, error) {
+	return nil, "", nil
+}
+func (r *stubRepo) DeleteSession(context.Context, string, string) error        { return nil }
+func (r *stubRepo) UsageSum(context.Context, string) (int, error)              { return 0, nil }
+func (r *stubRepo) UsageForMonth(context.Context, string, string) (int, error) { return 0, nil }
 func (r *stubRepo) ReserveMonthly(context.Context, string, string, int) (string, error) {
 	if r.reserve != nil {
 		return r.reserve()

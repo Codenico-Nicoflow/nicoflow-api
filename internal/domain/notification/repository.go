@@ -2,17 +2,15 @@ package notification
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
+	"github.com/nicoflow/nicoflow-api/pkg/cursorutil"
 )
 
 // Repository defines the data-access contract for the notification domain.
@@ -63,7 +61,7 @@ func (r *pgRepository) List(ctx context.Context, userID string, f ListNotificati
 		limit = 50
 	}
 
-	cursorCreated, cursorID, err := decodeCursor(f.Cursor)
+	cursorCreated, cursorID, err := cursorutil.DecodeTime(f.Cursor)
 	if err != nil {
 		return nil, "", apperror.New(http.StatusBadRequest, apperror.ErrInvalidInput, "invalid cursor")
 	}
@@ -102,7 +100,7 @@ func (r *pgRepository) List(ctx context.Context, userID string, f ListNotificati
 	var next string
 	if len(items) > limit {
 		last := items[limit-1]
-		next = encodeCursor(last.CreatedAt, last.ID)
+		next = cursorutil.EncodeTime(last.CreatedAt, last.ID)
 		items = items[:limit]
 	}
 	return items, next, nil
@@ -211,30 +209,4 @@ func scanNotifications(rows pgx.Rows) ([]Notification, error) {
 		out = append(out, n)
 	}
 	return out, rows.Err()
-}
-
-// encodeCursor encodes created_at and id into an opaque base64 cursor.
-func encodeCursor(createdAt time.Time, id string) string {
-	raw := createdAt.UTC().Format(time.RFC3339Nano) + "|" + id
-	return base64.StdEncoding.EncodeToString([]byte(raw))
-}
-
-// decodeCursor decodes the cursor. Returns zero time / "" on empty input.
-func decodeCursor(cursor string) (time.Time, string, error) {
-	if cursor == "" {
-		return time.Time{}, "", nil
-	}
-	b, err := base64.StdEncoding.DecodeString(cursor)
-	if err != nil {
-		return time.Time{}, "", fmt.Errorf("decodeCursor: %w", err)
-	}
-	parts := strings.SplitN(string(b), "|", 2)
-	if len(parts) != 2 {
-		return time.Time{}, "", fmt.Errorf("decodeCursor: malformed cursor")
-	}
-	created, err := time.Parse(time.RFC3339Nano, parts[0])
-	if err != nil {
-		return time.Time{}, "", fmt.Errorf("decodeCursor created: %w", err)
-	}
-	return created, parts[1], nil
 }

@@ -164,11 +164,23 @@ type ProjectOwnershipVerifier interface {
 	VerifyProjectOwner(ctx context.Context, userID, projectID string) error
 }
 
+// ListNotesFilter holds pagination params for the project note list.
+type ListNotesFilter struct {
+	Cursor string
+	Limit  int
+}
+
+// NoteListView is the paginated list response for GET /notes?projectId=.
+type NoteListView struct {
+	Items      []NoteView `json:"items"`
+	NextCursor string     `json:"nextCursor"`
+}
+
 // Service is the note domain's business-logic contract consumed by the handler.
 // Notes are Free and unlimited — no method takes a plan, and none of them can
 // return PLAN_LIMIT_EXCEEDED.
 type Service interface {
-	ListByProject(ctx context.Context, userID, projectID string) ([]NoteView, error)
+	ListByProject(ctx context.Context, userID, projectID string, f ListNotesFilter) (NoteListView, error)
 	Get(ctx context.Context, userID, id string) (NoteDetailView, error)
 	Create(ctx context.Context, userID string, req CreateNoteRequest) (NoteDetailView, error)
 	Update(ctx context.Context, userID, id string, req UpdateNoteRequest) (NoteDetailView, error)
@@ -197,8 +209,9 @@ type UpdateParams struct {
 // layering; the pg implementation lives in repository.go.
 type Repository interface {
 	// ListByProject returns a user's notes for one project, most recently updated
-	// first. Selects content_text for the excerpt and never content.
-	ListByProject(ctx context.Context, userID, projectID string) ([]Note, error)
+	// first (keyset on updated_at DESC, id DESC). Selects content_text for the
+	// excerpt and never content.
+	ListByProject(ctx context.Context, userID, projectID string, f ListNotesFilter) ([]Note, string, error)
 
 	// GetByID returns one note scoped to the user, including its full content.
 	// Missing or not-owned → RESOURCE_NOT_FOUND.

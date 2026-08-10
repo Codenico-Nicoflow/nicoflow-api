@@ -10,6 +10,7 @@ import (
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
 	mw "github.com/nicoflow/nicoflow-api/internal/middleware"
+	"github.com/nicoflow/nicoflow-api/pkg/cursorutil"
 	"github.com/nicoflow/nicoflow-api/pkg/respond"
 )
 
@@ -42,12 +43,22 @@ func NewHandler(svc Service) *Handler { return &Handler{svc: svc} }
 // @Failure      422  {object}  ErrorEnvelope     "INVALID_INPUT (projectId missing)"
 // @Router       /notes [get]
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
-	views, err := h.svc.ListByProject(r.Context(), mw.UserIDFromCtx(r.Context()), r.URL.Query().Get("projectId"))
+	cursor, limit, err := cursorutil.ParsePageParams(r)
+	if err != nil {
+		writeErr(w, r, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, err.Error()))
+		return
+	}
+	result, err := h.svc.ListByProject(
+		r.Context(),
+		mw.UserIDFromCtx(r.Context()),
+		r.URL.Query().Get("projectId"),
+		ListNotesFilter{Cursor: cursor, Limit: limit},
+	)
 	if err != nil {
 		writeErr(w, r, err)
 		return
 	}
-	respond.JSON(w, http.StatusOK, views)
+	respond.JSON(w, http.StatusOK, result)
 }
 
 // Get godoc

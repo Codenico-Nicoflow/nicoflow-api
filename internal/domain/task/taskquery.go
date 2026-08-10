@@ -21,12 +21,14 @@ var sortColumns = map[string]string{
 	"energy":       "energy",
 }
 
-// buildListQuery returns the WHERE/ORDER suffix + named args for a project task
-// list. Always scoped to user_id + project_id. Returns an apperror on a bad
+// buildListQuery returns the WHERE clause, ORDER BY clause, and named args for
+// a project task list. Splitting WHERE from ORDER BY lets the repo insert a
+// keyset cursor predicate between them without string surgery on a pre-joined
+// suffix. Always scoped to user_id + project_id. Returns an apperror on a bad
 // sortField/sortOrder.
-func buildListQuery(userID, projectID string, f ListTasksFilter) (string, pgx.NamedArgs, error) {
+func buildListQuery(userID, projectID string, f ListTasksFilter) (whereSuffix, sortSuffix string, args pgx.NamedArgs, err error) {
 	clauses := []string{"user_id = @userID", "project_id = @projectID"}
-	args := pgx.NamedArgs{"userID": userID, "projectID": projectID}
+	args = pgx.NamedArgs{"userID": userID, "projectID": projectID}
 
 	if f.Status != nil {
 		clauses = append(clauses, "status = @status")
@@ -54,7 +56,7 @@ func buildListQuery(userID, projectID string, f ListTasksFilter) (string, pgx.Na
 
 	col, ok := sortColumns[f.SortField]
 	if !ok {
-		return "", nil, apperror.New(http.StatusBadRequest, apperror.ErrInvalidInput, "invalid sortField")
+		return "", "", nil, apperror.New(http.StatusBadRequest, apperror.ErrInvalidInput, "invalid sortField")
 	}
 	dir := "ASC"
 	switch strings.ToLower(f.SortOrder) {
@@ -63,10 +65,10 @@ func buildListQuery(userID, projectID string, f ListTasksFilter) (string, pgx.Na
 	case "desc":
 		dir = "DESC"
 	default:
-		return "", nil, apperror.New(http.StatusBadRequest, apperror.ErrInvalidInput, "sortOrder must be asc or desc")
+		return "", "", nil, apperror.New(http.StatusBadRequest, apperror.ErrInvalidInput, "sortOrder must be asc or desc")
 	}
 
-	suffix := " WHERE " + strings.Join(clauses, " AND ") +
-		" ORDER BY " + col + " " + dir + ", id ASC"
-	return suffix, args, nil
+	whereSuffix = " WHERE " + strings.Join(clauses, " AND ")
+	sortSuffix = " ORDER BY " + col + " " + dir + ", id ASC"
+	return whereSuffix, sortSuffix, args, nil
 }
