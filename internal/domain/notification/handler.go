@@ -10,6 +10,7 @@ import (
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
 	mw "github.com/nicoflow/nicoflow-api/internal/middleware"
+	"github.com/nicoflow/nicoflow-api/pkg/cursorutil"
 	"github.com/nicoflow/nicoflow-api/pkg/respond"
 )
 
@@ -34,24 +35,21 @@ func NewHandler(svc Service) *Handler { return &Handler{svc: svc} }
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())
 
-	f := ListNotificationsFilter{Cursor: r.URL.Query().Get("cursor")}
+	cursor, limit, err := cursorutil.ParsePageParams(r)
+	if err != nil {
+		// Notification domain preserves the existing 400 status for bad params.
+		respond.Error(w, http.StatusBadRequest, apperror.ErrInvalidInput, "limit must be an integer between 1 and 100")
+		return
+	}
+	f := ListNotificationsFilter{Cursor: cursor, Limit: limit}
 
 	if v := r.URL.Query().Get("isRead"); v != "" {
-		b, err := strconv.ParseBool(v)
-		if err != nil {
+		b, parseErr := strconv.ParseBool(v)
+		if parseErr != nil {
 			respond.Error(w, http.StatusBadRequest, apperror.ErrInvalidInput, "isRead must be a boolean")
 			return
 		}
 		f.IsRead = &b
-	}
-
-	if lStr := r.URL.Query().Get("limit"); lStr != "" {
-		l, err := strconv.Atoi(lStr)
-		if err != nil || l < 1 || l > 100 {
-			respond.Error(w, http.StatusBadRequest, apperror.ErrInvalidInput, "limit must be an integer between 1 and 100")
-			return
-		}
-		f.Limit = l
 	}
 
 	resp, err := h.svc.List(r.Context(), userID, f)

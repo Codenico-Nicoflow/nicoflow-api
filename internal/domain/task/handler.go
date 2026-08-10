@@ -12,6 +12,7 @@ import (
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
 	mw "github.com/nicoflow/nicoflow-api/internal/middleware"
+	"github.com/nicoflow/nicoflow-api/pkg/cursorutil"
 	"github.com/nicoflow/nicoflow-api/pkg/respond"
 )
 
@@ -47,7 +48,13 @@ func (h *Handler) ListByProject(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())
 	projectID := chi.URLParam(r, "projectId")
 
-	resp, err := h.svc.ListByProject(r.Context(), userID, projectID, parseTaskListFilter(r))
+	f, err := parseTaskListFilter(r)
+	if err != nil {
+		writeAppError(w, r, err)
+		return
+	}
+
+	resp, err := h.svc.ListByProject(r.Context(), userID, projectID, f)
 	if err != nil {
 		writeAppError(w, r, err)
 		return
@@ -55,14 +62,21 @@ func (h *Handler) ListByProject(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, resp)
 }
 
-// parseTaskListFilter reads filter/sort/search query params. Value validation
-// (allowed enums, sort whitelist) happens in the service/query builder.
-func parseTaskListFilter(r *http.Request) ListTasksFilter {
+// parseTaskListFilter reads filter/sort/search/pagination query params.
+// Value validation (allowed enums, sort whitelist) happens in the service/query builder.
+func parseTaskListFilter(r *http.Request) (ListTasksFilter, error) {
+	cursor, limit, err := cursorutil.ParsePageParams(r)
+	if err != nil {
+		return ListTasksFilter{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, err.Error())
+	}
+
 	q := r.URL.Query()
 	f := ListTasksFilter{
 		Search:    q.Get("search"),
 		SortField: q.Get("sortField"),
 		SortOrder: q.Get("sortOrder"),
+		Cursor:    cursor,
+		Limit:     limit,
 	}
 	if v := q.Get("status"); v != "" {
 		f.Status = &v
@@ -73,7 +87,7 @@ func parseTaskListFilter(r *http.Request) ListTasksFilter {
 	if v := q.Get("energy"); v != "" {
 		f.Energy = &v
 	}
-	return f
+	return f, nil
 }
 
 // Get godoc

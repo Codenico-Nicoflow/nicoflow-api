@@ -10,11 +10,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
+	"github.com/nicoflow/nicoflow-api/pkg/cursorutil"
 )
 
 // Repository defines the data-access contract for the task domain.
 type Repository interface {
-	ListByProject(ctx context.Context, userID, projectID string, f ListTasksFilter) ([]Task, error)
+	ListByProject(ctx context.Context, userID, projectID string, f ListTasksFilter) ([]Task, string, error)
 	GetByID(ctx context.Context, userID, id string) (*Task, error)
 	Create(ctx context.Context, t Task) (Task, error)
 	Update(ctx context.Context, userID, id string, req UpdateTaskRequest, completedAt completedAtChange) (Task, error)
@@ -80,14 +81,35 @@ func scanTask(row pgx.Row, t *Task) error {
 	)
 }
 
-func (r *pgRepo) ListByProject(ctx context.Context, userID, projectID string, f ListTasksFilter) ([]Task, error) {
-	suffix, args, err := buildListQuery(userID, projectID, f)
-	if err != nil {
-		return nil, err
+func (r *pgRepo) ListByProject(ctx context.Context, userID, projectID string, f ListTasksFilter) ([]Task, string, error) {
+	limit := f.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 50
 	}
-	rows, err := r.db.Query(ctx, `SELECT`+taskSelectCols+`FROM tasks`+suffix, args)
+
+	cursorCreated, cursorID, err := cursorutil.DecodeTime(f.Cursor)
 	if err != nil {
-		return nil, fmt.Errorf("task.ListByProject query: %w", err)
+		return nil, "", apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "invalid cursor")
+	}
+
+	whereSuffix, sortSuffix, args, err := buildListQuery(userID, projectID, f)
+	if err != nil {
+		return nil, "", err
+	}
+	args["limit"] = limit + 1
+	args["cursorCreated"] = cursorCreated
+	args["cursorID"] = cursorID
+	args["hasCursor"] = f.Cursor != ""
+
+	// The keyset predicate is always on (created_at, id) DESC, independent of the
+	// display sort — so drag-reorder mutations never corrupt an in-flight cursor.
+	sql := `SELECT` + taskSelectCols + `FROM tasks` +
+		whereSuffix +
+		` AND (NOT @hasCursor OR (created_at, id) < (@cursorCreated, @cursorID))` +
+		sortSuffix + `, created_at DESC, id DESC LIMIT @limit`
+	rows, err := r.db.Query(ctx, sql, args)
+	if err != nil {
+		return nil, "", fmt.Errorf("task.ListByProject query: %w", err)
 	}
 	defer rows.Close()
 
@@ -95,11 +117,21 @@ func (r *pgRepo) ListByProject(ctx context.Context, userID, projectID string, f 
 	for rows.Next() {
 		var t Task
 		if err := scanTask(rows, &t); err != nil {
-			return nil, fmt.Errorf("task.ListByProject scan: %w", err)
+			return nil, "", fmt.Errorf("task.ListByProject scan: %w", err)
 		}
 		tasks = append(tasks, t)
 	}
-	return tasks, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+
+	var next string
+	if len(tasks) > limit {
+		last := tasks[limit-1]
+		next = cursorutil.EncodeTime(last.CreatedAt, last.ID)
+		tasks = tasks[:limit]
+	}
+	return tasks, next, nil
 }
 
 func (r *pgRepo) ListActiveByUser(ctx context.Context, userID string) ([]Task, error) {

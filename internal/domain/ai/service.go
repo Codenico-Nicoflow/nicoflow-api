@@ -32,6 +32,9 @@ type Service interface {
 	ListSessions(ctx context.Context, userID string) ([]SessionView, error)
 	GetSession(ctx context.Context, userID, id string) (SessionDetailView, error)
 	DeleteSession(ctx context.Context, userID, id string) error
+	// ListSessionMessages returns paginated messages for a session, oldest-first.
+	// Cursor-based on (created_at DESC, id DESC) internally, reversed before return.
+	ListSessionMessages(ctx context.Context, userID, sessionID string, f ListMessagesFilter) (MessageListView, error)
 	Usage(ctx context.Context, userID, plan string) (UsageView, error)
 	// RunWithQuota atomically reserves one AI request (plan from the JWT
 	// claim: Free = lifetime, Pro = current month), runs fn, and refunds the
@@ -161,7 +164,7 @@ func (s *service) GetSession(ctx context.Context, userID, id string) (SessionDet
 	if err != nil {
 		return SessionDetailView{}, err
 	}
-	msgs, err := s.repo.ListMessages(ctx, sess.ID)
+	msgs, _, err := s.repo.ListMessages(ctx, sess.ID, ListMessagesFilter{Limit: 50})
 	if err != nil {
 		return SessionDetailView{}, err
 	}
@@ -173,6 +176,22 @@ func (s *service) GetSession(ctx context.Context, userID, id string) (SessionDet
 		SessionView: sessionToView(*sess),
 		Messages:    views,
 	}, nil
+}
+
+func (s *service) ListSessionMessages(ctx context.Context, userID, sessionID string, f ListMessagesFilter) (MessageListView, error) {
+	// Ownership check: a guessed session id must yield 404, not an empty list.
+	if _, err := s.repo.GetSession(ctx, userID, sessionID); err != nil {
+		return MessageListView{}, err
+	}
+	msgs, next, err := s.repo.ListMessages(ctx, sessionID, f)
+	if err != nil {
+		return MessageListView{}, err
+	}
+	items := make([]MessageView, len(msgs))
+	for i, m := range msgs {
+		items[i] = messageToView(m)
+	}
+	return MessageListView{Items: items, NextCursor: next}, nil
 }
 
 func (s *service) DeleteSession(ctx context.Context, userID, id string) error {

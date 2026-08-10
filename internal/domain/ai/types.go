@@ -62,6 +62,21 @@ type UsageView struct {
 	Month *string `json:"month"`
 }
 
+// ListMessagesFilter holds pagination params for the session message list.
+type ListMessagesFilter struct {
+	Cursor string
+	Limit  int
+}
+
+// MessageListView is the paginated list response for GET /ai/sessions/:id/messages.
+// Items are ordered ASC (oldest first) so the client can render a chat thread without
+// reversing. The cursor points to the oldest message of the next (older) page —
+// "load more history" semantics, identical to how most chat clients work.
+type MessageListView struct {
+	Items      []MessageView `json:"items"`
+	NextCursor string        `json:"nextCursor"`
+}
+
 // CreateSessionRequest is the POST /ai/sessions body. Title is optional;
 // empty falls back to the DB default.
 type CreateSessionRequest struct {

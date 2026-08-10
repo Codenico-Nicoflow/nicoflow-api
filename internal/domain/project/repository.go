@@ -2,17 +2,16 @@ package project
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
+	"github.com/nicoflow/nicoflow-api/pkg/cursorutil"
 )
 
 // Repository defines the data-access contract for the project domain.
@@ -330,7 +329,7 @@ func parsePaginationArgs(rawLimit int, cursor string) (int, int, string, error) 
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-	cursorOrder, cursorID, err := decodeCursor(cursor)
+	cursorOrder, cursorID, err := cursorutil.DecodeInt(cursor)
 	if err != nil {
 		return 0, 0, "", apperror.New(http.StatusBadRequest, apperror.ErrInvalidInput, "invalid cursor")
 	}
@@ -338,27 +337,7 @@ func parsePaginationArgs(rawLimit int, cursor string) (int, int, string, error) 
 }
 
 func encodeCursor(order int, id string) string {
-	raw := strconv.Itoa(order) + ":" + id
-	return base64.StdEncoding.EncodeToString([]byte(raw))
-}
-
-func decodeCursor(cursor string) (int, string, error) {
-	if cursor == "" {
-		return -1, "", nil
-	}
-	b, err := base64.StdEncoding.DecodeString(cursor)
-	if err != nil {
-		return 0, "", fmt.Errorf("decodeCursor: %w", err)
-	}
-	parts := strings.SplitN(string(b), ":", 2)
-	if len(parts) != 2 {
-		return 0, "", fmt.Errorf("decodeCursor: malformed")
-	}
-	order, err := strconv.Atoi(parts[0])
-	if err != nil {
-		return 0, "", fmt.Errorf("decodeCursor order: %w", err)
-	}
-	return order, parts[1], nil
+	return cursorutil.EncodeInt(order, id)
 }
 
 func isUniqueViolation(err error) bool {

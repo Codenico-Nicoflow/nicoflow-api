@@ -306,7 +306,7 @@ func TestListByProject(t *testing.T) {
 	}
 	mustCreate(t, repo, newNote(userID, otherProject, "elsewhere", "other project"))
 
-	list, err := repo.ListByProject(ctx, userID, projectID)
+	list, _, err := repo.ListByProject(ctx, userID, projectID, note.ListNotesFilter{})
 	if err != nil {
 		t.Fatalf("ListByProject: %v", err)
 	}
@@ -338,7 +338,7 @@ func TestListByProjectIsolatedByUser(t *testing.T) {
 
 	mustCreate(t, repo, newNote(owner, projectID, "private", "secret"))
 
-	list, err := repo.ListByProject(context.Background(), intruder, projectID)
+	list, _, err := repo.ListByProject(context.Background(), intruder, projectID, note.ListNotesFilter{})
 	if err != nil {
 		t.Fatalf("ListByProject: %v", err)
 	}

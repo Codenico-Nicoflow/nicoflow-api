@@ -17,7 +17,7 @@ import (
 // ── mocks ─────────────────────────────────────────────────────────────────────
 
 type mockRepo struct {
-	listByProject func(ctx context.Context, userID, projectID string) ([]note.Note, error)
+	listByProject func(ctx context.Context, userID, projectID string, f note.ListNotesFilter) ([]note.Note, string, error)
 	getByID       func(ctx context.Context, userID, id string) (note.Note, error)
 	create        func(ctx context.Context, n note.Note) (note.Note, error)
 	update        func(ctx context.Context, p note.UpdateParams) (note.Note, bool, error)
@@ -26,8 +26,8 @@ type mockRepo struct {
 	existsByID    func(ctx context.Context, id string) (bool, error)
 }
 
-func (m *mockRepo) ListByProject(ctx context.Context, userID, projectID string) ([]note.Note, error) {
-	return m.listByProject(ctx, userID, projectID)
+func (m *mockRepo) ListByProject(ctx context.Context, userID, projectID string, f note.ListNotesFilter) ([]note.Note, string, error) {
+	return m.listByProject(ctx, userID, projectID, f)
 }
 func (m *mockRepo) GetByID(ctx context.Context, userID, id string) (note.Note, error) {
 	return m.getByID(ctx, userID, id)
@@ -461,19 +461,20 @@ func TestUpdateValidatesTitleAndContent(t *testing.T) {
 // AC6 — the list carries excerpts and no body.
 func TestListReturnsExcerptsOnly(t *testing.T) {
 	long := strings.Repeat("x", 500)
-	repo := &mockRepo{listByProject: func(ctx context.Context, userID, projectID string) ([]note.Note, error) {
+	repo := &mockRepo{listByProject: func(ctx context.Context, userID, projectID string, f note.ListNotesFilter) ([]note.Note, string, error) {
 		pid := testProject
 		return []note.Note{
 			{ID: "n_1", ProjectID: &pid, Title: "big", ContentText: long, Version: 2},
 			{ID: "n_2", ProjectID: &pid, Title: "small", ContentText: "short text", Version: 1},
-		}, nil
+		}, "", nil
 	}}
 	svc := note.NewService(repo, &mockProjects{}, nil)
 
-	list, err := svc.ListByProject(context.Background(), testUser, testProject)
+	result, err := svc.ListByProject(context.Background(), testUser, testProject, note.ListNotesFilter{})
 	if err != nil {
 		t.Fatalf("ListByProject: %v", err)
 	}
+	list := result.Items
 	if len(list) != 2 {
 		t.Fatalf("len = %d, want 2", len(list))
 	}
@@ -506,7 +507,7 @@ func TestListReturnsExcerptsOnly(t *testing.T) {
 func TestListRequiresProjectID(t *testing.T) {
 	svc := note.NewService(&mockRepo{}, &mockProjects{}, nil)
 
-	_, err := svc.ListByProject(context.Background(), testUser, "  ")
+	_, err := svc.ListByProject(context.Background(), testUser, "  ", note.ListNotesFilter{})
 
 	assertAppErr(t, err, apperror.ErrInvalidInput, http.StatusUnprocessableEntity)
 }
@@ -515,15 +516,15 @@ func TestListRequiresProjectID(t *testing.T) {
 // list would still confirm the project is reachable.
 func TestListForeignProjectIsNotFound(t *testing.T) {
 	listed := false
-	repo := &mockRepo{listByProject: func(ctx context.Context, userID, projectID string) ([]note.Note, error) {
+	repo := &mockRepo{listByProject: func(ctx context.Context, userID, projectID string, f note.ListNotesFilter) ([]note.Note, string, error) {
 		listed = true
-		return nil, nil
+		return nil, "", nil
 	}}
 	svc := note.NewService(repo, &mockProjects{
 		verify: func(ctx context.Context, userID, projectID string) error { return notFound },
 	}, nil)
 
-	_, err := svc.ListByProject(context.Background(), testUser, "p_someone_else")
+	_, err := svc.ListByProject(context.Background(), testUser, "p_someone_else", note.ListNotesFilter{})
 
 	assertAppErr(t, err, apperror.ErrResourceNotFound, http.StatusNotFound)
 	if listed {
@@ -532,21 +533,21 @@ func TestListForeignProjectIsNotFound(t *testing.T) {
 }
 
 func TestListEmptyProjectReturnsEmptySlice(t *testing.T) {
-	repo := &mockRepo{listByProject: func(ctx context.Context, userID, projectID string) ([]note.Note, error) {
-		return nil, nil
+	repo := &mockRepo{listByProject: func(ctx context.Context, userID, projectID string, f note.ListNotesFilter) ([]note.Note, string, error) {
+		return nil, "", nil
 	}}
 	svc := note.NewService(repo, &mockProjects{}, nil)
 
-	list, err := svc.ListByProject(context.Background(), testUser, testProject)
+	result, err := svc.ListByProject(context.Background(), testUser, testProject, note.ListNotesFilter{})
 	if err != nil {
 		t.Fatalf("ListByProject: %v", err)
 	}
 	// Non-nil so the envelope carries [] rather than null.
-	if list == nil {
-		t.Fatal("list is nil, want an empty slice")
+	if result.Items == nil {
+		t.Fatal("items is nil, want an empty slice")
 	}
-	if len(list) != 0 {
-		t.Errorf("len = %d, want 0", len(list))
+	if len(result.Items) != 0 {
+		t.Errorf("len = %d, want 0", len(result.Items))
 	}
 }
 

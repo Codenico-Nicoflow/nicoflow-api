@@ -731,7 +731,7 @@ Delete a project and all its tasks.
 >
 > **⚠️ `scheduledFor` is the task's only date.** It is a bare ISO **date string** `YYYY-MM-DD` (a soft, roll-forward intention) — **not** a timestamp and **not** an enum like `today|tomorrow|this_week`. Tasks have **no** hard `dueDate` (that field was removed; a hard deadline lives only on **projects**). The today/tomorrow/thisWeek grouping is *computed* server-side by `GET /v1/time-spread` (§3.7) from `scheduledFor` + `rollsOver`; it is never a stored value. See §3.7 for the bucketing rules.
 
-> **List envelope.** List endpoints (`GET …/tasks`, `GET /focus`) return `{ "items": ITask[] }` inside the standard `data` envelope — i.e. `data.items`, **not** a bare `data: ITask[]`. The frontend `transformResponse` must unwrap to `.data.items`.
+> **List envelope.** List endpoints (`GET …/tasks`, `GET /focus`) return `{ "items": ITask[], "nextCursor": string }` inside the standard `data` envelope — i.e. `data.items` and `data.nextCursor`, **not** a bare `data: ITask[]`. The frontend `transformResponse` must unwrap to `.data`.
 
 #### GET /v1/projects/:projectId/tasks
 
@@ -749,8 +749,12 @@ List all tasks within a project.
 | `search`    | string | Case-insensitive ILIKE over `title` + `notes`                         |
 | `sortField` | string | `displayOrder` \| `scheduledFor` \| `priority` \| `title` \| `createdAt` \| `energy` (default `displayOrder`) |
 | `sortOrder` | string | `asc` \| `desc` (default `asc`)                                       |
+| `cursor`    | string | Opaque base64 page token from a prior `nextCursor`. Absent = first page. |
+| `limit`     | int    | 1–100 (default 50)                                                    |
 
-**Response — 200 OK** — `{ "items": ITask[] }`
+**Response — 200 OK** — `{ "items": ITask[], "nextCursor": string }`
+
+`nextCursor` is `""` when there are no more pages. The cursor is keyset on `(created_at, id) DESC`, independent of `sortField` — display sort is preserved within each page but the cursor position is stable even when `displayOrder` changes (e.g. drag-reorder).
 
 **Errors:** `INVALID_INPUT` / `INVALID_STATUS` / `INVALID_PRIORITY` (422), `PROJECT_NOT_FOUND` (404)
 
@@ -1331,11 +1335,43 @@ List all AI sessions for the user.
 
 #### GET /v1/ai/sessions/:id
 
-Retrieve a session with its full message history.
+Retrieve a session with its full message history (most-recent 50 messages, oldest-first).
 
 - **Auth required:** Yes
 
 **Response — 200 OK** — `IAISession` with `messages: IAIMessage[]`
+
+---
+
+#### GET /v1/ai/sessions/:id/messages
+
+Paginated message history for a session — **"load older" semantics**. Returns messages oldest-first (ASC). The `nextCursor` — when non-empty — points to the next (older) page; pass it as `?cursor=` to go further back.
+
+- **Auth required:** Yes
+- A session the caller does not own → `404 RESOURCE_NOT_FOUND`.
+
+**Query parameters**
+
+| Param    | Type   | Description                                                                     |
+| -------- | ------ | ------------------------------------------------------------------------------- |
+| `cursor` | string | Opaque base64 page token from a prior `nextCursor`. Absent = most-recent page. |
+| `limit`  | int    | 1–100 (default 50)                                                              |
+
+**Response — 200 OK**
+
+```json
+{
+  "items": [
+    { "id": "msg_1", "role": "user", "content": "Hi", "createdAt": "…" },
+    { "id": "msg_2", "role": "assistant", "content": "Hello!", "createdAt": "…" }
+  ],
+  "nextCursor": "eyJ…"
+}
+```
+
+`nextCursor` is `""` when no older messages exist. Keyset on `(created_at DESC, id DESC)` internally, reversed to ASC before return.
+
+**Errors:** `INVALID_INPUT` (422 — bad cursor or limit out of range), `RESOURCE_NOT_FOUND` (404)
 
 ---
 
@@ -2343,13 +2379,32 @@ enormous — the same principle as `totalFocusSeconds` being scalar-only (E-049)
 
 #### GET /v1/notes?projectId=
 
-Lists one project's notes, ordered `updated_at DESC`. Returns `NoteView[]`.
+Lists one project's notes, ordered `updated_at DESC`. Returns `NoteListView`.
 
 - **Auth required:** Yes
 - A project the caller does not own → `404 RESOURCE_NOT_FOUND` (never an empty
   list, which would still confirm the project is reachable).
 
-**Errors:** `RESOURCE_NOT_FOUND` (404), `INVALID_INPUT` (422 — `projectId` missing)
+**Query parameters**
+
+| Param    | Type   | Description                                                       |
+| -------- | ------ | ----------------------------------------------------------------- |
+| `projectId` | string | Required. Project to list notes for.                           |
+| `cursor` | string | Opaque base64 page token from a prior `nextCursor`. Absent = first page. |
+| `limit`  | int    | 1–100 (default 50)                                                |
+
+**Response — 200 OK**
+
+```json
+{
+  "items": [ { "id": "…", "projectId": "…", "title": "…", "excerpt": "…", "version": 1, "createdAt": "…", "updatedAt": "…" } ],
+  "nextCursor": ""
+}
+```
+
+Keyset on `(updated_at DESC, id DESC)`. A note being edited mid-scroll can appear on two consecutive pages (updated_at moves it to the head of a new page); this is documented behaviour, not a bug.
+
+**Errors:** `RESOURCE_NOT_FOUND` (404), `INVALID_INPUT` (422 — `projectId` missing or bad cursor/limit)
 
 #### POST /v1/notes → 201 `NoteDetailView`
 

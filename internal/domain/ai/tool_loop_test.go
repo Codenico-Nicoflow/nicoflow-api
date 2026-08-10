@@ -85,10 +85,12 @@ func (r *toolRepo) ListSessions(context.Context, string) ([]Session, error) { re
 func (r *toolRepo) GetSession(_ context.Context, uid, id string) (*Session, error) {
 	return &Session{ID: id, UserID: uid}, nil
 }
-func (r *toolRepo) ListMessages(context.Context, string) ([]SessionMessage, error) { return nil, nil }
-func (r *toolRepo) DeleteSession(context.Context, string, string) error            { return nil }
-func (r *toolRepo) UsageSum(context.Context, string) (int, error)                  { return 0, nil }
-func (r *toolRepo) UsageForMonth(context.Context, string, string) (int, error)     { return 0, nil }
+func (r *toolRepo) ListMessages(_ context.Context, _ string, _ ListMessagesFilter) ([]SessionMessage, string, error) {
+	return nil, "", nil
+}
+func (r *toolRepo) DeleteSession(context.Context, string, string) error        { return nil }
+func (r *toolRepo) UsageSum(context.Context, string) (int, error)              { return 0, nil }
+func (r *toolRepo) UsageForMonth(context.Context, string, string) (int, error) { return 0, nil }
 func (r *toolRepo) ReserveMonthly(context.Context, string, string, int) (string, error) {
 	return "u", nil
 }

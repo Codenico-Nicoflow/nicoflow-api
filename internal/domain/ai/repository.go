@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
+	"github.com/nicoflow/nicoflow-api/pkg/cursorutil"
 )
 
 // Repository defines the AI assistant data access interface.
@@ -19,7 +20,7 @@ type Repository interface {
 	CreateSession(ctx context.Context, s Session) (Session, error)
 	ListSessions(ctx context.Context, userID string) ([]Session, error)
 	GetSession(ctx context.Context, userID, id string) (*Session, error)
-	ListMessages(ctx context.Context, sessionID string) ([]SessionMessage, error)
+	ListMessages(ctx context.Context, sessionID string, f ListMessagesFilter) ([]SessionMessage, string, error)
 	DeleteSession(ctx context.Context, userID, id string) error
 	// UsageSum returns SUM(request_count) across all the user's rows (Free lifetime).
 	UsageSum(ctx context.Context, userID string) (int, error)
@@ -126,28 +127,61 @@ func (r *pgRepo) GetSession(ctx context.Context, userID, id string) (*Session, e
 	return &s, nil
 }
 
-func (r *pgRepo) ListMessages(ctx context.Context, sessionID string) ([]SessionMessage, error) {
-	rows, err := r.db.Query(ctx, `
-		SELECT id, session_id, role, content, created_at
-		FROM ai_messages
-		WHERE session_id = $1
-		ORDER BY created_at ASC, id ASC`,
-		sessionID,
+// ListMessages returns session messages with "load older" keyset pagination.
+// Internally fetches DESC (newest first) so the cursor predicate is simple; the
+// returned slice is reversed to ASC (oldest first) before returning so callers
+// get a chat-thread order without an extra sort.
+// The nextCursor — when non-empty — is the cursor for the next (older) page.
+func (r *pgRepo) ListMessages(ctx context.Context, sessionID string, f ListMessagesFilter) ([]SessionMessage, string, error) {
+	limit := f.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+
+	cursorCreated, cursorID, err := cursorutil.DecodeTime(f.Cursor)
+	if err != nil {
+		return nil, "", apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "invalid cursor")
+	}
+
+	rows, err := r.db.Query(ctx,
+		`SELECT id, session_id, role, content, created_at
+		 FROM ai_messages
+		 WHERE session_id = $1
+		   AND (NOT $2 OR (created_at, id) < ($3, $4))
+		 ORDER BY created_at DESC, id DESC
+		 LIMIT $5`,
+		sessionID, f.Cursor != "", cursorCreated, cursorID, limit+1,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("ai.ListMessages query: %w", err)
+		return nil, "", fmt.Errorf("ai.ListMessages query: %w", err)
 	}
 	defer rows.Close()
 
-	msgs := []SessionMessage{}
+	var out []SessionMessage
 	for rows.Next() {
 		var m SessionMessage
 		if err := rows.Scan(&m.ID, &m.SessionID, &m.Role, &m.Content, &m.CreatedAt); err != nil {
-			return nil, fmt.Errorf("ai.ListMessages scan: %w", err)
+			return nil, "", fmt.Errorf("ai.ListMessages scan: %w", err)
 		}
-		msgs = append(msgs, m)
+		out = append(out, m)
 	}
-	return msgs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, "", fmt.Errorf("ai.ListMessages rows: %w", err)
+	}
+
+	// Take cursor from the oldest row of the truncated page (before reversing).
+	var next string
+	if len(out) > limit {
+		oldest := out[limit-1]
+		next = cursorutil.EncodeTime(oldest.CreatedAt, oldest.ID)
+		out = out[:limit]
+	}
+
+	// Reverse DESC → ASC so callers see chat-thread order (oldest first).
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, next, nil
 }
 
 func (r *pgRepo) DeleteSession(ctx context.Context, userID, id string) error {

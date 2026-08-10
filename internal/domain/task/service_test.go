@@ -14,7 +14,7 @@ import (
 // ── mock repository ───────────────────────────────────────────────────────────
 
 type mockRepo struct {
-	listByProject    func(ctx context.Context, userID, projectID string, f ListTasksFilter) ([]Task, error)
+	listByProject    func(ctx context.Context, userID, projectID string, f ListTasksFilter) ([]Task, string, error)
 	getByID          func(ctx context.Context, userID, id string) (*Task, error)
 	create           func(ctx context.Context, t Task) (Task, error)
 	update           func(ctx context.Context, userID, id string, req UpdateTaskRequest, ca completedAtChange) (Task, error)
@@ -32,7 +32,7 @@ type mockRepo struct {
 	listForUser      func(ctx context.Context, userID string, f UserListFilter) ([]Task, error)
 }
 
-func (m *mockRepo) ListByProject(ctx context.Context, userID, projectID string, f ListTasksFilter) ([]Task, error) {
+func (m *mockRepo) ListByProject(ctx context.Context, userID, projectID string, f ListTasksFilter) ([]Task, string, error) {
 	return m.listByProject(ctx, userID, projectID, f)
 }
 func (m *mockRepo) GetByID(ctx context.Context, userID, id string) (*Task, error) {

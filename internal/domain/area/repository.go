@@ -2,12 +2,9 @@ package area
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -15,6 +12,7 @@ import (
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
+	"github.com/nicoflow/nicoflow-api/pkg/cursorutil"
 )
 
 // Repository defines the data-access contract for the area domain.
@@ -44,7 +42,7 @@ func (r *pgRepository) List(ctx context.Context, userID string, f ListAreasFilte
 		limit = 50
 	}
 
-	cursorOrder, cursorID, err := decodeCursor(f.Cursor)
+	cursorOrder, cursorID, err := cursorutil.DecodeInt(f.Cursor)
 	if err != nil {
 		return nil, "", apperror.New(http.StatusBadRequest, apperror.ErrInvalidInput, "invalid cursor")
 	}
@@ -80,7 +78,7 @@ func (r *pgRepository) List(ctx context.Context, userID string, f ListAreasFilte
 	var next string
 	if len(areas) > limit {
 		last := areas[limit-1]
-		next = encodeCursor(last.DisplayOrder, last.ID)
+		next = cursorutil.EncodeInt(last.DisplayOrder, last.ID)
 		areas = areas[:limit]
 	}
 	return areas, next, nil
@@ -308,32 +306,6 @@ func scanAreas(rows pgx.Rows) ([]Area, error) {
 		areas = append(areas, a)
 	}
 	return areas, rows.Err()
-}
-
-// encodeCursor encodes display_order and id into an opaque base64 cursor.
-func encodeCursor(order int, id string) string {
-	raw := strconv.Itoa(order) + ":" + id
-	return base64.StdEncoding.EncodeToString([]byte(raw))
-}
-
-// decodeCursor decodes the cursor. Returns -1/"" (before first row) on empty input.
-func decodeCursor(cursor string) (int, string, error) {
-	if cursor == "" {
-		return -1, "", nil
-	}
-	b, err := base64.StdEncoding.DecodeString(cursor)
-	if err != nil {
-		return 0, "", fmt.Errorf("decodeCursor: %w", err)
-	}
-	parts := strings.SplitN(string(b), ":", 2)
-	if len(parts) != 2 {
-		return 0, "", fmt.Errorf("decodeCursor: malformed cursor")
-	}
-	order, err := strconv.Atoi(parts[0])
-	if err != nil {
-		return 0, "", fmt.Errorf("decodeCursor order: %w", err)
-	}
-	return order, parts[1], nil
 }
 
 func isUniqueViolation(err error) bool {

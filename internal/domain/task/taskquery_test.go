@@ -50,7 +50,7 @@ func TestBuildListQuery(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sql, args, err := buildListQuery("u1", "p1", tt.filter)
+			whereSuffix, sortSuffix, args, err := buildListQuery("u1", "p1", tt.filter)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected error, got nil")
@@ -60,6 +60,8 @@ func TestBuildListQuery(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
+			// Combine where + sort so fragment assertions match the old full-suffix shape.
+			sql := whereSuffix + sortSuffix
 			for _, frag := range tt.wantInSQL {
 				if !strings.Contains(sql, frag) {
 					t.Errorf("SQL missing %q\ngot: %s", frag, sql)

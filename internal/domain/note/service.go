@@ -93,27 +93,27 @@ func validateContent(raw json.RawMessage) (json.RawMessage, error) {
 	return raw, nil
 }
 
-func (s *service) ListByProject(ctx context.Context, userID, projectID string) ([]NoteView, error) {
+func (s *service) ListByProject(ctx context.Context, userID, projectID string, f ListNotesFilter) (NoteListView, error) {
 	projectID = strings.TrimSpace(projectID)
 	if projectID == "" {
-		return nil, invalid("projectId is required")
+		return NoteListView{}, invalid("projectId is required")
 	}
 	// Verified before listing so a guessed project id yields 404 rather than an
 	// empty list — an empty list would still confirm the project is reachable.
 	if err := s.projects.VerifyProjectOwner(ctx, userID, projectID); err != nil {
-		return nil, err
+		return NoteListView{}, err
 	}
 
-	notes, err := s.repo.ListByProject(ctx, userID, projectID)
+	notes, nextCursor, err := s.repo.ListByProject(ctx, userID, projectID, f)
 	if err != nil {
-		return nil, err
+		return NoteListView{}, err
 	}
 
-	out := make([]NoteView, 0, len(notes))
+	items := make([]NoteView, 0, len(notes))
 	for _, n := range notes {
-		out = append(out, toView(n))
+		items = append(items, toView(n))
 	}
-	return out, nil
+	return NoteListView{Items: items, NextCursor: nextCursor}, nil
 }
 
 func (s *service) Get(ctx context.Context, userID, id string) (NoteDetailView, error) {

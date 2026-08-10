@@ -144,7 +144,7 @@ func (s *service) ListByProject(ctx context.Context, userID, projectID string, f
 		return ListTasksResponse{}, apperror.New(http.StatusNotFound, apperror.ErrProjectNotFound, "project not found")
 	}
 
-	tasks, err := s.repo.ListByProject(ctx, userID, projectID, f)
+	tasks, nextCursor, err := s.repo.ListByProject(ctx, userID, projectID, f)
 	if err != nil {
 		return ListTasksResponse{}, err
 	}
@@ -152,7 +152,7 @@ func (s *service) ListByProject(ctx context.Context, userID, projectID string, f
 	for i, t := range tasks {
 		items[i] = TaskToView(t)
 	}
-	return ListTasksResponse{Items: items}, nil
+	return ListTasksResponse{Items: items, NextCursor: nextCursor}, nil
 }
 
 func (s *service) Get(ctx context.Context, userID, id string) (TaskView, error) {

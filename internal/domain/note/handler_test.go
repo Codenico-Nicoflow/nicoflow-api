@@ -28,15 +28,15 @@ type envelope struct {
 
 // mockService lets the handler tests drive every branch without a database.
 type mockService struct {
-	listByProject func(ctx context.Context, userID, projectID string) ([]note.NoteView, error)
+	listByProject func(ctx context.Context, userID, projectID string, f note.ListNotesFilter) (note.NoteListView, error)
 	get           func(ctx context.Context, userID, id string) (note.NoteDetailView, error)
 	create        func(ctx context.Context, userID string, req note.CreateNoteRequest) (note.NoteDetailView, error)
 	update        func(ctx context.Context, userID, id string, req note.UpdateNoteRequest) (note.NoteDetailView, error)
 	deleteFn      func(ctx context.Context, userID, id string) error
 }
 
-func (m *mockService) ListByProject(ctx context.Context, userID, projectID string) ([]note.NoteView, error) {
-	return m.listByProject(ctx, userID, projectID)
+func (m *mockService) ListByProject(ctx context.Context, userID, projectID string, f note.ListNotesFilter) (note.NoteListView, error) {
+	return m.listByProject(ctx, userID, projectID, f)
 }
 func (m *mockService) Get(ctx context.Context, userID, id string) (note.NoteDetailView, error) {
 	return m.get(ctx, userID, id)
@@ -240,9 +240,9 @@ func TestHandlerDeleteReturns204(t *testing.T) {
 // The projectId query param is forwarded verbatim; the service owns validation.
 func TestHandlerListPassesProjectID(t *testing.T) {
 	var got string
-	svc := &mockService{listByProject: func(ctx context.Context, userID, projectID string) ([]note.NoteView, error) {
+	svc := &mockService{listByProject: func(ctx context.Context, userID, projectID string, f note.ListNotesFilter) (note.NoteListView, error) {
 		got = projectID
-		return []note.NoteView{}, nil
+		return note.NoteListView{Items: []note.NoteView{}}, nil
 	}}
 
 	rec := serve(t, svc, http.MethodGet, "/notes?projectId=p_abc", "")
@@ -258,15 +258,22 @@ func TestHandlerListPassesProjectID(t *testing.T) {
 // An empty list must serialize as [] rather than null, so the client can render
 // it without a nil check.
 func TestHandlerEmptyListIsArray(t *testing.T) {
-	svc := &mockService{listByProject: func(ctx context.Context, userID, projectID string) ([]note.NoteView, error) {
-		return []note.NoteView{}, nil
+	svc := &mockService{listByProject: func(ctx context.Context, userID, projectID string, f note.ListNotesFilter) (note.NoteListView, error) {
+		return note.NoteListView{Items: []note.NoteView{}}, nil
 	}}
 
 	rec := serve(t, svc, http.MethodGet, "/notes?projectId=p_1", "")
 
 	env := decodeEnvelope(t, rec)
-	if string(env.Data) != "[]" {
-		t.Errorf("data = %s, want []", env.Data)
+	// data is now a NoteListView object; items must be [] not null.
+	var listView struct {
+		Items json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(env.Data, &listView); err != nil {
+		t.Fatalf("unmarshal data: %v", err)
+	}
+	if string(listView.Items) != "[]" {
+		t.Errorf("items = %s, want []", listView.Items)
 	}
 }
 
