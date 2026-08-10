@@ -1335,11 +1335,13 @@ List all AI sessions for the user.
 
 #### GET /v1/ai/sessions/:id
 
-Retrieve a session with its full message history (most-recent 50 messages, oldest-first).
+Retrieve a session with its most recent 50 messages (oldest-first). Older history is not included here — fetch it via `GET /v1/ai/sessions/:id/messages`.
 
 - **Auth required:** Yes
 
-**Response — 200 OK** — `IAISession` with `messages: IAIMessage[]`
+**Response — 200 OK** — `IAISession` with `messages: IAIMessage[]` and `messagesCursor: string`.
+
+`messagesCursor` seeds "load older history": pass it as `?cursor=` to `GET /v1/ai/sessions/:id/messages` to fetch the page immediately before `messages`. Empty string when `messages` already covers the whole session (≤ 50 total).
 
 ---
 

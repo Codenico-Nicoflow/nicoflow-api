@@ -164,7 +164,7 @@ func (s *service) GetSession(ctx context.Context, userID, id string) (SessionDet
 	if err != nil {
 		return SessionDetailView{}, err
 	}
-	msgs, _, err := s.repo.ListMessages(ctx, sess.ID, ListMessagesFilter{Limit: 50})
+	msgs, cursor, err := s.repo.ListMessages(ctx, sess.ID, ListMessagesFilter{Limit: 50})
 	if err != nil {
 		return SessionDetailView{}, err
 	}
@@ -173,8 +173,9 @@ func (s *service) GetSession(ctx context.Context, userID, id string) (SessionDet
 		views[i] = messageToView(m)
 	}
 	return SessionDetailView{
-		SessionView: sessionToView(*sess),
-		Messages:    views,
+		SessionView:    sessionToView(*sess),
+		Messages:       views,
+		MessagesCursor: cursor,
 	}, nil
 }
 

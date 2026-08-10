@@ -51,6 +51,10 @@ type MessageView struct {
 type SessionDetailView struct {
 	SessionView
 	Messages []MessageView `json:"messages"`
+	// MessagesCursor seeds GET /ai/sessions/:id/messages for "load older history" —
+	// it is the cursor that fetches the page immediately before Messages. Empty
+	// when Messages already covers the whole session.
+	MessagesCursor string `json:"messagesCursor"`
 }
 
 // UsageView is the quota-state read (GET /ai/usage). For Free plans scope is
