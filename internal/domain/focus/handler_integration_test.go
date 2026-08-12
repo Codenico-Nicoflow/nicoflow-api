@@ -86,10 +86,11 @@ func decode(t *testing.T, w *httptest.ResponseRecorder) envelope {
 func seedTaskWithStatus(t *testing.T, pool *pgxpool.Pool, userID, status string) string {
 	t.Helper()
 	id := uuid.NewString()
+	projectID := seedProject(t, pool, userID)
 	_, err := pool.Exec(context.Background(),
-		`INSERT INTO tasks (id, user_id, title, status, display_order)
-		 VALUES ($1, $2, 'focus task', $3, 0)`,
-		id, userID, status,
+		`INSERT INTO tasks (id, user_id, project_id, title, status, display_order)
+		 VALUES ($1, $2, $3, 'focus task', $4, 0)`,
+		id, userID, projectID, status,
 	)
 	if err != nil {
 		t.Fatalf("seedTaskWithStatus: %v", err)

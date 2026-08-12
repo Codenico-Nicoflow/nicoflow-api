@@ -439,10 +439,11 @@ func TestIntegration_Project_Update_MoveToUnknownArea(t *testing.T) {
 
 // ── Tests: Delete ─────────────────────────────────────────────────────────────
 
-// TestIntegration_Project_Delete_NullsTaskProjectID covers test matrix row #25.
-// The FK is ON DELETE SET NULL — deleting a project sets tasks.project_id to NULL
-// (tasks survive, un-assigned). Task HTTP endpoints are stubs; verified via SQL.
-func TestIntegration_Project_Delete_NullsTaskProjectID(t *testing.T) {
+// TestIntegration_Project_Delete_CascadesTasks covers test matrix row #25.
+// The FK is ON DELETE CASCADE — deleting a project deletes its tasks with it,
+// matching SPEC's "delete a project and all its tasks". Task HTTP endpoints
+// are stubs; verified via SQL.
+func TestIntegration_Project_Delete_CascadesTasks(t *testing.T) {
 	pool := testutil.NewTestDB(t)
 	env := newProjectServer(t)
 	p := createProject(t, env.srv, env.token, env.areaID, "With Tasks")
@@ -463,16 +464,16 @@ func TestIntegration_Project_Delete_NullsTaskProjectID(t *testing.T) {
 	delResp := do(t, env.srv, http.MethodDelete, "/v1/projects/"+p.ID, nil, env.token)
 	assertStatus(t, delResp, http.StatusNoContent)
 
-	// project_id must be NULLed by ON DELETE SET NULL — task still exists.
-	var projectIDIsNull bool
+	// The task must be gone (ON DELETE CASCADE), not orphaned.
+	var count int
 	if err := pool.QueryRow(context.Background(),
-		`SELECT project_id IS NULL FROM tasks WHERE user_id = (SELECT id FROM users WHERE email = $1)`,
+		`SELECT COUNT(*) FROM tasks WHERE user_id = (SELECT id FROM users WHERE email = $1)`,
 		"usera@project-integration.test",
-	).Scan(&projectIDIsNull); err != nil {
+	).Scan(&count); err != nil {
 		t.Fatalf("query task: %v", err)
 	}
-	if !projectIDIsNull {
-		t.Error("expected task.project_id = NULL after project delete (ON DELETE SET NULL)")
+	if count != 0 {
+		t.Errorf("expected 0 tasks after project delete (ON DELETE CASCADE), got %d", count)
 	}
 }
 

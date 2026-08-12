@@ -542,11 +542,35 @@ func TestIntegration_Task_IsOpenable(t *testing.T) {
 	ownerID, _ := insertUser(t, pool, "owner-"+sanitizeEmail(t.Name())+testEmailDomain, "free")
 	otherID, _ := insertUser(t, pool, "other-"+sanitizeEmail(t.Name())+testEmailDomain, "free")
 
+	projectFor := func(userID string) string {
+		areaID := uuid.New().String()
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO areas (id, user_id, name) VALUES ($1, $2, $3)`,
+			areaID, userID, "area "+areaID[:8],
+		); err != nil {
+			t.Fatalf("seed area: %v", err)
+		}
+		projectID := uuid.New().String()
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO projects (id, user_id, area_id, name) VALUES ($1, $2, $3, $4)`,
+			projectID, userID, areaID, "project "+projectID[:8],
+		); err != nil {
+			t.Fatalf("seed project: %v", err)
+		}
+		return projectID
+	}
+	ownerProjectID := projectFor(ownerID)
+	otherProjectID := projectFor(otherID)
+
 	seed := func(userID, status string) string {
+		projectID := ownerProjectID
+		if userID == otherID {
+			projectID = otherProjectID
+		}
 		id := uuid.New().String()
 		if _, err := pool.Exec(ctx,
-			`INSERT INTO tasks (id, user_id, title, status, display_order) VALUES ($1, $2, 'x', $3, 0)`,
-			id, userID, status,
+			`INSERT INTO tasks (id, user_id, project_id, title, status, display_order) VALUES ($1, $2, $3, 'x', $4, 0)`,
+			id, userID, projectID, status,
 		); err != nil {
 			t.Fatalf("seed %s: %v", status, err)
 		}

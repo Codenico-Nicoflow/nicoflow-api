@@ -55,6 +55,26 @@ func clean(t *testing.T, pool *pgxpool.Pool) {
 	}
 }
 
+// seedProject creates an area + project for userID and returns the project ID.
+// tasks.project_id is NOT NULL, so every seeded task needs a real project.
+func seedProject(t *testing.T, pool *pgxpool.Pool, userID string) string {
+	t.Helper()
+	ctx := context.Background()
+	areaID := uuid.New().String()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO areas (id, user_id, name) VALUES ($1, $2, $3)`,
+		areaID, userID, "area "+areaID[:8]); err != nil {
+		t.Fatalf("seedProject area: %v", err)
+	}
+	projectID := uuid.New().String()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO projects (id, user_id, area_id, name) VALUES ($1, $2, $3, $4)`,
+		projectID, userID, areaID, "project "+projectID[:8]); err != nil {
+		t.Fatalf("seedProject project: %v", err)
+	}
+	return projectID
+}
+
 // seedUserWithDueTask creates a user in the given timezone with one task scheduled
 // for isoDate, and returns the user ID.
 func seedUserWithDueTask(t *testing.T, pool *pgxpool.Pool, tz, isoDate string) string {
@@ -67,10 +87,11 @@ func seedUserWithDueTask(t *testing.T, pool *pgxpool.Pool, tz, isoDate string) s
 	if err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
+	projectID := seedProject(t, pool, uid)
 	_, err = pool.Exec(context.Background(),
-		`INSERT INTO tasks (id, user_id, title, status, scheduled_for)
-		 VALUES ($1, $2, 'Due task', 'active', $3)`,
-		uuid.New().String(), uid, isoDate)
+		`INSERT INTO tasks (id, user_id, project_id, title, status, scheduled_for)
+		 VALUES ($1, $2, $3, 'Due task', 'active', $4)`,
+		uuid.New().String(), uid, projectID, isoDate)
 	if err != nil {
 		t.Fatalf("seed task: %v", err)
 	}
@@ -245,10 +266,11 @@ func TestSweep_SkipsTerminalTasks(t *testing.T) {
 		t.Fatalf("seed user: %v", err)
 	}
 	// A done task on the target date — must be skipped.
+	projectID := seedProject(t, pool, uid)
 	if _, err := pool.Exec(context.Background(),
-		`INSERT INTO tasks (id, user_id, title, status, scheduled_for)
-		 VALUES ($1, $2, 'Done task', 'done', $3)`,
-		uuid.New().String(), uid, target); err != nil {
+		`INSERT INTO tasks (id, user_id, project_id, title, status, scheduled_for)
+		 VALUES ($1, $2, $3, 'Done task', 'done', $4)`,
+		uuid.New().String(), uid, projectID, target); err != nil {
 		t.Fatalf("seed done task: %v", err)
 	}
 

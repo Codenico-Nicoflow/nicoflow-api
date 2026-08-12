@@ -58,13 +58,34 @@ func seedUser(t *testing.T, pool *pgxpool.Pool) string {
 	return id
 }
 
+// seedProject creates an area + project for userID and returns the project ID.
+// tasks.project_id is NOT NULL, so every seeded task needs a real project.
+func seedProject(t *testing.T, pool *pgxpool.Pool, userID string) string {
+	t.Helper()
+	ctx := context.Background()
+	areaID := uuid.NewString()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO areas (id, user_id, name) VALUES ($1, $2, $3)`,
+		areaID, userID, "area "+areaID[:8]); err != nil {
+		t.Fatalf("seedProject area: %v", err)
+	}
+	projectID := uuid.NewString()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO projects (id, user_id, area_id, name) VALUES ($1, $2, $3, $4)`,
+		projectID, userID, areaID, "project "+projectID[:8]); err != nil {
+		t.Fatalf("seedProject project: %v", err)
+	}
+	return projectID
+}
+
 func seedTask(t *testing.T, pool *pgxpool.Pool, userID string) string {
 	t.Helper()
 	id := uuid.NewString()
+	projectID := seedProject(t, pool, userID)
 	_, err := pool.Exec(context.Background(),
-		`INSERT INTO tasks (id, user_id, title, status, display_order)
-		 VALUES ($1, $2, 'focus task', 'active', 0)`,
-		id, userID,
+		`INSERT INTO tasks (id, user_id, project_id, title, status, display_order)
+		 VALUES ($1, $2, $3, 'focus task', 'active', 0)`,
+		id, userID, projectID,
 	)
 	if err != nil {
 		t.Fatalf("seedTask: %v", err)
