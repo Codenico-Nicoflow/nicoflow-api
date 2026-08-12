@@ -427,17 +427,16 @@ func TestIntegration_Area_Delete_CascadesProjectsAndTasks(t *testing.T) {
 			t.Errorf("project %s should be deleted with its area, still present", pid)
 		}
 	}
-	// ...while the projects' tasks survive, unfiled (project_id → NULL), matching
-	// the existing single-project delete behaviour (tasks are never destroyed by
-	// a project/area delete).
+	// ...and cascade-delete their tasks in turn (tasks.project_id is
+	// ON DELETE CASCADE), matching the single-project delete behaviour.
 	for _, tid := range taskIDs {
-		var pID *string
+		var count int
 		if err := pool.QueryRow(context.Background(),
-			`SELECT project_id FROM tasks WHERE id = $1`, tid).Scan(&pID); err != nil {
-			t.Fatalf("query task %s: %v", tid, err)
+			`SELECT COUNT(*) FROM tasks WHERE id = $1`, tid).Scan(&count); err != nil {
+			t.Fatalf("count task %s: %v", tid, err)
 		}
-		if pID != nil {
-			t.Errorf("task %s: expected project_id = NULL after cascade, got %q", tid, *pID)
+		if count != 0 {
+			t.Errorf("task %s should be deleted with its project/area, still present", tid)
 		}
 	}
 }
