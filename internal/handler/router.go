@@ -187,6 +187,7 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		r.Patch("/tasks/{id}", h.Task.Update)
 		r.Delete("/tasks/{id}", h.Task.Delete)
 		r.Patch("/tasks/{id}/status", h.Task.SetStatus)
+		r.Patch("/tasks/{id}/mark-missed", h.Task.MarkMissed)
 		r.Patch("/tasks/{id}/schedule", h.Task.Schedule)
 		r.Patch("/tasks/{id}/reorder", h.Task.ReorderOne)
 		r.Get("/tasks/{taskId}/subtasks", h.Task.ListSubtasks)

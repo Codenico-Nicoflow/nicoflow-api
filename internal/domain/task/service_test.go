@@ -30,6 +30,7 @@ type mockRepo struct {
 	existsByID       func(ctx context.Context, id string) (bool, error)
 	isOpenable       func(ctx context.Context, userID, id string) (bool, error)
 	listForUser      func(ctx context.Context, userID string, f UserListFilter) ([]Task, error)
+	markMissed       func(ctx context.Context, userID, id string) (*Task, error)
 }
 
 func (m *mockRepo) ListByProject(ctx context.Context, userID, projectID string, f ListTasksFilter) ([]Task, string, error) {
@@ -39,6 +40,12 @@ func (m *mockRepo) GetByID(ctx context.Context, userID, id string) (*Task, error
 	return m.getByID(ctx, userID, id)
 }
 func (m *mockRepo) Create(ctx context.Context, t Task) (Task, error) { return m.create(ctx, t) }
+func (m *mockRepo) MarkMissed(ctx context.Context, userID, id string) (*Task, error) {
+	if m.markMissed == nil {
+		return nil, nil
+	}
+	return m.markMissed(ctx, userID, id)
+}
 func (m *mockRepo) Update(ctx context.Context, userID, id string, req UpdateTaskRequest, ca completedAtChange) (Task, error) {
 	return m.update(ctx, userID, id, req, ca)
 }

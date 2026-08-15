@@ -231,6 +231,29 @@ func (h *Handler) SetStatus(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, view)
 }
 
+// MarkMissed godoc
+// @Summary      Manually mark a recurring occurrence missed
+// @Description  Reaps one recurring occurrence to (cancelled, missed) — the same terminal state the overdue sweep sets automatically once its due date passes, just triggered now instead of at the next local midnight. Only eligible for a still-active recurring occurrence due today or earlier.
+// @Tags         tasks
+// @Produce      json
+// @Param        id  path      string  true  "Task ID"
+// @Security     BearerAuth
+// @Success      200  {object}  TaskEnvelope   "The reaped task"
+// @Failure      404  {object}  ErrorEnvelope  "TASK_NOT_FOUND"
+// @Failure      422  {object}  ErrorEnvelope  "TASK_NOT_MISSABLE — not recurring, not active, already reaped, or its occurrence date is still in the future"
+// @Router       /tasks/{id}/mark-missed [patch]
+func (h *Handler) MarkMissed(w http.ResponseWriter, r *http.Request) {
+	userID := mw.UserIDFromCtx(r.Context())
+	id := chi.URLParam(r, "id")
+
+	view, err := h.svc.MarkMissed(r.Context(), userID, id)
+	if err != nil {
+		writeAppError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, view)
+}
+
 // Schedule godoc
 // @Summary      Schedule a task (soft)
 // @Description  Sets the soft scheduledFor intention, optional scheduledTime (HH:MM, Pro-only) and rollsOver flag. scheduledFor null (or absent) unschedules. A bad date returns 400 INVALID_DATE.

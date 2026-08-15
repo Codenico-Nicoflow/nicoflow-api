@@ -61,7 +61,7 @@ func dueRule(id, next, tz string) DueRule {
 func TestSweep_MaterializesDueRule(t *testing.T) {
 	repo := newSweepRepo()
 	repo.due = []DueRule{dueRule("r1", "2026-03-02", "UTC")}
-	m := NewMaterializerWithClock(repo, nil, 50, fixedClock("2026-03-02"))
+	m := NewMaterializerWithClock(repo, nil, nil, 50, fixedClock("2026-03-02"))
 
 	res, err := m.Run(context.Background(), false)
 	if err != nil {
@@ -103,7 +103,7 @@ func TestSweep_DueWindowIsPerUserTimezone(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := newSweepRepo()
 			repo.due = []DueRule{dueRule("r1", tt.next, tt.tz)}
-			m := NewMaterializerWithClock(repo, nil, 50, nowUTC)
+			m := NewMaterializerWithClock(repo, nil, nil, 50, nowUTC)
 
 			res, err := m.Run(context.Background(), false)
 			if err != nil {
@@ -121,7 +121,7 @@ func TestSweep_DueWindowIsPerUserTimezone(t *testing.T) {
 func TestSweep_PastCursorCatchesUp(t *testing.T) {
 	repo := newSweepRepo()
 	repo.due = []DueRule{dueRule("r1", "2026-02-20", "UTC")}
-	m := NewMaterializerWithClock(repo, nil, 50, fixedClock("2026-03-02"))
+	m := NewMaterializerWithClock(repo, nil, nil, 50, fixedClock("2026-03-02"))
 
 	res, err := m.Run(context.Background(), false)
 	if err != nil {
@@ -141,7 +141,7 @@ func TestSweep_PlanLimitStallIsCounted(t *testing.T) {
 	repo := newSweepRepo()
 	repo.due = []DueRule{dueRule("r1", "2026-03-02", "UTC")}
 	repo.results["r1"] = MaterializeResult{SkippedPlanLimit: true}
-	m := NewMaterializerWithClock(repo, nil, 50, fixedClock("2026-03-02"))
+	m := NewMaterializerWithClock(repo, nil, nil, 50, fixedClock("2026-03-02"))
 
 	res, err := m.Run(context.Background(), false)
 	if err != nil {
@@ -159,7 +159,7 @@ func TestSweep_SkipsExistingLiveInstance(t *testing.T) {
 	repo := newSweepRepo()
 	repo.due = []DueRule{dueRule("r1", "2026-03-02", "UTC")}
 	repo.results["r1"] = MaterializeResult{SkippedExisting: true}
-	m := NewMaterializerWithClock(repo, nil, 50, fixedClock("2026-03-02"))
+	m := NewMaterializerWithClock(repo, nil, nil, 50, fixedClock("2026-03-02"))
 
 	res, err := m.Run(context.Background(), false)
 	if err != nil {
@@ -175,7 +175,7 @@ func TestSweep_CountsReap(t *testing.T) {
 	repo.due = []DueRule{dueRule("r1", "2026-03-02", "UTC")}
 	occ := Occurrence{ID: "t1"}
 	repo.results["r1"] = MaterializeResult{Created: &occ, Reaped: true}
-	m := NewMaterializerWithClock(repo, nil, 50, fixedClock("2026-03-02"))
+	m := NewMaterializerWithClock(repo, nil, nil, 50, fixedClock("2026-03-02"))
 
 	res, err := m.Run(context.Background(), false)
 	if err != nil {
@@ -191,7 +191,7 @@ func TestSweep_CountsReap(t *testing.T) {
 func TestSweep_BadTimezoneIsItsOwnBucket(t *testing.T) {
 	repo := newSweepRepo()
 	repo.due = []DueRule{dueRule("r1", "2026-03-02", "Mars/Olympus_Mons")}
-	m := NewMaterializerWithClock(repo, nil, 50, fixedClock("2026-03-02"))
+	m := NewMaterializerWithClock(repo, nil, nil, 50, fixedClock("2026-03-02"))
 
 	res, err := m.Run(context.Background(), false)
 	if err != nil {
@@ -209,7 +209,7 @@ func TestSweep_BadTimezoneIsItsOwnBucket(t *testing.T) {
 func TestSweep_DryRunWritesNothing(t *testing.T) {
 	repo := newSweepRepo()
 	repo.due = []DueRule{dueRule("r1", "2026-03-02", "UTC")}
-	m := NewMaterializerWithClock(repo, nil, 50, fixedClock("2026-03-02"))
+	m := NewMaterializerWithClock(repo, nil, nil, 50, fixedClock("2026-03-02"))
 
 	res, err := m.Run(context.Background(), true)
 	if err != nil {
@@ -230,7 +230,7 @@ func TestSweep_ExhaustedSeriesNullsCursor(t *testing.T) {
 	end := date("2026-03-02")
 	d.Rule.EndDate = &end
 	repo.due = []DueRule{d}
-	m := NewMaterializerWithClock(repo, nil, 50, fixedClock("2026-03-02"))
+	m := NewMaterializerWithClock(repo, nil, nil, 50, fixedClock("2026-03-02"))
 
 	if _, err := m.Run(context.Background(), false); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -241,7 +241,7 @@ func TestSweep_ExhaustedSeriesNullsCursor(t *testing.T) {
 }
 
 func TestSweep_EmptyDueListIsNotAnError(t *testing.T) {
-	m := NewMaterializerWithClock(newSweepRepo(), nil, 50, fixedClock("2026-03-02"))
+	m := NewMaterializerWithClock(newSweepRepo(), nil, nil, 50, fixedClock("2026-03-02"))
 	res, err := m.Run(context.Background(), false)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -255,7 +255,7 @@ func TestSweep_PropagatesRepoErrors(t *testing.T) {
 	t.Run("list", func(t *testing.T) {
 		repo := newSweepRepo()
 		repo.dueErr = errors.New("db down")
-		m := NewMaterializerWithClock(repo, nil, 50, fixedClock("2026-03-02"))
+		m := NewMaterializerWithClock(repo, nil, nil, 50, fixedClock("2026-03-02"))
 		if _, err := m.Run(context.Background(), false); err == nil {
 			t.Fatal("err = nil, want the list failure")
 		}
@@ -264,7 +264,7 @@ func TestSweep_PropagatesRepoErrors(t *testing.T) {
 		repo := newSweepRepo()
 		repo.due = []DueRule{dueRule("r1", "2026-03-02", "UTC")}
 		repo.matErr = errors.New("db down")
-		m := NewMaterializerWithClock(repo, nil, 50, fixedClock("2026-03-02"))
+		m := NewMaterializerWithClock(repo, nil, nil, 50, fixedClock("2026-03-02"))
 		if _, err := m.Run(context.Background(), false); err == nil {
 			t.Fatal("err = nil, want the materialize failure")
 		}
@@ -276,7 +276,7 @@ func TestMaterializeAfterCompletion(t *testing.T) {
 	repo := newSweepRepo()
 	rule := dueRule("r1", "2026-03-03", "UTC").Rule
 	repo.rules[rule.ID] = rule
-	m := NewMaterializerWithClock(repo, nil, 50, fixedClock("2026-03-02"))
+	m := NewMaterializerWithClock(repo, nil, nil, 50, fixedClock("2026-03-02"))
 
 	if err := m.MaterializeAfterCompletion(context.Background(), "u1", "r1"); err != nil {
 		t.Fatalf("MaterializeAfterCompletion: %v", err)
@@ -301,7 +301,7 @@ func TestMaterializeAfterCompletion_NoOpCases(t *testing.T) {
 			rule := dueRule("r1", "2026-03-03", "UTC").Rule
 			tt.mutate(&rule)
 			repo.rules[rule.ID] = rule
-			m := NewMaterializerWithClock(repo, nil, 50, fixedClock("2026-03-02"))
+			m := NewMaterializerWithClock(repo, nil, nil, 50, fixedClock("2026-03-02"))
 
 			if err := m.MaterializeAfterCompletion(context.Background(), "u1", "r1"); err != nil {
 				t.Fatalf("MaterializeAfterCompletion: %v", err)
@@ -318,7 +318,7 @@ func TestMaterializeAfterCompletion_RowLevelIsolation(t *testing.T) {
 	repo := newSweepRepo()
 	rule := dueRule("r1", "2026-03-03", "UTC").Rule
 	repo.rules[rule.ID] = rule
-	m := NewMaterializerWithClock(repo, nil, 50, fixedClock("2026-03-02"))
+	m := NewMaterializerWithClock(repo, nil, nil, 50, fixedClock("2026-03-02"))
 
 	err := m.MaterializeAfterCompletion(context.Background(), "u2", "r1")
 	assertCode(t, err, "RECURRENCE_RULE_NOT_FOUND")

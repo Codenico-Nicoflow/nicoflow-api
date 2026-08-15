@@ -50,6 +50,11 @@ type Repository interface {
 	// ListForUser returns tasks the user owns, filtered by the optional
 	// UserListFilter fields. Backs the AI tool executor's list_tasks.
 	ListForUser(ctx context.Context, userID string, f UserListFilter) ([]Task, error)
+	// MarkMissed is the manual twin of the recurrence sweep's overdue reap: it
+	// marks one recurring occurrence missed, guarded to today-or-past in the
+	// owner's local timezone. Returns nil (no error) when the WHERE clause
+	// matched nothing — the service disambiguates not-found from not-eligible.
+	MarkMissed(ctx context.Context, userID, id string) (*Task, error)
 }
 
 type pgRepo struct{ db *pgxpool.Pool }
@@ -68,7 +73,7 @@ func NewRepository(db *pgxpool.Pool) Repository { return &pgRepo{db: db} }
 // complete on OpenSubtaskCount > 0 wherever a task can be checked off.
 const taskSelectCols = ` id, user_id, project_id, title, notes, status, priority, energy,
 	rolls_over, scheduled_for, to_char(scheduled_time, 'HH24:MI'), estimated_minutes, url, display_order,
-	completed_at, created_at, updated_at, recurrence_rule_id, occurrence_date::text,
+	completed_at, created_at, updated_at, recurrence_rule_id, occurrence_date::text, occurrence_status,
 	(SELECT COUNT(*) FROM subtasks s WHERE s.task_id = tasks.id),
 	(SELECT COUNT(*) FROM subtasks s WHERE s.task_id = tasks.id AND s.done = FALSE) `
 
@@ -76,7 +81,7 @@ func scanTask(row pgx.Row, t *Task) error {
 	return row.Scan(
 		&t.ID, &t.UserID, &t.ProjectID, &t.Title, &t.Notes, &t.Status, &t.Priority, &t.Energy,
 		&t.RollsOver, &t.ScheduledFor, &t.ScheduledTime, &t.EstimatedMinutes, &t.URL, &t.DisplayOrder,
-		&t.CompletedAt, &t.CreatedAt, &t.UpdatedAt, &t.RecurrenceRuleID, &t.OccurrenceDate,
+		&t.CompletedAt, &t.CreatedAt, &t.UpdatedAt, &t.RecurrenceRuleID, &t.OccurrenceDate, &t.OccurrenceStatus,
 		&t.SubtaskCount, &t.OpenSubtaskCount,
 	)
 }
@@ -187,6 +192,45 @@ func (r *pgRepo) ListByDateRange(ctx context.Context, userID, from, to string) (
 		tasks = append(tasks, t)
 	}
 	return tasks, rows.Err()
+}
+
+// MarkMissed is the manual twin of the recurrence sweep's overdue reap (see
+// recurrence.Repository.ReapOverdue): same terminal write
+// (status='cancelled', occurrence_status='missed'), just triggered by the user
+// instead of the cron. The WHERE clause carries every precondition — recurring,
+// still active, not already reaped, occurrence date today-or-earlier in the
+// owner's local timezone — so a 0-row result is the single signal the service
+// needs to distinguish "not found" from "not eligible" (it disambiguates via a
+// follow-up GetByID). Two distinct guards deliberately live in the same WHERE
+// rather than a chain of separate checks: eligibility here is a database-time
+// fact (today, in this user's zone), and checking it anywhere but at the query
+// closes a race no application-layer check can close. The target table stays
+// unaliased (never `tasks t`) because RETURNING can't see a FROM-joined
+// alias, and taskSelectCols' subtask subqueries are written against the bare
+// `tasks.id` name.
+func (r *pgRepo) MarkMissed(ctx context.Context, userID, id string) (*Task, error) {
+	var t Task
+	err := scanTask(
+		r.db.QueryRow(ctx, `
+			UPDATE tasks SET status = 'cancelled', occurrence_status = 'missed', updated_at = NOW()
+			FROM users u
+			WHERE tasks.id = @id AND tasks.user_id = @userID AND u.id = tasks.user_id
+			  AND tasks.recurrence_rule_id IS NOT NULL
+			  AND tasks.status = 'active'
+			  AND tasks.occurrence_status IS NULL
+			  AND tasks.occurrence_date <= ((NOW() AT TIME ZONE COALESCE(u.timezone, 'UTC'))::date)
+			RETURNING`+taskSelectCols,
+			pgx.NamedArgs{"id": id, "userID": userID},
+		),
+		&t,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("task.MarkMissed: %w", err)
+	}
+	return &t, nil
 }
 
 func (r *pgRepo) GetByID(ctx context.Context, userID, id string) (*Task, error) {

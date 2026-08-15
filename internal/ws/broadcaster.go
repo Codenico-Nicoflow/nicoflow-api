@@ -88,6 +88,15 @@ func (b *TaskBroadcaster) Broadcast(userID string, ev task.Event) {
 	broadcast(b.hub, b.now, userID, ev.Type, ev.Payload)
 }
 
+// BroadcastTaskStatusChanged adapts recurrence.TaskEventBroadcaster to the
+// hub, so the overdue-reap sweep can push task.status_changed without the
+// recurrence package importing task. The client reacts by invalidating and
+// refetching, so an id-only Ref is enough — matching every other Ref-payload
+// event in this table.
+func (b *TaskBroadcaster) BroadcastTaskStatusChanged(userID, taskID string) {
+	broadcast(b.hub, b.now, userID, task.EventStatusChanged, task.Ref{ID: taskID})
+}
+
 // ProjectBroadcaster adapts the Hub to project.Broadcaster.
 type ProjectBroadcaster struct {
 	hub *Hub

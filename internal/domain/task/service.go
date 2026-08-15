@@ -56,6 +56,11 @@ type Service interface {
 	Update(ctx context.Context, userID, id, plan string, req UpdateTaskRequest) (TaskView, error)
 	Delete(ctx context.Context, userID, id string) error
 	SetStatus(ctx context.Context, userID, id, plan, status string) (TaskView, error)
+	// MarkMissed manually reaps one recurring occurrence to (cancelled, missed) —
+	// the same terminal write ReapOverdue makes automatically once its due date
+	// has fully passed, just triggered by the user instead of waiting for the
+	// nightly-local-midnight sweep. Guarded to today-or-past occurrences only.
+	MarkMissed(ctx context.Context, userID, id string) (TaskView, error)
 	Schedule(ctx context.Context, userID, id, plan string, req ScheduleRequest) (TaskView, error)
 	// ListByDateRange returns the user's tasks scheduled within an inclusive date
 	// window, in calendar-grid order and with no roll-forward applied.
@@ -393,6 +398,29 @@ func (s *service) SetStatus(ctx context.Context, userID, id, plan, status string
 	if err != nil {
 		return TaskView{}, err
 	}
+	s.emit(userID, Event{Type: EventStatusChanged, Payload: view})
+	return view, nil
+}
+
+// MarkMissed manually reaps one recurring occurrence. The repository's WHERE
+// clause carries every precondition (recurring, still active, unreaped,
+// today-or-past in the owner's local timezone) in one atomic write, so a nil
+// result here means one of them failed. A follow-up GetByID distinguishes
+// "no such task" (404) from "exists but not eligible" (422) — the two 0-row
+// causes the client needs to tell apart to render the right message.
+func (s *service) MarkMissed(ctx context.Context, userID, id string) (TaskView, error) {
+	t, err := s.repo.MarkMissed(ctx, userID, id)
+	if err != nil {
+		return TaskView{}, err
+	}
+	if t == nil {
+		if _, getErr := s.repo.GetByID(ctx, userID, id); getErr != nil {
+			return TaskView{}, getErr
+		}
+		return TaskView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrTaskNotMissable,
+			"task is not an eligible recurring occurrence (must be active, recurring, and due today or earlier)")
+	}
+	view := TaskToView(*t)
 	s.emit(userID, Event{Type: EventStatusChanged, Payload: view})
 	return view, nil
 }

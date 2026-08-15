@@ -436,6 +436,43 @@ func classifyNoInsert(ctx context.Context, tx pgx.Tx, ruleID string, occDate tim
 	return MaterializeResult{SkippedExisting: true}, nil
 }
 
+// ReapOverdue reaps every recurring occurrence whose due date has fully passed
+// in its owner's local timezone and is still sitting un-done — independent of
+// whether a next occurrence has materialized. This is the date-based twin of
+// the reap inside Materialize: that one only fires as a side effect of the
+// next occurrence being created, which leaves a lapsed weekly/monthly
+// occurrence unmarked for as long as a week or a month. Both share the same
+// occurrence_status IS NULL guard, so running this before or after a
+// Materialize-triggered reap is a no-op either way — nothing double-fires.
+// System-scoped like ListDue: reachable only from the internal cron.
+func (r *pgRepo) ReapOverdue(ctx context.Context) ([]Occurrence, error) {
+	rows, err := r.db.Query(ctx, `
+		UPDATE tasks t SET status = 'cancelled', occurrence_status = 'missed', updated_at = NOW()
+		FROM users u
+		WHERE t.user_id = u.id
+		  AND t.recurrence_rule_id IS NOT NULL
+		  AND t.status = 'active'
+		  AND t.occurrence_status IS NULL
+		  AND t.occurrence_date < ((NOW() AT TIME ZONE COALESCE(u.timezone, 'UTC'))::date)
+		  AND u.deleted_at IS NULL
+		RETURNING t.id, t.user_id, t.recurrence_rule_id`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("recurrence.ReapOverdue: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Occurrence
+	for rows.Next() {
+		var occ Occurrence
+		if err := rows.Scan(&occ.ID, &occ.UserID, &occ.RuleID); err != nil {
+			return nil, fmt.Errorf("recurrence.ReapOverdue scan: %w", err)
+		}
+		out = append(out, occ)
+	}
+	return out, rows.Err()
+}
+
 func (r *pgRepo) CountOccurrencesByStatus(ctx context.Context, userID, ruleID string) (map[string]int, error) {
 	rows, err := r.db.Query(ctx,
 		`SELECT COALESCE(occurrence_status, status), COUNT(*) FROM tasks
