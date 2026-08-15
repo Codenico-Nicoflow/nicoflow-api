@@ -96,6 +96,8 @@ func (f *fakeRepo) CountOccurrencesByStatus(context.Context, string, string) (ma
 	return f.statusCounts, nil
 }
 
+func (f *fakeRepo) ReapOverdue(context.Context) ([]Occurrence, error) { return nil, nil }
+
 func (f *fakeRepo) ListOccurrenceStatuses(context.Context, string, string) ([]string, error) {
 	return f.statuses, nil
 }

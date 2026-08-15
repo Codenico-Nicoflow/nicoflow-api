@@ -9,24 +9,46 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
 )
 
-// sortColumns whitelists the API sortField → SQL column. Using a fixed map
-// (never the raw param) keeps ORDER BY injection-safe.
-var sortColumns = map[string]string{
-	"":             "display_order",
-	"displayOrder": "display_order",
-	"scheduledFor": "scheduled_for",
-	"priority":     "priority",
-	"title":        "title",
-	"createdAt":    "created_at",
-	"energy":       "energy",
+type sortValueKind int
+
+const (
+	sortValueInt sortValueKind = iota
+	sortValueTime
+	sortValueText
+)
+
+// sortDescriptor pairs a whitelisted SQL column with the value kind that
+// drives which cursor codec (int/time/text) encodes and decodes it. The
+// keyset seek predicate is always built against this exact column, so it can
+// never drift from the ORDER BY clause the way the old (created_at, id)
+// hardcoded predicate did.
+type sortDescriptor struct {
+	// Expr is the SQL expression sorted/paginated on. scheduled_for is
+	// nullable, so it is wrapped in COALESCE(scheduled_for, '') — a fixed
+	// sentinel that sorts before any real date, applied identically in the
+	// ORDER BY and the seek predicate so the two stay comparable.
+	Expr string
+	Kind sortValueKind
 }
 
-// buildListQuery returns the WHERE clause, ORDER BY clause, and named args for
-// a project task list. Splitting WHERE from ORDER BY lets the repo insert a
-// keyset cursor predicate between them without string surgery on a pre-joined
-// suffix. Always scoped to user_id + project_id. Returns an apperror on a bad
-// sortField/sortOrder.
-func buildListQuery(userID, projectID string, f ListTasksFilter) (whereSuffix, sortSuffix string, args pgx.NamedArgs, err error) {
+// sortDescriptors whitelists the API sortField → SQL sort expression. Using a
+// fixed map (never the raw param) keeps ORDER BY injection-safe.
+var sortDescriptors = map[string]sortDescriptor{
+	"":             {Expr: "display_order", Kind: sortValueInt},
+	"displayOrder": {Expr: "display_order", Kind: sortValueInt},
+	"scheduledFor": {Expr: "COALESCE(scheduled_for, '')", Kind: sortValueText},
+	"priority":     {Expr: "priority", Kind: sortValueText},
+	"title":        {Expr: "title", Kind: sortValueText},
+	"createdAt":    {Expr: "created_at", Kind: sortValueTime},
+	"energy":       {Expr: "energy", Kind: sortValueText},
+}
+
+// buildListQuery returns the WHERE clause, the resolved sort descriptor +
+// direction, and the named args for a project task list. The repo appends
+// the keyset seek predicate (matched to the descriptor) and the ORDER BY
+// itself, since both must agree on the same column. Always scoped to
+// user_id + project_id. Returns an apperror on a bad sortField/sortOrder.
+func buildListQuery(userID, projectID string, f ListTasksFilter) (whereSuffix string, sort sortDescriptor, dir string, args pgx.NamedArgs, err error) {
 	clauses := []string{"user_id = @userID", "project_id = @projectID"}
 	args = pgx.NamedArgs{"userID": userID, "projectID": projectID}
 
@@ -54,21 +76,20 @@ func buildListQuery(userID, projectID string, f ListTasksFilter) (whereSuffix, s
 		args["search"] = "%" + f.Search + "%"
 	}
 
-	col, ok := sortColumns[f.SortField]
+	sort, ok := sortDescriptors[f.SortField]
 	if !ok {
-		return "", "", nil, apperror.New(http.StatusBadRequest, apperror.ErrInvalidInput, "invalid sortField")
+		return "", sortDescriptor{}, "", nil, apperror.New(http.StatusBadRequest, apperror.ErrInvalidInput, "invalid sortField")
 	}
-	dir := "ASC"
+	dir = "ASC"
 	switch strings.ToLower(f.SortOrder) {
 	case "", "asc":
 		dir = "ASC"
 	case "desc":
 		dir = "DESC"
 	default:
-		return "", "", nil, apperror.New(http.StatusBadRequest, apperror.ErrInvalidInput, "sortOrder must be asc or desc")
+		return "", sortDescriptor{}, "", nil, apperror.New(http.StatusBadRequest, apperror.ErrInvalidInput, "sortOrder must be asc or desc")
 	}
 
 	whereSuffix = " WHERE " + strings.Join(clauses, " AND ")
-	sortSuffix = " ORDER BY " + col + " " + dir + ", id ASC"
-	return whereSuffix, sortSuffix, args, nil
+	return whereSuffix, sort, dir, args, nil
 }

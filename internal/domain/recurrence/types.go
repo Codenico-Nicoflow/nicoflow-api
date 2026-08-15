@@ -272,6 +272,12 @@ type Repository interface {
 	// are derived from these rows — no counter columns exist by design.
 	CountOccurrencesByStatus(ctx context.Context, userID, ruleID string) (map[string]int, error)
 	ListOccurrenceStatuses(ctx context.Context, userID, ruleID string) ([]string, error)
+
+	// ReapOverdue is the date-based twin of Materialize's reap: it marks every
+	// occurrence whose due date has passed in its owner's local timezone as
+	// missed, regardless of whether a next occurrence has materialized yet.
+	// System-scoped, cron-only. Returns the reaped occurrences for broadcast.
+	ReapOverdue(ctx context.Context) ([]Occurrence, error)
 }
 
 // DueRule pairs a due rule with its owner's timezone — the sweep compares

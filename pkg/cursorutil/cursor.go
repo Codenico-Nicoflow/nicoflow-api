@@ -1,12 +1,22 @@
 // Package cursorutil provides shared keyset-pagination helpers used across all
-// domains that paginate with an opaque base64 cursor. Two cursor key types are
-// supported:
+// domains that paginate with an opaque base64 cursor. Three cursor key types
+// are supported:
 //
-//   - Time-based  (EncodeTime / DecodeTime)  — keyset on (created_at|updated_at, id) DESC.
+//   - Time-based   (EncodeTime / DecodeTime)     — keyset on (created_at|updated_at, id) DESC.
 //     Wire format: RFC3339Nano + "|" + id, then base64 std-encoding.
 //
-//   - Int-based   (EncodeInt / DecodeInt)    — keyset on (display_order, id) ASC.
+//   - Int-based    (EncodeInt / DecodeInt)       — keyset on (display_order, id) ASC.
 //     Wire format: strconv.Itoa(key) + ":" + id, then base64 std-encoding.
+//
+//   - String-based (EncodeString / DecodeString) — keyset on an arbitrary text
+//     column (e.g. title, priority) + id. Wire format: key + "\x1f" + id, then
+//     base64 std-encoding. The unit separator avoids collision with "|"/":"
+//     that may legitimately appear inside the key value.
+//
+// Whichever codec a caller picks, its cursor MUST encode the value of the
+// exact column(s) the query's ORDER BY sorts on, in the same order/direction
+// as the seek predicate built from it — a mismatch produces silently
+// duplicated or skipped rows across pages instead of an error.
 //
 // ParsePageParams reads the "cursor" and "limit" query params from a request.
 // An absent limit returns 0 (caller/repo normalises to its default).  A present
@@ -76,6 +86,30 @@ func DecodeInt(cursor string) (int, string, error) {
 		return 0, "", fmt.Errorf("cursorutil.DecodeInt key: %w", err)
 	}
 	return key, parts[1], nil
+}
+
+// EncodeString builds a text-based cursor opaque token.
+func EncodeString(key, id string) string {
+	raw := key + "\x1f" + id
+	return base64.StdEncoding.EncodeToString([]byte(raw))
+}
+
+// DecodeString unpacks a text-based cursor. An empty cursor returns "" / "",
+// which sorts before/after any real value depending on direction, so the
+// first page needs no special-case WHERE clause.
+func DecodeString(cursor string) (string, string, error) {
+	if cursor == "" {
+		return "", "", nil
+	}
+	b, err := base64.StdEncoding.DecodeString(cursor)
+	if err != nil {
+		return "", "", fmt.Errorf("cursorutil.DecodeString: %w", err)
+	}
+	parts := strings.SplitN(string(b), "\x1f", 2)
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("cursorutil.DecodeString: malformed cursor")
+	}
+	return parts[0], parts[1], nil
 }
 
 // ParsePageParams reads the "cursor" and "limit" query parameters.

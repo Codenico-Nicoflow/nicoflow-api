@@ -57,6 +57,10 @@ const (
 	ErrGoogleAuthFailed   = "GOOGLE_AUTH_FAILED"
 	ErrInvalidProjectId   = "INVALID_PROJECT_ID"
 	ErrInvalidStatus      = "INVALID_STATUS"
+	// TASK_NOT_MISSABLE (422) — mark-missed rejected: not a recurring occurrence,
+	// already terminal (done/cancelled), or its occurrence date is still in the
+	// future relative to the owner's local today.
+	ErrTaskNotMissable = "TASK_NOT_MISSABLE"
 	// INVALID_RECURRENCE (422) — a malformed schedule: bad freq, interval outside
 	// 1..366, weekday/monthday out of range, or a field set on the wrong freq.
 	ErrInvalidRecurrence   = "INVALID_RECURRENCE"

@@ -9,6 +9,15 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// TaskEventBroadcaster is the narrow seam for emitting a task-level WS event
+// from inside the recurrence sweep. Defined here (the consumer) so recurrence
+// never imports the task domain; the concrete is the ws hub's task adapter,
+// injected at wire-up in main.go. Nil disables emission (safe no-op, mirrors
+// every other Broadcaster in this codebase).
+type TaskEventBroadcaster interface {
+	BroadcastTaskStatusChanged(userID, taskID string)
+}
+
 // Materializer turns due rules into task rows. One routine, two triggers:
 //
 //  1. the hourly cron sweep (RunAll), which catches every user; and
@@ -22,21 +31,26 @@ type Materializer struct {
 	repo        Repository
 	now         func() time.Time
 	broadcaster Broadcaster
+	// taskBroadcaster fires task.status_changed for occurrences ReapOverdue
+	// marks missed — a task-level event, distinct from the rule-level Broadcaster
+	// above. May be nil (emission disabled).
+	taskBroadcaster TaskEventBroadcaster
 	// taskLimit is the per-project active-task cap the insert must respect.
 	// Injected rather than imported so recurrence never depends on the task
 	// domain.
 	taskLimit int
 }
 
-// NewMaterializer wires the sweep. broadcaster may be nil (emission disabled).
-func NewMaterializer(repo Repository, broadcaster Broadcaster, taskLimit int) *Materializer {
-	return &Materializer{repo: repo, now: time.Now, broadcaster: broadcaster, taskLimit: taskLimit}
+// NewMaterializer wires the sweep. Either broadcaster may be nil (emission
+// disabled).
+func NewMaterializer(repo Repository, broadcaster Broadcaster, taskBroadcaster TaskEventBroadcaster, taskLimit int) *Materializer {
+	return &Materializer{repo: repo, now: time.Now, broadcaster: broadcaster, taskBroadcaster: taskBroadcaster, taskLimit: taskLimit}
 }
 
 // NewMaterializerWithClock is NewMaterializer with an injected clock, for
 // deterministic tests of the due window.
-func NewMaterializerWithClock(repo Repository, broadcaster Broadcaster, taskLimit int, now func() time.Time) *Materializer {
-	return &Materializer{repo: repo, now: now, broadcaster: broadcaster, taskLimit: taskLimit}
+func NewMaterializerWithClock(repo Repository, broadcaster Broadcaster, taskBroadcaster TaskEventBroadcaster, taskLimit int, now func() time.Time) *Materializer {
+	return &Materializer{repo: repo, now: now, broadcaster: broadcaster, taskBroadcaster: taskBroadcaster, taskLimit: taskLimit}
 }
 
 // SweepResult is the run tally. It mirrors the notification sweeps' breakdown
@@ -52,10 +66,14 @@ type SweepResult struct {
 	SkippedBadZone   int `json:"skippedBadTimezone"`
 }
 
-// Run materializes every rule that has come due in its owner's local timezone.
-// Idempotent: the partial unique index on (recurrence_rule_id, occurrence_date)
-// means a second run within the same day creates nothing. dryRun computes the
-// breakdown without writing.
+// Run materializes every rule that has come due in its owner's local timezone,
+// then reaps every occurrence whose due date has passed regardless of whether
+// its rule is due — see ReapOverdue. Idempotent: the partial unique index on
+// (recurrence_rule_id, occurrence_date) means a second run within the same day
+// creates nothing, and both reap paths share the occurrence_status IS NULL
+// guard. dryRun computes the materialize breakdown without writing; the
+// overdue reap is skipped entirely under dryRun since it has no dry-run mode
+// of its own.
 func (m *Materializer) Run(ctx context.Context, dryRun bool) (*SweepResult, error) {
 	due, err := m.repo.ListDue(ctx)
 	if err != nil {
@@ -96,6 +114,17 @@ func (m *Materializer) Run(ctx context.Context, dryRun bool) (*SweepResult, erro
 			return nil, err
 		}
 		applyResult(res, out)
+	}
+
+	if !dryRun {
+		overdue, err := m.repo.ReapOverdue(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("recurrence sweep: reap overdue: %w", err)
+		}
+		res.Reaped += len(overdue)
+		for _, occ := range overdue {
+			m.emitTaskMissed(occ.UserID, occ.ID)
+		}
 	}
 
 	logRun(res)
@@ -167,6 +196,12 @@ func (m *Materializer) materialize(ctx context.Context, rule Rule) (MaterializeR
 func (m *Materializer) emit(userID string, ev Event) {
 	if m.broadcaster != nil {
 		m.broadcaster.Broadcast(userID, ev)
+	}
+}
+
+func (m *Materializer) emitTaskMissed(userID, taskID string) {
+	if m.taskBroadcaster != nil {
+		m.taskBroadcaster.BroadcastTaskStatusChanged(userID, taskID)
 	}
 }
 

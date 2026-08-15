@@ -32,6 +32,9 @@ type Task struct {
 	// occurrences (E-050). Both nil on an ordinary task.
 	RecurrenceRuleID *string
 	OccurrenceDate   *string
+	// OccurrenceStatus is nil on an ordinary or still-live occurrence; "missed"
+	// once the recurrence engine has reaped it (E-050 sweep or manual mark).
+	OccurrenceStatus *string
 	// SubtaskCount / OpenSubtaskCount are read-only projections filled by every
 	// task read (see taskSelectCols). OpenSubtaskCount > 0 is what makes the
 	// client confirm before completing a task.
@@ -59,6 +62,7 @@ type TaskView struct {
 	UpdatedAt        string  `json:"updatedAt"`
 	RecurrenceRuleID *string `json:"recurrenceRuleId"`
 	OccurrenceDate   *string `json:"occurrenceDate"`
+	OccurrenceStatus *string `json:"occurrenceStatus"`
 	// TotalFocusSeconds is the SUM of the task's closed focus segments (E-049).
 	// Enriched only on Focus + GetTask; 0 on the project task-list, where a
 	// per-row SUM would be pure cost for a value the list never renders.
@@ -164,6 +168,7 @@ func TaskToView(t Task) TaskView {
 		UpdatedAt:        t.UpdatedAt.UTC().Format(time.RFC3339),
 		RecurrenceRuleID: t.RecurrenceRuleID,
 		OccurrenceDate:   t.OccurrenceDate,
+		OccurrenceStatus: t.OccurrenceStatus,
 		SubtaskCount:     t.SubtaskCount,
 		OpenSubtaskCount: t.OpenSubtaskCount,
 	}

@@ -200,7 +200,7 @@ func main() {
 	// sweep via run-all, and the synchronous successor on completion. It enforces
 	// the same per-project active-task ceiling as the task service.
 	recurrenceMaterializer := recurrence.NewMaterializer(
-		recurrenceRepo, ws.NewRecurrenceBroadcaster(wsHub), task.FreePlanTaskLimit,
+		recurrenceRepo, ws.NewRecurrenceBroadcaster(wsHub), taskBroadcaster, task.FreePlanTaskLimit,
 	)
 	// Wire the synchronous trigger back into the task service so completing a
 	// recurring occurrence spawns its successor in the same request. Post-

@@ -165,7 +165,7 @@ func TestMaterializeAfterCompletion_InheritsScheduledTime(t *testing.T) {
 	}
 
 	spy := &materializeSpy{fakeRepo: repo}
-	m := NewMaterializerWithClock(spy, &recorder{}, 50, fixedClock("2026-03-02"))
+	m := NewMaterializerWithClock(spy, &recorder{}, nil, 50, fixedClock("2026-03-02"))
 	if err := m.MaterializeAfterCompletion(context.Background(), "u1", view.ID); err != nil {
 		t.Fatalf("MaterializeAfterCompletion() error = %v", err)
 	}
