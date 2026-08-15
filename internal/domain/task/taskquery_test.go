@@ -11,30 +11,39 @@ func TestBuildListQuery(t *testing.T) {
 		filter      ListTasksFilter
 		wantErr     bool
 		wantInSQL   []string
+		wantExpr    string
+		wantDir     string
 		wantArgKeys []string
 	}{
 		{
 			name:        "default sort + base scope",
 			filter:      ListTasksFilter{},
-			wantInSQL:   []string{"user_id = @userID", "project_id = @projectID", "ORDER BY display_order ASC"},
+			wantInSQL:   []string{"user_id = @userID", "project_id = @projectID"},
+			wantExpr:    "display_order",
+			wantDir:     "ASC",
 			wantArgKeys: []string{"userID", "projectID"},
 		},
 		{
 			name:        "status + energy filters",
 			filter:      ListTasksFilter{Status: ptr("active"), Energy: ptr("low")},
 			wantInSQL:   []string{"status = @status", "energy = @energy"},
+			wantExpr:    "display_order",
+			wantDir:     "ASC",
 			wantArgKeys: []string{"status", "energy"},
 		},
 		{
 			name:        "search adds ILIKE on title+notes",
 			filter:      ListTasksFilter{Search: "spec"},
 			wantInSQL:   []string{"title ILIKE @search OR notes ILIKE @search"},
+			wantExpr:    "display_order",
+			wantDir:     "ASC",
 			wantArgKeys: []string{"search"},
 		},
 		{
-			name:      "sort by scheduledFor desc",
-			filter:    ListTasksFilter{SortField: "scheduledFor", SortOrder: "desc"},
-			wantInSQL: []string{"ORDER BY scheduled_for DESC"},
+			name:     "sort by scheduledFor desc",
+			filter:   ListTasksFilter{SortField: "scheduledFor", SortOrder: "desc"},
+			wantExpr: "COALESCE(scheduled_for, '')",
+			wantDir:  "DESC",
 		},
 		{
 			name:    "unknown sortField rejected",
@@ -50,7 +59,7 @@ func TestBuildListQuery(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			whereSuffix, sortSuffix, args, err := buildListQuery("u1", "p1", tt.filter)
+			whereSuffix, sort, dir, args, err := buildListQuery("u1", "p1", tt.filter)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected error, got nil")
@@ -60,12 +69,16 @@ func TestBuildListQuery(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			// Combine where + sort so fragment assertions match the old full-suffix shape.
-			sql := whereSuffix + sortSuffix
 			for _, frag := range tt.wantInSQL {
-				if !strings.Contains(sql, frag) {
-					t.Errorf("SQL missing %q\ngot: %s", frag, sql)
+				if !strings.Contains(whereSuffix, frag) {
+					t.Errorf("WHERE missing %q\ngot: %s", frag, whereSuffix)
 				}
+			}
+			if sort.Expr != tt.wantExpr {
+				t.Errorf("sort.Expr = %q, want %q", sort.Expr, tt.wantExpr)
+			}
+			if dir != tt.wantDir {
+				t.Errorf("dir = %q, want %q", dir, tt.wantDir)
 			}
 			for _, k := range tt.wantArgKeys {
 				if _, ok := args[k]; !ok {

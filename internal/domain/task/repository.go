@@ -92,26 +92,52 @@ func (r *pgRepo) ListByProject(ctx context.Context, userID, projectID string, f 
 		limit = 50
 	}
 
-	cursorCreated, cursorID, err := cursorutil.DecodeTime(f.Cursor)
-	if err != nil {
-		return nil, "", apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "invalid cursor")
-	}
-
-	whereSuffix, sortSuffix, args, err := buildListQuery(userID, projectID, f)
+	whereSuffix, sort, dir, args, err := buildListQuery(userID, projectID, f)
 	if err != nil {
 		return nil, "", err
 	}
-	args["limit"] = limit + 1
-	args["cursorCreated"] = cursorCreated
-	args["cursorID"] = cursorID
-	args["hasCursor"] = f.Cursor != ""
 
-	// The keyset predicate is always on (created_at, id) DESC, independent of the
-	// display sort — so drag-reorder mutations never corrupt an in-flight cursor.
+	// The seek predicate MUST be built on the same expression the ORDER BY
+	// sorts on — a mismatch (e.g. sorting by display_order but seeking on
+	// created_at) silently duplicates/skips rows across pages. Each value
+	// kind gets its own decode + comparable SQL literal, keyed to whichever
+	// column sort.Expr actually is.
+	hasCursor := f.Cursor != ""
+	args["hasCursor"] = hasCursor
+	op := ">"
+	if dir == "DESC" {
+		op = "<"
+	}
+
+	switch sort.Kind {
+	case sortValueInt:
+		cursorKey, cursorID, decErr := cursorutil.DecodeInt(f.Cursor)
+		if decErr != nil {
+			return nil, "", apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "invalid cursor")
+		}
+		args["cursorKey"] = cursorKey
+		args["cursorID"] = cursorID
+	case sortValueTime:
+		cursorKey, cursorID, decErr := cursorutil.DecodeTime(f.Cursor)
+		if decErr != nil {
+			return nil, "", apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "invalid cursor")
+		}
+		args["cursorKey"] = cursorKey
+		args["cursorID"] = cursorID
+	default: // sortValueText
+		cursorKey, cursorID, decErr := cursorutil.DecodeString(f.Cursor)
+		if decErr != nil {
+			return nil, "", apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "invalid cursor")
+		}
+		args["cursorKey"] = cursorKey
+		args["cursorID"] = cursorID
+	}
+	args["limit"] = limit + 1
+
 	sql := `SELECT` + taskSelectCols + `FROM tasks` +
 		whereSuffix +
-		` AND (NOT @hasCursor OR (created_at, id) < (@cursorCreated, @cursorID))` +
-		sortSuffix + `, created_at DESC, id DESC LIMIT @limit`
+		` AND (NOT @hasCursor OR (` + sort.Expr + `, id) ` + op + ` (@cursorKey, @cursorID))` +
+		` ORDER BY ` + sort.Expr + ` ` + dir + `, id ` + dir + ` LIMIT @limit`
 	rows, err := r.db.Query(ctx, sql, args)
 	if err != nil {
 		return nil, "", fmt.Errorf("task.ListByProject query: %w", err)
@@ -133,10 +159,36 @@ func (r *pgRepo) ListByProject(ctx context.Context, userID, projectID string, f 
 	var next string
 	if len(tasks) > limit {
 		last := tasks[limit-1]
-		next = cursorutil.EncodeTime(last.CreatedAt, last.ID)
+		next = encodeListCursor(sort.Kind, last, f.SortField)
 		tasks = tasks[:limit]
 	}
 	return tasks, next, nil
+}
+
+// encodeListCursor mirrors the decode branch in ListByProject: the cursor
+// must carry the value of whatever column sort.Expr actually sorted on.
+func encodeListCursor(kind sortValueKind, last Task, sortField string) string {
+	switch kind {
+	case sortValueInt:
+		return cursorutil.EncodeInt(last.DisplayOrder, last.ID)
+	case sortValueTime:
+		return cursorutil.EncodeTime(last.CreatedAt, last.ID)
+	default: // sortValueText
+		var key string
+		switch sortField {
+		case "priority":
+			key = last.Priority
+		case "title":
+			key = last.Title
+		case "energy":
+			key = last.Energy
+		case "scheduledFor":
+			if last.ScheduledFor != nil {
+				key = *last.ScheduledFor
+			}
+		}
+		return cursorutil.EncodeString(key, last.ID)
+	}
 }
 
 func (r *pgRepo) ListActiveByUser(ctx context.Context, userID string) ([]Task, error) {
