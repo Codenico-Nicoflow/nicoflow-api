@@ -27,6 +27,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/focus"
 	"github.com/nicoflow/nicoflow-api/internal/domain/googlecal"
 	"github.com/nicoflow/nicoflow-api/internal/domain/habit"
+	"github.com/nicoflow/nicoflow-api/internal/domain/nlp"
 	"github.com/nicoflow/nicoflow-api/internal/domain/note"
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
@@ -266,6 +267,7 @@ func main() {
 		Recurrence:      recurrence.NewHandler(recurrenceSvc),
 		Focus:           focus.NewHandler(focusSvc),
 		Note:            note.NewHandler(noteSvc),
+		NLP:             nlp.NewHandler(nlp.NewService()),
 		Habit:           habit.NewHandler(habitSvc),
 		Notification:    notification.NewHandler(notificationSvc),
 		GoogleCal:       googlecal.NewHandler(googleCalSvc, cfg.AppBaseURL),
