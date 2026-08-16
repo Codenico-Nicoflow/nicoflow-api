@@ -18,6 +18,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/focus"
 	"github.com/nicoflow/nicoflow-api/internal/domain/googlecal"
 	"github.com/nicoflow/nicoflow-api/internal/domain/habit"
+	"github.com/nicoflow/nicoflow-api/internal/domain/nlp"
 	"github.com/nicoflow/nicoflow-api/internal/domain/note"
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
@@ -43,6 +44,7 @@ type Handlers struct {
 	Recurrence      *recurrence.Handler
 	Focus           *focus.Handler
 	Note            *note.Handler
+	NLP             *nlp.Handler
 	Habit           *habit.Handler
 	Notification    *notification.Handler
 	GoogleCal       *googlecal.Handler
@@ -299,6 +301,11 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 			// NLP smart scheduling (Pro only — PlanEnforcer added in E-028)
 			r.Post("/nlp/parse", h.AI.ParseNLP)
 		})
+
+		// NLP date parsing (NIC-1931) — stateless olebedev/when wrapper, no
+		// LLM, free on every plan. Deliberately outside the AI kill-switch
+		// group above: it has no AI quota and no Anthropic dependency.
+		r.With(mw.RateLimitUser(120, 120)).Post("/nlp/parse-date", h.NLP.ParseDate)
 
 		// Billing
 		r.Get("/billing/plan", h.Billing.GetPlan)
