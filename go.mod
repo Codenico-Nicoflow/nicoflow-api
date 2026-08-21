@@ -15,6 +15,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/marknefedov/go-webpush/v2 v2.0.0
+	github.com/olebedev/when v1.1.0
 	github.com/rs/zerolog v1.35.1
 	github.com/swaggo/http-swagger/v2 v2.0.2
 	github.com/swaggo/swag v1.16.6
@@ -41,7 +42,7 @@ require (
 	github.com/spf13/afero v1.14.0 // indirect
 	github.com/spf13/cast v1.9.2 // indirect
 	github.com/tdewolff/parse/v2 v2.8.3 // indirect
-	golang.org/x/sync v0.21.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
 )
 
 require (
@@ -72,7 +73,6 @@ require (
 	github.com/lib/pq v1.10.9 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/olebedev/when v1.1.0 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
@@ -83,10 +83,10 @@ require (
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
-	golang.org/x/mod v0.37.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/mod v0.40.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.39.0 // indirect
-	golang.org/x/tools v0.47.0 // indirect
+	golang.org/x/tools v0.49.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
