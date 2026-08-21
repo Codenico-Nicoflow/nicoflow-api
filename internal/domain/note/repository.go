@@ -180,6 +180,47 @@ func (r *pgRepo) ExistsByID(ctx context.Context, id string) (bool, error) {
 	return exists, nil
 }
 
+// SearchMentions reuses notes_search_idx (migration 044) with a prefix
+// to_tsquery, the same approach the search domain's SearchNotes uses, so
+// typing "roa" matches "Roadmap" instead of requiring a whole word. excludeID
+// is filtered in SQL rather than in the caller: doing it here means the LIMIT
+// is applied after exclusion, so the caller always gets up to `limit` usable
+// candidates instead of occasionally losing one to the excluded row.
+func (r *pgRepo) SearchMentions(ctx context.Context, userID, term, excludeID string, limit int) ([]MentionResult, error) {
+	tsq := toPrefixTSQuery(term)
+	if tsq == "" {
+		return []MentionResult{}, nil
+	}
+
+	rows, err := r.db.Query(ctx,
+		`SELECT id, title
+		   FROM notes
+		  WHERE user_id = $1
+		    AND id != $2
+		    AND search_vector @@ to_tsquery('simple', $3)
+		  ORDER BY ts_rank(search_vector, to_tsquery('simple', $3)) DESC, updated_at DESC
+		  LIMIT $4`,
+		userID, excludeID, tsq, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("note.SearchMentions: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]MentionResult, 0, limit)
+	for rows.Next() {
+		var m MentionResult
+		if err := rows.Scan(&m.ID, &m.Title); err != nil {
+			return nil, fmt.Errorf("note.SearchMentions scan: %w", err)
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("note.SearchMentions rows: %w", err)
+	}
+	return out, nil
+}
+
 func (r *pgRepo) ExistsForUser(ctx context.Context, userID, noteID string) (bool, error) {
 	var exists bool
 	err := r.db.QueryRow(ctx,

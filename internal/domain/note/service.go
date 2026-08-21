@@ -235,3 +235,22 @@ func (s *service) Delete(ctx context.Context, userID, id string) error {
 	s.emit(userID, Event{Type: EventDeleted, Payload: DeletedPayload{ID: id}})
 	return nil
 }
+
+// SearchMentions serves the @-mention typeahead. An empty (post-trim) term
+// returns no results rather than an error: the frontend calls this on every
+// keystroke starting from the "@" itself, and an empty term is the normal
+// first call, not a client mistake.
+func (s *service) SearchMentions(ctx context.Context, userID, term, excludeID string) ([]MentionResult, error) {
+	term = strings.TrimSpace(term)
+	if term == "" {
+		return []MentionResult{}, nil
+	}
+	results, err := s.repo.SearchMentions(ctx, userID, term, excludeID, mentionSearchLimit)
+	if err != nil {
+		return nil, err
+	}
+	if results == nil {
+		results = []MentionResult{}
+	}
+	return results, nil
+}

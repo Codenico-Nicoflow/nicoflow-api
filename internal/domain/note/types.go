@@ -170,6 +170,20 @@ type ListNotesFilter struct {
 	Limit  int
 }
 
+// mentionSearchLimit caps @-mention typeahead results. Small and fixed (no
+// client-controlled limit param): a mention dropdown only ever renders a
+// handful of rows, so there is nothing to page and no reason to let a caller
+// ask for more.
+const mentionSearchLimit = 10
+
+// MentionResult is one row of an @-mention typeahead match — just enough to
+// render and select a candidate. No excerpt: unlike the backlinks panel or
+// full search, a mention dropdown shows titles only.
+type MentionResult struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+}
+
 // NoteListView is the paginated list response for GET /notes?projectId=.
 type NoteListView struct {
 	Items      []NoteView `json:"items"`
@@ -185,6 +199,11 @@ type Service interface {
 	Create(ctx context.Context, userID string, req CreateNoteRequest) (NoteDetailView, error)
 	Update(ctx context.Context, userID, id string, req UpdateNoteRequest) (NoteDetailView, error)
 	Delete(ctx context.Context, userID, id string) error
+
+	// SearchMentions returns up to mentionSearchLimit title matches for the
+	// @-mention typeahead, row-isolated to userID and excluding excludeID (the
+	// note currently open for editing — it cannot usefully mention itself).
+	SearchMentions(ctx context.Context, userID, term, excludeID string) ([]MentionResult, error)
 
 	// WithCleaner injects the attachment cleaner invoked best-effort on delete.
 	// A post-construction option because the attachment service already depends
@@ -237,4 +256,10 @@ type Repository interface {
 	// attachment GC sweep uses it to find rows whose owner has vanished; it has
 	// no request-path caller, so it can never become an existence oracle.
 	ExistsByID(ctx context.Context, id string) (bool, error)
+
+	// SearchMentions returns up to limit prefix matches on title/content against
+	// the same GIN index the project note list search would use, scoped to
+	// userID and excluding excludeID. Ordered by rank then recency, same as
+	// the full search endpoint.
+	SearchMentions(ctx context.Context, userID, term, excludeID string, limit int) ([]MentionResult, error)
 }

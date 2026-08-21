@@ -152,6 +152,30 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// SearchMentions godoc
+// @Summary      Search-as-you-type for @note mentions
+// @Description  Returns up to 10 title matches for the @-mention autocomplete, row-isolated to the requesting user. excludeId omits the note currently being edited (a note cannot usefully mention itself). Notes are Free and unlimited; this endpoint never returns PLAN_LIMIT_EXCEEDED.
+// @Tags         notes
+// @Produce      json
+// @Param        q          query     string  true   "Search term"
+// @Param        excludeId  query     string  false  "Note id to omit from results (the note being edited)"
+// @Security     BearerAuth
+// @Success      200  {object}  MentionSearchEnvelope  "Matching notes"
+// @Router       /notes/search [get]
+func (h *Handler) SearchMentions(w http.ResponseWriter, r *http.Request) {
+	results, err := h.svc.SearchMentions(
+		r.Context(),
+		mw.UserIDFromCtx(r.Context()),
+		r.URL.Query().Get("q"),
+		r.URL.Query().Get("excludeId"),
+	)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, results)
+}
+
 // decodeBody enforces the size cap and decodes the JSON body. Both an oversized
 // body and a malformed one surface as 422 INVALID_INPUT — the client cannot act
 // differently on the distinction, and reporting "too large" separately would

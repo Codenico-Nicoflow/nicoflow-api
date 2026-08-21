@@ -28,11 +28,12 @@ type envelope struct {
 
 // mockService lets the handler tests drive every branch without a database.
 type mockService struct {
-	listByProject func(ctx context.Context, userID, projectID string, f note.ListNotesFilter) (note.NoteListView, error)
-	get           func(ctx context.Context, userID, id string) (note.NoteDetailView, error)
-	create        func(ctx context.Context, userID string, req note.CreateNoteRequest) (note.NoteDetailView, error)
-	update        func(ctx context.Context, userID, id string, req note.UpdateNoteRequest) (note.NoteDetailView, error)
-	deleteFn      func(ctx context.Context, userID, id string) error
+	listByProject  func(ctx context.Context, userID, projectID string, f note.ListNotesFilter) (note.NoteListView, error)
+	get            func(ctx context.Context, userID, id string) (note.NoteDetailView, error)
+	create         func(ctx context.Context, userID string, req note.CreateNoteRequest) (note.NoteDetailView, error)
+	update         func(ctx context.Context, userID, id string, req note.UpdateNoteRequest) (note.NoteDetailView, error)
+	deleteFn       func(ctx context.Context, userID, id string) error
+	searchMentions func(ctx context.Context, userID, term, excludeID string) ([]note.MentionResult, error)
 }
 
 func (m *mockService) ListByProject(ctx context.Context, userID, projectID string, f note.ListNotesFilter) (note.NoteListView, error) {
@@ -54,6 +55,10 @@ func (m *mockService) Delete(ctx context.Context, userID, id string) error {
 // WithCleaner is wire-up only; the handler never calls it.
 func (m *mockService) WithCleaner(note.AttachmentCleaner) note.Service { return m }
 
+func (m *mockService) SearchMentions(ctx context.Context, userID, term, excludeID string) ([]note.MentionResult, error) {
+	return m.searchMentions(ctx, userID, term, excludeID)
+}
+
 // serve routes the request through a chi mux so {id} URL params resolve exactly
 // as they do in the real router.
 func serve(t *testing.T, svc note.Service, method, target string, body string) *httptest.ResponseRecorder {
@@ -62,6 +67,7 @@ func serve(t *testing.T, svc note.Service, method, target string, body string) *
 
 	r := chi.NewRouter()
 	r.Get("/notes", h.List)
+	r.Get("/notes/search", h.SearchMentions)
 	r.Post("/notes", h.Create)
 	r.Get("/notes/{id}", h.Get)
 	r.Patch("/notes/{id}", h.Update)
@@ -294,5 +300,47 @@ func TestHandlerInternalErrorIs500(t *testing.T) {
 	// A raw Go error must never reach the client.
 	if strings.Contains(env.Error.Message, "deadline") {
 		t.Errorf("message leaks the internal error: %q", env.Error.Message)
+	}
+}
+
+func TestHandlerSearchMentions(t *testing.T) {
+	var gotTerm, gotExclude string
+	svc := &mockService{searchMentions: func(ctx context.Context, userID, term, excludeID string) ([]note.MentionResult, error) {
+		gotTerm, gotExclude = term, excludeID
+		return []note.MentionResult{{ID: "n_2", Title: "Q3 Retro"}}, nil
+	}}
+
+	rec := serve(t, svc, http.MethodGet, "/notes/search?q=Q3&excludeId=n_1", "")
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+	if gotTerm != "Q3" {
+		t.Errorf("q passed to service = %q, want %q", gotTerm, "Q3")
+	}
+	if gotExclude != "n_1" {
+		t.Errorf("excludeId passed to service = %q, want %q", gotExclude, "n_1")
+	}
+
+	env := decodeEnvelope(t, rec)
+	var results []note.MentionResult
+	if err := json.Unmarshal(env.Data, &results); err != nil {
+		t.Fatalf("decode data: %v", err)
+	}
+	if len(results) != 1 || results[0].ID != "n_2" {
+		t.Errorf("results = %+v, want one match with id n_2", results)
+	}
+}
+
+func TestHandlerSearchMentionsEmptyResultsAreEmptyArray(t *testing.T) {
+	svc := &mockService{searchMentions: func(ctx context.Context, userID, term, excludeID string) ([]note.MentionResult, error) {
+		return []note.MentionResult{}, nil
+	}}
+
+	rec := serve(t, svc, http.MethodGet, "/notes/search?q=zz", "")
+
+	env := decodeEnvelope(t, rec)
+	if string(env.Data) != "[]" {
+		t.Errorf("data = %s, want []", env.Data)
 	}
 }

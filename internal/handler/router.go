@@ -212,6 +212,8 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		// the project. Free and unlimited: no plan gate anywhere on this surface.
 		r.Get("/notes", h.Note.List)
 		r.Post("/notes", h.Note.Create)
+		// Before /{id} so "search" is never parsed as a note id.
+		r.Get("/notes/search", h.Note.SearchMentions)
 		r.Get("/notes/{id}", h.Note.Get)
 		r.Patch("/notes/{id}", h.Note.Update)
 		r.Delete("/notes/{id}", h.Note.Delete)

@@ -569,3 +569,101 @@ func TestBucketCreatedNoteIDLink(t *testing.T) {
 		t.Errorf("created_note_id = %q, want NULL after the note was deleted", *linked)
 	}
 }
+
+// ── search mentions ──────────────────────────────────────────────────────────
+
+// AC1 — typeahead returns matches, prefix-matched against title.
+func TestSearchMentions_PrefixMatch(t *testing.T) {
+	repo, pool := newRepo(t)
+	ctx := context.Background()
+	userID := seedUser(t, pool)
+	projectID := seedProject(t, pool, userID)
+
+	mustCreate(t, repo, newNote(userID, projectID, "Q3 Roadmap", ""))
+	mustCreate(t, repo, newNote(userID, projectID, "Q3 Retro", ""))
+	mustCreate(t, repo, newNote(userID, projectID, "unrelated", ""))
+
+	results, err := repo.SearchMentions(ctx, userID, "Q3", "", 10)
+	if err != nil {
+		t.Fatalf("SearchMentions: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("len(results) = %d, want 2: %+v", len(results), results)
+	}
+	titles := map[string]bool{}
+	for _, r := range results {
+		titles[r.Title] = true
+	}
+	if !titles["Q3 Roadmap"] || !titles["Q3 Retro"] {
+		t.Errorf("results = %+v, want both Q3 notes", results)
+	}
+}
+
+// AC2 — self-exclusion: the note currently open for editing never appears in
+// its own mention results.
+func TestSearchMentions_ExcludesSelf(t *testing.T) {
+	repo, pool := newRepo(t)
+	ctx := context.Background()
+	userID := seedUser(t, pool)
+	projectID := seedProject(t, pool, userID)
+
+	self := mustCreate(t, repo, newNote(userID, projectID, "Q3 Roadmap", ""))
+	other := mustCreate(t, repo, newNote(userID, projectID, "Q3 Retro", ""))
+
+	results, err := repo.SearchMentions(ctx, userID, "Q3", self.ID, 10)
+	if err != nil {
+		t.Fatalf("SearchMentions: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1: %+v", len(results), results)
+	}
+	if results[0].ID != other.ID {
+		t.Errorf("results[0].ID = %q, want %q", results[0].ID, other.ID)
+	}
+	for _, r := range results {
+		if r.ID == self.ID {
+			t.Error("excluded note appeared in its own mention results")
+		}
+	}
+}
+
+// AC3 — row isolation: another user's matching note is never returned.
+func TestSearchMentions_RowIsolation(t *testing.T) {
+	repo, pool := newRepo(t)
+	ctx := context.Background()
+	userA := seedUser(t, pool)
+	userB := seedUser(t, pool)
+	projectA := seedProject(t, pool, userA)
+	projectB := seedProject(t, pool, userB)
+
+	mustCreate(t, repo, newNote(userA, projectA, "Q3 Roadmap A", ""))
+	mustCreate(t, repo, newNote(userB, projectB, "Q3 Roadmap B", ""))
+
+	results, err := repo.SearchMentions(ctx, userA, "Q3", "", 10)
+	if err != nil {
+		t.Fatalf("SearchMentions: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1 (only the caller's own note)", len(results))
+	}
+	if results[0].Title != "Q3 Roadmap A" {
+		t.Errorf("results[0].Title = %q, want the caller's own note", results[0].Title)
+	}
+}
+
+// A term with no alphanumeric content yields no results rather than an error.
+func TestSearchMentions_BlankTermYieldsEmpty(t *testing.T) {
+	repo, pool := newRepo(t)
+	ctx := context.Background()
+	userID := seedUser(t, pool)
+	projectID := seedProject(t, pool, userID)
+	mustCreate(t, repo, newNote(userID, projectID, "Q3 Roadmap", ""))
+
+	results, err := repo.SearchMentions(ctx, userID, "!!!", "", 10)
+	if err != nil {
+		t.Fatalf("SearchMentions: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("len(results) = %d, want 0 for a non-alphanumeric term", len(results))
+	}
+}
