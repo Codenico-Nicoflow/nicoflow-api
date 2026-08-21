@@ -217,6 +217,7 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		r.Get("/notes/{id}", h.Note.Get)
 		r.Patch("/notes/{id}", h.Note.Update)
 		r.Delete("/notes/{id}", h.Note.Delete)
+		r.Get("/notes/{id}/backlinks", h.Note.GetBacklinks)
 
 		r.Get("/habits", h.Habit.List)
 		r.Post("/habits", h.Habit.Create)

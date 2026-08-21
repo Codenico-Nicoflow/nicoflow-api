@@ -9,6 +9,8 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+
+	"github.com/nicoflow/nicoflow-api/internal/domain/notelink"
 )
 
 // Domain event types emitted on mutation. Equal to the wire names by convention;
@@ -164,6 +166,15 @@ type ProjectOwnershipVerifier interface {
 	VerifyProjectOwner(ctx context.Context, userID, projectID string) error
 }
 
+// BacklinkSource resolves the notes that mention a given note. notelink is a
+// leaf package with no note import, so note may depend on its concrete
+// Repository directly (it already satisfies this interface) — this alias
+// exists so the Service constructor signature reads in domain terms rather
+// than a cross-package repository type.
+type BacklinkSource interface {
+	GetBacklinks(ctx context.Context, noteID string) ([]notelink.BacklinkNote, error)
+}
+
 // ListNotesFilter holds pagination params for the project note list.
 type ListNotesFilter struct {
 	Cursor string
@@ -204,6 +215,12 @@ type Service interface {
 	// @-mention typeahead, row-isolated to userID and excluding excludeID (the
 	// note currently open for editing — it cannot usefully mention itself).
 	SearchMentions(ctx context.Context, userID, term, excludeID string) ([]MentionResult, error)
+
+	// GetBacklinks returns the list-shape view of every note that mentions id,
+	// i.e. every note_links row where id is the target. RESOURCE_NOT_FOUND if id
+	// doesn't exist or isn't owned by userID — checked before the backlink query
+	// so a foreign id can't be distinguished from one with zero backlinks.
+	GetBacklinks(ctx context.Context, userID, id string) ([]NoteView, error)
 
 	// WithCleaner injects the attachment cleaner invoked best-effort on delete.
 	// A post-construction option because the attachment service already depends

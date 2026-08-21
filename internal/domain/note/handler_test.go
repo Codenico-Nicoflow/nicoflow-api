@@ -34,6 +34,7 @@ type mockService struct {
 	update         func(ctx context.Context, userID, id string, req note.UpdateNoteRequest) (note.NoteDetailView, error)
 	deleteFn       func(ctx context.Context, userID, id string) error
 	searchMentions func(ctx context.Context, userID, term, excludeID string) ([]note.MentionResult, error)
+	getBacklinks   func(ctx context.Context, userID, id string) ([]note.NoteView, error)
 }
 
 func (m *mockService) ListByProject(ctx context.Context, userID, projectID string, f note.ListNotesFilter) (note.NoteListView, error) {
@@ -59,6 +60,10 @@ func (m *mockService) SearchMentions(ctx context.Context, userID, term, excludeI
 	return m.searchMentions(ctx, userID, term, excludeID)
 }
 
+func (m *mockService) GetBacklinks(ctx context.Context, userID, id string) ([]note.NoteView, error) {
+	return m.getBacklinks(ctx, userID, id)
+}
+
 // serve routes the request through a chi mux so {id} URL params resolve exactly
 // as they do in the real router.
 func serve(t *testing.T, svc note.Service, method, target string, body string) *httptest.ResponseRecorder {
@@ -72,6 +77,7 @@ func serve(t *testing.T, svc note.Service, method, target string, body string) *
 	r.Get("/notes/{id}", h.Get)
 	r.Patch("/notes/{id}", h.Update)
 	r.Delete("/notes/{id}", h.Delete)
+	r.Get("/notes/{id}/backlinks", h.GetBacklinks)
 
 	var reader *bytes.Reader
 	if body == "" {
@@ -342,5 +348,54 @@ func TestHandlerSearchMentionsEmptyResultsAreEmptyArray(t *testing.T) {
 	env := decodeEnvelope(t, rec)
 	if string(env.Data) != "[]" {
 		t.Errorf("data = %s, want []", env.Data)
+	}
+}
+
+func TestHandlerGetBacklinks(t *testing.T) {
+	svc := &mockService{getBacklinks: func(ctx context.Context, userID, id string) ([]note.NoteView, error) {
+		return []note.NoteView{{ID: "n_a", Title: "A"}, {ID: "n_c", Title: "C"}}, nil
+	}}
+
+	rec := serve(t, svc, http.MethodGet, "/notes/n_b/backlinks", "")
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+	env := decodeEnvelope(t, rec)
+	var views []note.NoteView
+	if err := json.Unmarshal(env.Data, &views); err != nil {
+		t.Fatalf("decode data: %v", err)
+	}
+	if len(views) != 2 {
+		t.Errorf("len(views) = %d, want 2", len(views))
+	}
+}
+
+func TestHandlerGetBacklinksEmptyIsEmptyArray(t *testing.T) {
+	svc := &mockService{getBacklinks: func(ctx context.Context, userID, id string) ([]note.NoteView, error) {
+		return []note.NoteView{}, nil
+	}}
+
+	rec := serve(t, svc, http.MethodGet, "/notes/n_b/backlinks", "")
+
+	env := decodeEnvelope(t, rec)
+	if string(env.Data) != "[]" {
+		t.Errorf("data = %s, want []", env.Data)
+	}
+}
+
+func TestHandlerGetBacklinksNotFoundIs404(t *testing.T) {
+	svc := &mockService{getBacklinks: func(ctx context.Context, userID, id string) ([]note.NoteView, error) {
+		return nil, apperror.New(http.StatusNotFound, apperror.ErrResourceNotFound, "note not found")
+	}}
+
+	rec := serve(t, svc, http.MethodGet, "/notes/n_missing/backlinks", "")
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+	env := decodeEnvelope(t, rec)
+	if env.Error == nil || env.Error.Code != apperror.ErrResourceNotFound {
+		t.Errorf("error = %+v, want %s", env.Error, apperror.ErrResourceNotFound)
 	}
 }

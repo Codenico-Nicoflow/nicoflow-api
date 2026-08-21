@@ -2480,6 +2480,23 @@ so this is a dedicated, purpose-built endpoint.
 **Errors:** none beyond the standard auth 401. No 404/422 — an empty or
 unmatched query is a valid empty result, not an error.
 
+#### GET /v1/notes/{id}/backlinks → 200 `NoteView[]` (NIC-1963)
+
+"Which notes mention this one" — powers the backlinks panel (E-057). Reads
+`note_links` (migration 049, NIC-1961) via `target_note_id = :id` and returns
+the source notes in the same list-shape `NoteView` as the notes list endpoint
+— `{ id, projectId, title, excerpt, version, createdAt, updatedAt }`, **no
+`content`**.
+
+- Ownership of `:id` is checked first: a missing or foreign note is
+  `404 RESOURCE_NOT_FOUND`, distinct from (and checked before) an empty
+  backlink list — collapsing the two would let a guessed id be confirmed to
+  exist by the empty-vs-404 distinction alone.
+- Empty array, not null, when nothing links to the note.
+- No plan gate — notes are Free and unlimited.
+
+**Errors:** `RESOURCE_NOT_FOUND` (404)
+
 #### Server-derived search text (`flattenDoc`)
 
 `content_text` is the flattened plain text of the document, written alongside it
