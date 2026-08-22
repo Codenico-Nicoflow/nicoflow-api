@@ -1022,3 +1022,176 @@ func TestGetBacklinksSkipsVanishedSource(t *testing.T) {
 		t.Fatalf("len(views) = %d, want 1 (the vanished source skipped)", len(views))
 	}
 }
+
+// ── content node/mark allowlist (NIC-1964) ──────────────────────────────────
+
+func docWithContent(nodes string) json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(`{"type":"doc","content":[%s]}`, nodes))
+}
+
+// AC1 — each new v2 node type is accepted individually and round-trips
+// unchanged (Create stores exactly what was sent).
+func TestCreateAcceptsV2NodeTypes(t *testing.T) {
+	tests := []struct {
+		name    string
+		content json.RawMessage
+	}{
+		{
+			name: "table",
+			content: docWithContent(`{"type":"table","content":[
+				{"type":"tableRow","content":[
+					{"type":"tableHeader","attrs":{"colwidth":[120]},"content":[{"type":"paragraph"}]},
+					{"type":"tableCell","content":[{"type":"paragraph"}]}
+				]}
+			]}`),
+		},
+		{
+			name:    "callout",
+			content: docWithContent(`{"type":"callout","content":[{"type":"paragraph","content":[{"type":"text","text":"note"}]}]}`),
+		},
+		{
+			name:    "divider",
+			content: docWithContent(`{"type":"divider"}`),
+		},
+		{
+			name: "toggle",
+			content: docWithContent(`{"type":"toggle","content":[
+				{"type":"detailsSummary","content":[{"type":"text","text":"more"}]},
+				{"type":"detailsContent","content":[{"type":"paragraph"}]}
+			]}`),
+		},
+		{
+			name:    "dateMention",
+			content: docWithContent(`{"type":"paragraph","content":[{"type":"dateMention","attrs":{"date":"2026-08-22"}}]}`),
+		},
+		{
+			name:    "noteMention",
+			content: docWithContent(`{"type":"paragraph","content":[{"type":"noteMention","attrs":{"noteId":"n_2"}}]}`),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var saved note.Note
+			repo := &mockRepo{create: func(ctx context.Context, n note.Note) (note.Note, error) {
+				saved = n
+				return echoCreate(ctx, n)
+			}}
+			svc := note.NewService(repo, &mockProjects{}, nil, nil)
+
+			got, err := svc.Create(context.Background(), testUser, note.CreateNoteRequest{
+				ProjectID: testProject, Title: "t", Content: tt.content,
+			})
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			if string(saved.Content) != string(tt.content) {
+				t.Errorf("stored content = %s, want %s (round-trip unchanged)", saved.Content, tt.content)
+			}
+			if string(got.Content) != string(tt.content) {
+				t.Errorf("returned content = %s, want %s", got.Content, tt.content)
+			}
+		})
+	}
+}
+
+// AC2 — a textColor/highlight mark outside the fixed swatch is rejected.
+func TestCreateRejectsNonSwatchColor(t *testing.T) {
+	tests := []struct {
+		name    string
+		content json.RawMessage
+	}{
+		{
+			name:    "textColor arbitrary hex",
+			content: docWithContent(`{"type":"paragraph","content":[{"type":"text","text":"x","marks":[{"type":"textColor","attrs":{"color":"#ff00ff"}}]}]}`),
+		},
+		{
+			name:    "highlight arbitrary hex",
+			content: docWithContent(`{"type":"paragraph","content":[{"type":"text","text":"x","marks":[{"type":"highlight","attrs":{"color":"#123456"}}]}]}`),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			created := false
+			repo := &mockRepo{create: func(ctx context.Context, n note.Note) (note.Note, error) {
+				created = true
+				return echoCreate(ctx, n)
+			}}
+			svc := note.NewService(repo, &mockProjects{}, nil, nil)
+
+			_, err := svc.Create(context.Background(), testUser, note.CreateNoteRequest{
+				ProjectID: testProject, Title: "t", Content: tt.content,
+			})
+
+			assertAppErr(t, err, apperror.ErrInvalidInput, http.StatusUnprocessableEntity)
+			if created {
+				t.Error("a swatch-violating request reached the repository")
+			}
+		})
+	}
+}
+
+// AC3 — an unknown node type is rejected outright, never silently stripped or
+// blanked (the original E-053 bug class this guards against).
+func TestCreateRejectsUnknownNodeType(t *testing.T) {
+	content := docWithContent(`{"type":"someFutureBlock","content":[{"type":"text","text":"x"}]}`)
+
+	created := false
+	repo := &mockRepo{create: func(ctx context.Context, n note.Note) (note.Note, error) {
+		created = true
+		return echoCreate(ctx, n)
+	}}
+	svc := note.NewService(repo, &mockProjects{}, nil, nil)
+
+	_, err := svc.Create(context.Background(), testUser, note.CreateNoteRequest{
+		ProjectID: testProject, Title: "t", Content: content,
+	})
+
+	assertAppErr(t, err, apperror.ErrInvalidInput, http.StatusUnprocessableEntity)
+	if created {
+		t.Error("a document with an unrecognized node type reached the repository")
+	}
+}
+
+// AC3 — an unknown mark type is rejected the same way as an unknown node.
+func TestCreateRejectsUnknownMarkType(t *testing.T) {
+	content := docWithContent(`{"type":"paragraph","content":[{"type":"text","text":"x","marks":[{"type":"underline"}]}]}`)
+
+	svc := note.NewService(&mockRepo{create: echoCreate}, &mockProjects{}, nil, nil)
+
+	_, err := svc.Create(context.Background(), testUser, note.CreateNoteRequest{
+		ProjectID: testProject, Title: "t", Content: content,
+	})
+
+	assertAppErr(t, err, apperror.ErrInvalidInput, http.StatusUnprocessableEntity)
+}
+
+// AC4 — an existing pre-v2 note (only original E-053 node types) round-trips
+// through Update unchanged, with no validation error.
+func TestUpdateOldNoteContentStillRoundTrips(t *testing.T) {
+	oldContent := docWithContent(`{"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"Title"}]},{"type":"paragraph","content":[{"type":"text","text":"Body","marks":[{"type":"bold"}]}]},{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"item"}]}]}]}`)
+
+	repo := &mockRepo{
+		getByID: func(ctx context.Context, userID, id string) (note.Note, error) {
+			return storedNote(1), nil
+		},
+		update: func(ctx context.Context, p note.UpdateParams) (note.Note, bool, error) {
+			n := storedNote(2)
+			n.Content = p.Content
+			return n, true, nil
+		},
+	}
+	svc := note.NewService(repo, &mockProjects{}, nil, nil)
+
+	version := 1
+	got, err := svc.Update(context.Background(), testUser, testNoteID, note.UpdateNoteRequest{
+		Content: &oldContent, Version: &version,
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if string(got.Content) != string(oldContent) {
+		t.Errorf("content = %s, want %s (unchanged)", got.Content, oldContent)
+	}
+}
