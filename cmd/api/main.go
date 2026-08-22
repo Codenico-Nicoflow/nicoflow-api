@@ -29,6 +29,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/habit"
 	"github.com/nicoflow/nicoflow-api/internal/domain/nlp"
 	"github.com/nicoflow/nicoflow-api/internal/domain/note"
+	"github.com/nicoflow/nicoflow-api/internal/domain/notelink"
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
 	"github.com/nicoflow/nicoflow-api/internal/domain/recurrence"
@@ -219,7 +220,11 @@ func main() {
 
 	// Project notes (E-053 / NIC-1890). Free and unlimited — no plan is passed
 	// in. projectOwnerVerifier keeps note ↛ project at the type level.
-	noteSvc := note.NewService(noteRepo, projectOwnerVerifier{projects: projectSvc}, ws.NewNoteBroadcaster(wsHub)).
+	// noteLinkRepo backs the backlinks panel (E-057a / NIC-1963); notelink is a
+	// leaf package (no note import), so its concrete Repository satisfies
+	// note.BacklinkSource directly with no adapter needed.
+	noteLinkRepo := notelink.NewRepository(pool)
+	noteSvc := note.NewService(noteRepo, projectOwnerVerifier{projects: projectSvc}, noteLinkRepo, ws.NewNoteBroadcaster(wsHub)).
 		WithCleaner(attachmentSvc)
 
 	// Close the bucket→note seam now that the note service exists (E-053 /

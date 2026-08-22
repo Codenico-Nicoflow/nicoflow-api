@@ -15,6 +15,7 @@ import (
 type service struct {
 	repo        Repository
 	projects    ProjectOwnershipVerifier
+	links       BacklinkSource
 	broadcaster Broadcaster       // nil disables emission
 	cleaner     AttachmentCleaner // nil disables attachment cleanup
 }
@@ -23,8 +24,8 @@ type service struct {
 // no plan parameter anywhere in this domain — adding a cap later would be a
 // deliberate contract change, not an oversight. broadcaster may be nil
 // (real-time emission disabled).
-func NewService(repo Repository, projects ProjectOwnershipVerifier, broadcaster Broadcaster) Service {
-	return &service{repo: repo, projects: projects, broadcaster: broadcaster}
+func NewService(repo Repository, projects ProjectOwnershipVerifier, links BacklinkSource, broadcaster Broadcaster) Service {
+	return &service{repo: repo, projects: projects, links: links, broadcaster: broadcaster}
 }
 
 // WithCleaner returns the service with attachment cleanup enabled. Wired
@@ -253,4 +254,32 @@ func (s *service) SearchMentions(ctx context.Context, userID, term, excludeID st
 		results = []MentionResult{}
 	}
 	return results, nil
+}
+
+// GetBacklinks returns the list-shape view of every note that mentions id.
+// Ownership is checked first via GetByID so a foreign or missing id reports
+// RESOURCE_NOT_FOUND rather than an empty backlink list — the two are not the
+// same thing, and collapsing them would let a guessed id be confirmed to
+// exist by an empty-vs-404 distinction alone.
+func (s *service) GetBacklinks(ctx context.Context, userID, id string) ([]NoteView, error) {
+	if _, err := s.repo.GetByID(ctx, userID, id); err != nil {
+		return nil, err
+	}
+
+	links, err := s.links.GetBacklinks(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	views := make([]NoteView, 0, len(links))
+	for _, l := range links {
+		n, err := s.repo.GetByID(ctx, userID, l.ID)
+		if err != nil {
+			// A source note vanished between the link query and this read (a
+			// concurrent delete) — skip it rather than fail the whole request.
+			continue
+		}
+		views = append(views, toView(n))
+	}
+	return views, nil
 }

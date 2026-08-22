@@ -24,6 +24,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/billing"
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
 	"github.com/nicoflow/nicoflow-api/internal/domain/note"
+	"github.com/nicoflow/nicoflow-api/internal/domain/notelink"
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
 	"github.com/nicoflow/nicoflow-api/internal/domain/task"
@@ -102,7 +103,7 @@ func newBucketServer(t *testing.T, plan string) bucketEnv {
 	taskSvc := task.NewService(task.NewRepository(pool), notifSvc, nil)
 	// Real note service so the bucket→note path runs end-to-end (E-053).
 	projectSvc := project.NewService(project.NewRepository(pool), nil)
-	noteSvc := note.NewService(note.NewRepository(pool), noteProjectVerifier{projects: projectSvc}, nil)
+	noteSvc := note.NewService(note.NewRepository(pool), noteProjectVerifier{projects: projectSvc}, notelink.NewRepository(pool), nil)
 	h := handler.Handlers{
 		Auth:    auth.NewHandler(auth.NewService(auth.NewRepository(pool), cfg), auth.HandlerConfig{}),
 		Area:    area.NewHandler(area.NewService(area.NewRepository(pool), nil)),

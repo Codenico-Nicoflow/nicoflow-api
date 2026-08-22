@@ -16,6 +16,7 @@ import (
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
 	"github.com/nicoflow/nicoflow-api/internal/domain/note"
+	"github.com/nicoflow/nicoflow-api/internal/domain/notelink"
 	"github.com/nicoflow/nicoflow-api/internal/testutil"
 )
 
@@ -666,4 +667,57 @@ func TestSearchMentions_BlankTermYieldsEmpty(t *testing.T) {
 	if len(results) != 0 {
 		t.Errorf("len(results) = %d, want 0 for a non-alphanumeric term", len(results))
 	}
+}
+
+// ── backlinks (service-level wiring against real notelink + note repos) ────────
+
+// End-to-end through the real note.Service + notelink.Repository against
+// Postgres — the unit tests mock notelink.BacklinkSource, so this is the one
+// place that would catch a real interface/SQL mismatch between the two repos.
+func TestServiceGetBacklinks_Integration(t *testing.T) {
+	noteRepo, pool := newRepo(t)
+	linkRepo := notelink.NewRepository(pool)
+	svc := note.NewService(noteRepo, alwaysOwnedProjects{}, linkRepo, nil)
+
+	ctx := context.Background()
+	userID := seedUser(t, pool)
+	projectID := seedProject(t, pool, userID)
+
+	target := mustCreate(t, noteRepo, newNote(userID, projectID, "target note", ""))
+	linker := mustCreate(t, noteRepo, newNote(userID, projectID, "linker note", ""))
+
+	if err := linkRepo.CreateLink(ctx, linker.ID, target.ID); err != nil {
+		t.Fatalf("CreateLink: %v", err)
+	}
+
+	views, err := svc.GetBacklinks(ctx, userID, target.ID)
+	if err != nil {
+		t.Fatalf("GetBacklinks: %v", err)
+	}
+	if len(views) != 1 || views[0].ID != linker.ID {
+		t.Errorf("views = %+v, want one entry for %q", views, linker.ID)
+	}
+
+	// A note with no backlinks yields [], not an error.
+	empty, err := svc.GetBacklinks(ctx, userID, linker.ID)
+	if err != nil {
+		t.Fatalf("GetBacklinks (no inbound): %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("len(empty) = %d, want 0", len(empty))
+	}
+
+	// A foreign note id is 404, never an empty list.
+	otherUser := seedUser(t, pool)
+	if _, err := svc.GetBacklinks(ctx, otherUser, target.ID); err == nil {
+		t.Error("expected a not-found for a note the caller does not own")
+	}
+}
+
+// alwaysOwnedProjects satisfies note.ProjectOwnershipVerifier without a real
+// project domain dependency — every project verifies as owned.
+type alwaysOwnedProjects struct{}
+
+func (alwaysOwnedProjects) VerifyProjectOwner(ctx context.Context, userID, projectID string) error {
+	return nil
 }

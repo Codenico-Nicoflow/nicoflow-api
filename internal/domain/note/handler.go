@@ -176,6 +176,25 @@ func (h *Handler) SearchMentions(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, results)
 }
 
+// GetBacklinks godoc
+// @Summary      List a note's backlinks
+// @Description  Returns the list-shape view (no content) of every note that mentions the given note. Empty array, not null, when there are no backlinks. Cross-user access returns 404, never 403.
+// @Tags         notes
+// @Produce      json
+// @Param        id   path      string  true  "Note ID"
+// @Security     BearerAuth
+// @Success      200  {object}  NoteListEnvelope  "Notes that link to this one"
+// @Failure      404  {object}  ErrorEnvelope     "RESOURCE_NOT_FOUND"
+// @Router       /notes/{id}/backlinks [get]
+func (h *Handler) GetBacklinks(w http.ResponseWriter, r *http.Request) {
+	views, err := h.svc.GetBacklinks(r.Context(), mw.UserIDFromCtx(r.Context()), chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, views)
+}
+
 // decodeBody enforces the size cap and decodes the JSON body. Both an oversized
 // body and a malformed one surface as 422 INVALID_INPUT — the client cannot act
 // differently on the distinction, and reporting "too large" separately would
