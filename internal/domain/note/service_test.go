@@ -17,13 +17,14 @@ import (
 // ── mocks ─────────────────────────────────────────────────────────────────────
 
 type mockRepo struct {
-	listByProject func(ctx context.Context, userID, projectID string, f note.ListNotesFilter) ([]note.Note, string, error)
-	getByID       func(ctx context.Context, userID, id string) (note.Note, error)
-	create        func(ctx context.Context, n note.Note) (note.Note, error)
-	update        func(ctx context.Context, p note.UpdateParams) (note.Note, bool, error)
-	deleteFn      func(ctx context.Context, userID, id string) (bool, error)
-	existsForUser func(ctx context.Context, userID, noteID string) (bool, error)
-	existsByID    func(ctx context.Context, id string) (bool, error)
+	listByProject  func(ctx context.Context, userID, projectID string, f note.ListNotesFilter) ([]note.Note, string, error)
+	getByID        func(ctx context.Context, userID, id string) (note.Note, error)
+	create         func(ctx context.Context, n note.Note) (note.Note, error)
+	update         func(ctx context.Context, p note.UpdateParams) (note.Note, bool, error)
+	deleteFn       func(ctx context.Context, userID, id string) (bool, error)
+	existsForUser  func(ctx context.Context, userID, noteID string) (bool, error)
+	existsByID     func(ctx context.Context, id string) (bool, error)
+	searchMentions func(ctx context.Context, userID, term, excludeID string, limit int) ([]note.MentionResult, error)
 }
 
 func (m *mockRepo) ListByProject(ctx context.Context, userID, projectID string, f note.ListNotesFilter) ([]note.Note, string, error) {
@@ -52,6 +53,12 @@ func (m *mockRepo) ExistsByID(ctx context.Context, id string) (bool, error) {
 		return true, nil
 	}
 	return m.existsByID(ctx, id)
+}
+func (m *mockRepo) SearchMentions(ctx context.Context, userID, term, excludeID string, limit int) ([]note.MentionResult, error) {
+	if m.searchMentions == nil {
+		return nil, nil
+	}
+	return m.searchMentions(ctx, userID, term, excludeID, limit)
 }
 
 type mockProjects struct {
@@ -814,5 +821,92 @@ func TestMissingDeleteSkipsCleanup(t *testing.T) {
 	}
 	if len(cleaner.calls) != 0 {
 		t.Errorf("cleanup ran for a missing note: %v", cleaner.calls)
+	}
+}
+
+// ── search mentions ──────────────────────────────────────────────────────────
+
+// AC1 — typeahead returns matches, scoped to the requesting user via the repo call.
+func TestSearchMentionsHappyPath(t *testing.T) {
+	var gotUser, gotTerm, gotExclude string
+	repo := &mockRepo{searchMentions: func(ctx context.Context, userID, term, excludeID string, limit int) ([]note.MentionResult, error) {
+		gotUser, gotTerm, gotExclude = userID, term, excludeID
+		return []note.MentionResult{
+			{ID: "n_1", Title: "Q3 Roadmap"},
+			{ID: "n_2", Title: "Q3 Retro"},
+		}, nil
+	}}
+	svc := note.NewService(repo, &mockProjects{}, nil)
+
+	results, err := svc.SearchMentions(context.Background(), testUser, "Q3", "")
+	if err != nil {
+		t.Fatalf("SearchMentions: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("len(results) = %d, want 2", len(results))
+	}
+	if gotUser != testUser {
+		t.Errorf("repo called with userID = %q, want %q", gotUser, testUser)
+	}
+	if gotTerm != "Q3" {
+		t.Errorf("repo called with term = %q, want %q", gotTerm, "Q3")
+	}
+	if gotExclude != "" {
+		t.Errorf("gotExclude = %q, want empty", gotExclude)
+	}
+}
+
+// AC2 — self-exclusion: excludeId is passed through to the repository, which
+// enforces it in SQL. This test verifies the service does not drop or alter it.
+func TestSearchMentionsPassesExcludeID(t *testing.T) {
+	var gotExclude string
+	repo := &mockRepo{searchMentions: func(ctx context.Context, userID, term, excludeID string, limit int) ([]note.MentionResult, error) {
+		gotExclude = excludeID
+		return []note.MentionResult{}, nil
+	}}
+	svc := note.NewService(repo, &mockProjects{}, nil)
+
+	if _, err := svc.SearchMentions(context.Background(), testUser, "Q3", testNoteID); err != nil {
+		t.Fatalf("SearchMentions: %v", err)
+	}
+	if gotExclude != testNoteID {
+		t.Errorf("gotExclude = %q, want %q", gotExclude, testNoteID)
+	}
+}
+
+// Empty term short-circuits before the repository is ever called.
+func TestSearchMentionsEmptyTermSkipsRepo(t *testing.T) {
+	called := false
+	repo := &mockRepo{searchMentions: func(ctx context.Context, userID, term, excludeID string, limit int) ([]note.MentionResult, error) {
+		called = true
+		return nil, nil
+	}}
+	svc := note.NewService(repo, &mockProjects{}, nil)
+
+	results, err := svc.SearchMentions(context.Background(), testUser, "   ", "")
+	if err != nil {
+		t.Fatalf("SearchMentions: %v", err)
+	}
+	if results == nil {
+		t.Error("results = nil, want an empty (non-nil) slice")
+	}
+	if called {
+		t.Error("repo was called for a blank term")
+	}
+}
+
+// A nil repo result is normalised to an empty slice, never null in the envelope.
+func TestSearchMentionsNilResultsNormalised(t *testing.T) {
+	repo := &mockRepo{searchMentions: func(ctx context.Context, userID, term, excludeID string, limit int) ([]note.MentionResult, error) {
+		return nil, nil
+	}}
+	svc := note.NewService(repo, &mockProjects{}, nil)
+
+	results, err := svc.SearchMentions(context.Background(), testUser, "Q3", "")
+	if err != nil {
+		t.Fatalf("SearchMentions: %v", err)
+	}
+	if results == nil {
+		t.Error("results = nil, want an empty (non-nil) slice")
 	}
 }

@@ -26,3 +26,9 @@ type NoteListEnvelope struct {
 	Data  []NoteView  `json:"data"`
 	Error interface{} `json:"error"`
 }
+
+// MentionSearchEnvelope wraps the @-mention typeahead results.
+type MentionSearchEnvelope struct {
+	Data  []MentionResult `json:"data"`
+	Error interface{}     `json:"error"`
+}

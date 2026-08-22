@@ -2456,6 +2456,30 @@ at it. A stale version returns **`409 CONFLICT`** and writes nothing.
 Hard delete. Best-effort reaps the note's attachments; a cleanup failure never
 blocks the delete. Cross-user access → `404`.
 
+#### GET /v1/notes/search?q=&excludeId= → 200 `MentionResult[]` (NIC-1962)
+
+Search-as-you-type source for the `@note` mention autocomplete (E-057). Not
+the same endpoint as `/v1/search?types=note`: that endpoint enforces a 2-char
+minimum term and has no `excludeId`, both wrong for keystroke-level typeahead,
+so this is a dedicated, purpose-built endpoint.
+
+```json
+[{ "id": "…", "title": "…" }]
+```
+
+- `q` — prefix-matched against the same `notes_search_idx` GIN column as full
+  search (migration 044). A blank/non-alphanumeric `q` returns `[]`, never an
+  error.
+- `excludeId` — optional; omits that note id from results (the note currently
+  open for editing — it cannot usefully mention itself).
+- Row-isolated to the requesting user. Capped at 10 results, unordered by any
+  client param — always rank then recency. Empty array, not null, when there
+  are no matches.
+- No plan gate — notes are Free and unlimited.
+
+**Errors:** none beyond the standard auth 401. No 404/422 — an empty or
+unmatched query is a valid empty result, not an error.
+
 #### Server-derived search text (`flattenDoc`)
 
 `content_text` is the flattened plain text of the document, written alongside it
