@@ -79,10 +79,13 @@ func validateTitle(title string) (string, error) {
 	return trimmed, nil
 }
 
-// validateContent checks that the body is a JSON object. Anything else — an
-// array, a bare string, malformed bytes — is rejected rather than stored: the
-// column is a document, and flattenDoc would silently yield "" for a non-object,
-// making the note unsearchable with no error to explain why.
+// validateContent checks that the body is a JSON object built entirely from
+// recognized node/mark types. Anything else — an array, a bare string,
+// malformed bytes, or an unrecognized node/mark — is rejected rather than
+// stored: the column is a document, and flattenDoc would silently yield ""
+// for a non-object, making the note unsearchable with no error to explain
+// why. An unrecognized node type is rejected outright rather than silently
+// stripped (NIC-1964) — a partial save is worse than a failed one.
 func validateContent(raw json.RawMessage) (json.RawMessage, error) {
 	if len(raw) > MaxContentLen {
 		return nil, invalid("content is too large")
@@ -90,6 +93,9 @@ func validateContent(raw json.RawMessage) (json.RawMessage, error) {
 	var probe map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		return nil, invalid("content must be a valid document object")
+	}
+	if err := validateNodeTree(raw, 0); err != nil {
+		return nil, err
 	}
 	return raw, nil
 }
