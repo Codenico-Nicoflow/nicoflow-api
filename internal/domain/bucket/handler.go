@@ -143,7 +143,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 
 // Process godoc
 // @Summary      Process an inbox item
-// @Description  Converts an unprocessed item into a task (requires projectId + taskDetails), trashes it, or (note — not yet implemented) returns 501. Already-processed items return 409.
+// @Description  Converts an unprocessed item into a task (requires projectId + taskDetails) or note (requires projectId + noteDetails), or trashes it. taskDetails.scheduledTime and taskDetails.recurrence give the task path full parity with plain task creation — when recurrence is set, a recurrence rule is created (materializing instance #1) instead of a plain task. Already-processed items return 409.
 // @Tags         bucket
 // @Accept       json
 // @Produce      json

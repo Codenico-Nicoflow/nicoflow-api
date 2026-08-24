@@ -1090,8 +1090,17 @@ Process an inbox item — convert it to a task or note, or trash it.
     "energy": "low",
     "rollsOver": true,
     "scheduledFor": "2026-05-05",
+    "scheduledTime": "09:00",
     "estimatedMinutes": 60,
-    "url": "https://example.com"
+    "url": "https://example.com",
+    "recurrence": {
+      "freq": "daily",
+      "interval": 1,
+      "byWeekday": [],
+      "byMonthday": null,
+      "startDate": "2026-05-05",
+      "endDate": null
+    }
   }
 }
 ```
@@ -1123,13 +1132,47 @@ affordance silently dead for notes.
 Inside `taskDetails`, only `title` is required. Every other field is optional and
 omitting it means "use the task service default" — the same defaults `POST
 /v1/projects/:projectId/tasks` applies. `status` is not accepted here (the task
-service owns it), and `scheduledTime` is not offered by the process flow. Values
-are validated by the task service, so a malformed `scheduledFor` fails with
-`INVALID_DATE` (400) **before** the inbox item is marked processed.
+service owns it). Values are validated by the task service, so a malformed
+`scheduledFor` fails with `INVALID_DATE` (400) **before** the inbox item is
+marked processed.
+
+`taskDetails` now has full field parity with plain task creation:
+
+| Field                     | Type   | Notes                                                                 |
+| ------------------------- | ------ | ---------------------------------------------------------------------|
+| `scheduledTime`           | string | Optional `"HH:MM"` time-of-day on `scheduledFor`. Pro-only to *set* (mirrors `POST /v1/projects/:projectId/tasks` and `PATCH /v1/tasks/:id/schedule` — `PLAN_LIMIT_EXCEEDED` on free). Snapped to a 15-minute boundary; malformed input is `INVALID_INPUT` (422). |
+| `recurrence`               | object | Optional. When present, the item is processed into a **recurrence rule** instead of a plain task — see below. |
+
+**`recurrence` object** (mirrors `POST /v1/projects/:projectId/recurrence-rules`'s schedule fields; the task-template fields — title/notes/priority/energy/estimatedMinutes/scheduledTime — are drawn from the surrounding `taskDetails`, not duplicated here):
+
+| Field        | Type    | Required | Notes                                              |
+| ------------ | ------- | -------- | --------------------------------------------------- |
+| `freq`       | string  | Yes      | `"daily"` \| `"weekly"` \| `"monthly"` \| `"yearly"` |
+| `interval`   | number  | No       | Default `1`; 1–366                                   |
+| `byWeekday`  | number[]| No       | Weekly only; `0`(Sun)–`6`(Sat)                       |
+| `byMonthday` | number  | No       | Monthly only; `1`–`31` or `-1` for last day          |
+| `startDate`  | string  | Yes      | `YYYY-MM-DD`                                          |
+| `endDate`    | string  | No       | `YYYY-MM-DD`, must not be before `startDate`         |
+
+When `recurrence` is set:
+
+- A recurrence rule is created instead of a plain task, materializing instance
+  #1 exactly as `POST /v1/projects/:projectId/recurrence-rules` does. The rule
+  creation runs in its own transaction (title/schedule validation, project
+  ownership, and the free-plan **3-rule cap** — `PLAN_LIMIT_EXCEEDED`, SPEC §5
+  — all abort it) before the bucket item is touched, so a rejected rule leaves
+  the item unprocessed exactly like a rejected plain task does.
+- On success, the response's `createdTaskId` is the id of the **materialized
+  instance #1 task**, not the rule — the same field the plain-task path
+  populates, so the client's "view what this became" link works unchanged
+  either way.
+- `status` and `url` are not accepted alongside `recurrence` (the recurrence
+  domain doesn't carry them); a client sending them is silently ignored, same
+  as any other field the recurrence create contract doesn't have.
 
 **Response — 200 OK** — Updated `IBucket` (with `processedAt` and `processingResult` populated)
 
-**Errors:** `RESOURCE_NOT_FOUND` (404), `CONFLICT` (409 — already processed), `INVALID_INPUT` (422)
+**Errors:** `RESOURCE_NOT_FOUND` (404), `CONFLICT` (409 — already processed), `INVALID_INPUT` (422), `INVALID_DATE` (400), `INVALID_RECURRENCE` (422), `PLAN_LIMIT_EXCEEDED` (403 — timed scheduling on free, or the 3-rule cap on free)
 
 ---
 

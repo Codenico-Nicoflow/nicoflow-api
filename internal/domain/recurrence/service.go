@@ -44,6 +44,20 @@ func (s *service) emit(userID string, ev Event) {
 }
 
 func (s *service) Create(ctx context.Context, userID, projectID, plan string, req CreateRuleRequest) (RuleView, error) {
+	result, err := s.createRule(ctx, userID, projectID, plan, req)
+	if err != nil {
+		return RuleView{}, err
+	}
+	return result.Rule, nil
+}
+
+func (s *service) CreateWithFirstTaskID(ctx context.Context, userID, projectID, plan string, req CreateRuleRequest) (CreateResult, error) {
+	return s.createRule(ctx, userID, projectID, plan, req)
+}
+
+// createRule is the shared implementation behind Create and
+// CreateWithFirstTaskID — one path, two public shapes.
+func (s *service) createRule(ctx context.Context, userID, projectID, plan string, req CreateRuleRequest) (CreateResult, error) {
 	req.Title = strings.TrimSpace(req.Title)
 	if req.Priority == "" {
 		req.Priority = defaultPriority
@@ -57,10 +71,10 @@ func (s *service) Create(ctx context.Context, userID, projectID, plan string, re
 
 	startDate, endDate, err := validateCreate(req)
 	if err != nil {
-		return RuleView{}, err
+		return CreateResult{}, err
 	}
 	if err := enforceTimedSchedulingPlan(plan, req.ScheduledTime); err != nil {
-		return RuleView{}, err
+		return CreateResult{}, err
 	}
 	req.EstimatedMinutes = clampEstimateToDayEnd(req.ScheduledTime, req.EstimatedMinutes)
 
@@ -68,19 +82,19 @@ func (s *service) Create(ctx context.Context, userID, projectID, plan string, re
 	// rules the caller has.
 	owned, err := s.repo.ProjectOwned(ctx, userID, projectID)
 	if err != nil {
-		return RuleView{}, err
+		return CreateResult{}, err
 	}
 	if !owned {
-		return RuleView{}, apperror.New(http.StatusNotFound, apperror.ErrProjectNotFound, "project not found")
+		return CreateResult{}, apperror.New(http.StatusNotFound, apperror.ErrProjectNotFound, "project not found")
 	}
 
 	if plan == "free" {
 		count, err := s.repo.CountByUser(ctx, userID)
 		if err != nil {
-			return RuleView{}, fmt.Errorf("recurrence.Create count: %w", err)
+			return CreateResult{}, fmt.Errorf("recurrence.Create count: %w", err)
 		}
 		if count >= freePlanRuleLimit {
-			return RuleView{}, apperror.New(http.StatusForbidden, apperror.ErrPlanLimitExceeded, "free plan allows up to 3 recurrence rules")
+			return CreateResult{}, apperror.New(http.StatusForbidden, apperror.ErrPlanLimitExceeded, "free plan allows up to 3 recurrence rules")
 		}
 	}
 
@@ -107,7 +121,7 @@ func (s *service) Create(ctx context.Context, userID, projectID, plan string, re
 	// weekday/monthday constraint.
 	first, ok := NextOccurrence(rule, startDate.AddDate(0, 0, -1))
 	if !ok {
-		return RuleView{}, errInvalidRecurrence("the rule produces no occurrence before its end date")
+		return CreateResult{}, errInvalidRecurrence("the rule produces no occurrence before its end date")
 	}
 
 	// The cursor points at what comes *after* the instance being materialized now.
@@ -131,11 +145,11 @@ func (s *service) Create(ctx context.Context, userID, projectID, plan string, re
 
 	created, err := s.repo.CreateWithOccurrence(ctx, rule, occ)
 	if err != nil {
-		return RuleView{}, err
+		return CreateResult{}, err
 	}
 	view := ToView(created)
 	s.emit(userID, Event{Type: EventCreated, Payload: view})
-	return view, nil
+	return CreateResult{Rule: view, TaskID: occ.ID}, nil
 }
 
 func (s *service) List(ctx context.Context, userID string, projectID *string) (ListRulesResponse, error) {

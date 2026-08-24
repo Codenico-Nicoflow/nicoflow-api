@@ -27,6 +27,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/notelink"
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 	"github.com/nicoflow/nicoflow-api/internal/domain/project"
+	"github.com/nicoflow/nicoflow-api/internal/domain/recurrence"
 	"github.com/nicoflow/nicoflow-api/internal/domain/task"
 	"github.com/nicoflow/nicoflow-api/internal/handler"
 	"github.com/nicoflow/nicoflow-api/internal/testutil"
@@ -52,6 +53,7 @@ func cleanBucketTestData(t *testing.T, pool *pgxpool.Pool) {
 		`DELETE FROM notifications WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%` + testEmailDomain + `')`,
 		`DELETE FROM notes    WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%` + testEmailDomain + `')`,
 		`DELETE FROM bucket   WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%` + testEmailDomain + `')`,
+		`DELETE FROM recurrence_rules WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%` + testEmailDomain + `')`,
 		`DELETE FROM tasks    WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%` + testEmailDomain + `')`,
 		`DELETE FROM projects WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%` + testEmailDomain + `')`,
 		`DELETE FROM areas    WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%` + testEmailDomain + `')`,
@@ -104,15 +106,18 @@ func newBucketServer(t *testing.T, plan string) bucketEnv {
 	// Real note service so the bucket→note path runs end-to-end (E-053).
 	projectSvc := project.NewService(project.NewRepository(pool), nil)
 	noteSvc := note.NewService(note.NewRepository(pool), noteProjectVerifier{projects: projectSvc}, notelink.NewRepository(pool), nil)
+	// Real recurrence service so the bucket→recurrence path runs end-to-end.
+	recurrenceSvc := recurrence.NewService(recurrence.NewRepository(pool), nil)
 	h := handler.Handlers{
-		Auth:    auth.NewHandler(auth.NewService(auth.NewRepository(pool), cfg), auth.HandlerConfig{}),
-		Area:    area.NewHandler(area.NewService(area.NewRepository(pool), nil)),
-		Project: project.NewHandler(projectSvc),
-		Task:    task.NewHandler(taskSvc, task.NewSubtaskService(task.NewSubtaskRepository(pool), nil)),
-		Bucket:  bucket.NewHandler(bucket.NewService(bucket.NewRepository(pool), taskSvc, notifSvc, nil).WithNoteCreator(noteSvc)),
-		Note:    note.NewHandler(noteSvc),
-		AI:      ai.NewHandler(ai.NewService(ai.NewRepository(pool), nil, "", nil)),
-		Billing: billing.NewHandler(billing.NewService(billing.NewRepository(pool))),
+		Auth:       auth.NewHandler(auth.NewService(auth.NewRepository(pool), cfg), auth.HandlerConfig{}),
+		Area:       area.NewHandler(area.NewService(area.NewRepository(pool), nil)),
+		Project:    project.NewHandler(projectSvc),
+		Task:       task.NewHandler(taskSvc, task.NewSubtaskService(task.NewSubtaskRepository(pool), nil)),
+		Bucket:     bucket.NewHandler(bucket.NewService(bucket.NewRepository(pool), taskSvc, notifSvc, nil).WithNoteCreator(noteSvc).WithRuleCreator(recurrenceSvc)),
+		Note:       note.NewHandler(noteSvc),
+		Recurrence: recurrence.NewHandler(recurrenceSvc),
+		AI:         ai.NewHandler(ai.NewService(ai.NewRepository(pool), nil, "", nil)),
+		Billing:    billing.NewHandler(billing.NewService(billing.NewRepository(pool))),
 	}
 	srv := httptest.NewServer(handler.New(cfg, pool, h))
 	t.Cleanup(srv.Close)
@@ -576,5 +581,153 @@ func TestIntegration_ProcessIntoNote_MissingDetails(t *testing.T) {
 	}
 	if processedAt != nil {
 		t.Errorf("processed_at = %v, want NULL", processedAt)
+	}
+}
+
+// ── bucket → recurrence, end to end ──────────────────────────────────────────
+
+// Processing an item with a recurrence schedule creates a RULE (materializing
+// instance #1), not a plain task, and the bucket item ends up marked processed
+// pointing at that materialized task.
+func TestIntegration_ProcessBucketIntoRecurringTask(t *testing.T) {
+	env := newBucketServer(t, "free")
+	bucketID := createBucket(t, env, "take vitamins every day")
+
+	resp := do(t, env.srv, http.MethodPost, "/v1/bucket/"+bucketID+"/process", map[string]any{
+		"processingResult": "task",
+		"projectId":        env.projectID,
+		"taskDetails": map[string]any{
+			"title": "Take vitamins",
+			"recurrence": map[string]any{
+				"freq": "daily", "interval": 1, "startDate": "2026-08-24",
+			},
+		},
+	}, env.token)
+	assertStatus(t, resp, http.StatusOK)
+
+	var env1 struct {
+		Data struct {
+			ProcessingResult *string `json:"processingResult"`
+			CreatedTaskID    *string `json:"createdTaskId"`
+			ProcessedAt      *string `json:"processedAt"`
+		} `json:"data"`
+	}
+	decode(t, resp, &env1)
+	if env1.Data.ProcessingResult == nil || *env1.Data.ProcessingResult != "task" {
+		t.Fatalf("processingResult = %v, want task", env1.Data.ProcessingResult)
+	}
+	if env1.Data.CreatedTaskID == nil {
+		t.Fatal("createdTaskId must be set to the materialized instance")
+	}
+	if env1.Data.ProcessedAt == nil {
+		t.Error("processedAt must be set")
+	}
+	taskID := *env1.Data.CreatedTaskID
+
+	// The materialized task really exists, carries the rule link, and is NOT a
+	// bare plain task — it has a recurrence_rule_id.
+	tResp := do(t, env.srv, http.MethodGet, "/v1/tasks/"+taskID, nil, env.token)
+	assertStatus(t, tResp, http.StatusOK)
+	var tEnv struct {
+		Data struct {
+			Title            string  `json:"title"`
+			ProjectID        string  `json:"projectId"`
+			RecurrenceRuleID *string `json:"recurrenceRuleId"`
+		} `json:"data"`
+	}
+	decode(t, tResp, &tEnv)
+	if tEnv.Data.Title != "Take vitamins" || tEnv.Data.ProjectID != env.projectID {
+		t.Errorf("materialized task mismatch: %+v", tEnv.Data)
+	}
+	if tEnv.Data.RecurrenceRuleID == nil {
+		t.Error("materialized task must carry a recurrence_rule_id — a plain task was created instead of a rule")
+	}
+
+	// Exactly one recurrence rule now exists for this project.
+	var ruleCount int
+	if err := env.pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM recurrence_rules WHERE project_id = $1`, env.projectID,
+	).Scan(&ruleCount); err != nil {
+		t.Fatalf("count rules: %v", err)
+	}
+	if ruleCount != 1 {
+		t.Fatalf("recurrence_rules count = %d, want 1", ruleCount)
+	}
+}
+
+// The free-plan recurrence rule cap (3, SPEC §5) must be enforced during
+// bucket-process exactly as it is on the direct recurrence-rules endpoint, and
+// exceeding it must roll back: the bucket item stays unprocessed and no rule
+// or task is created for the rejected attempt.
+func TestIntegration_ProcessBucketIntoRecurringTask_LimitExceeded_RollsBack(t *testing.T) {
+	env := newBucketServer(t, "free")
+
+	// Reach the free cap (3) via the direct endpoint.
+	for i := 0; i < 3; i++ {
+		r := do(t, env.srv, http.MethodPost, "/v1/projects/"+env.projectID+"/recurrence-rules", map[string]any{
+			"title": "existing", "freq": "daily", "interval": 1, "startDate": "2026-08-24",
+		}, env.token)
+		assertStatus(t, r, http.StatusCreated)
+		r.Body.Close()
+	}
+
+	var rulesBefore, tasksBefore int
+	countRulesAndTasks(t, env, &rulesBefore, &tasksBefore)
+
+	bucketID := createBucket(t, env, "one too many recurring habits")
+	resp := do(t, env.srv, http.MethodPost, "/v1/bucket/"+bucketID+"/process", map[string]any{
+		"processingResult": "task",
+		"projectId":        env.projectID,
+		"taskDetails": map[string]any{
+			"title": "over the cap",
+			"recurrence": map[string]any{
+				"freq": "daily", "interval": 1, "startDate": "2026-08-24",
+			},
+		},
+	}, env.token)
+	assertStatus(t, resp, http.StatusForbidden)
+	assertErrCode(t, resp, apperror.ErrPlanLimitExceeded)
+
+	// Rolled back: no new rule, no new task.
+	var rulesAfter, tasksAfter int
+	countRulesAndTasks(t, env, &rulesAfter, &tasksAfter)
+	if rulesAfter != rulesBefore {
+		t.Errorf("rule count changed: before=%d after=%d, want no new rule on a rejected limit", rulesBefore, rulesAfter)
+	}
+	if tasksAfter != tasksBefore {
+		t.Errorf("task count changed: before=%d after=%d, want no materialized task on a rejected limit", tasksBefore, tasksAfter)
+	}
+
+	// The bucket item itself is untouched — still unprocessed, editable.
+	var processedAt *time.Time
+	var createdTaskID *string
+	if err := env.pool.QueryRow(context.Background(),
+		`SELECT processed_at, created_task_id FROM bucket WHERE id = $1`, bucketID,
+	).Scan(&processedAt, &createdTaskID); err != nil {
+		t.Fatalf("read bucket row: %v", err)
+	}
+	if processedAt != nil {
+		t.Errorf("processed_at = %v, want NULL — the transaction must roll back on the plan-limit rejection", processedAt)
+	}
+	if createdTaskID != nil {
+		t.Errorf("created_task_id = %v, want NULL", createdTaskID)
+	}
+
+	edit := do(t, env.srv, http.MethodPatch, "/v1/bucket/"+bucketID, map[string]any{"content": "still editable"}, env.token)
+	assertStatus(t, edit, http.StatusOK)
+	edit.Body.Close()
+}
+
+func countRulesAndTasks(t *testing.T, env bucketEnv, rules, tasks *int) {
+	t.Helper()
+	if err := env.pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM recurrence_rules WHERE project_id = $1`, env.projectID,
+	).Scan(rules); err != nil {
+		t.Fatalf("count rules: %v", err)
+	}
+	if err := env.pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM tasks WHERE project_id = $1`, env.projectID,
+	).Scan(tasks); err != nil {
+		t.Fatalf("count tasks: %v", err)
 	}
 }

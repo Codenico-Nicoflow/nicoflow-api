@@ -232,6 +232,11 @@ func main() {
 	// concretes meet only here in wiring.
 	bucketSvc = bucketSvc.WithNoteCreator(noteSvc)
 
+	// Close the bucket→recurrence seam now that the recurrence service exists.
+	// Processing an inbox item with a recurrence schedule creates a rule (which
+	// materializes instance #1) instead of a plain task.
+	bucketSvc = bucketSvc.WithRuleCreator(recurrenceSvc)
+
 	// Habits (E-055 / NIC-1923). Own domain rather than a recurrence_rules
 	// flavour: habits belong to no project and never materialize task rows.
 	habitSvc := habit.NewService(habit.NewRepository(pool), ws.NewHabitBroadcaster(wsHub))

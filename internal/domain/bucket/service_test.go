@@ -12,6 +12,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
 	"github.com/nicoflow/nicoflow-api/internal/domain/bucket"
 	"github.com/nicoflow/nicoflow-api/internal/domain/note"
+	"github.com/nicoflow/nicoflow-api/internal/domain/recurrence"
 	"github.com/nicoflow/nicoflow-api/internal/domain/task"
 )
 
@@ -57,6 +58,14 @@ type mockTaskCreator struct {
 }
 
 func (m *mockTaskCreator) CreateWithoutEvent(ctx context.Context, userID, projectID, plan string, req task.CreateTaskRequest) (task.TaskView, error) {
+	return m.create(ctx, userID, projectID, plan, req)
+}
+
+type mockRuleCreator struct {
+	create func(ctx context.Context, userID, projectID, plan string, req recurrence.CreateRuleRequest) (recurrence.CreateResult, error)
+}
+
+func (m *mockRuleCreator) CreateWithFirstTaskID(ctx context.Context, userID, projectID, plan string, req recurrence.CreateRuleRequest) (recurrence.CreateResult, error) {
 	return m.create(ctx, userID, projectID, plan, req)
 }
 
@@ -606,5 +615,218 @@ func TestService_Process_Note_CreateFailureLeavesItemUnprocessed(t *testing.T) {
 	}
 	if marked {
 		t.Error("the bucket item was marked processed despite the note create failing")
+	}
+}
+
+// ── Process → Task with scheduledTime ────────────────────────────────────────
+
+// scheduledTime must reach the task create contract unchanged, alongside every
+// other field already covered by TestService_Process_Task_HappyPath_MapsDetailsAndMarks.
+func TestService_Process_Task_ScheduledTimeForwarded(t *testing.T) {
+	var gotReq task.CreateTaskRequest
+	repo := &mockRepo{
+		getByID: func(_ context.Context, _, id string) (bucket.Bucket, error) { return unprocessed(id), nil },
+		markProcessed: func(_ context.Context, _, id, result string, refs bucket.ProcessedRefs) (bucket.Bucket, error) {
+			b := unprocessed(id)
+			b.ProcessingResult, b.CreatedTaskID = &result, refs.TaskID
+			return b, nil
+		},
+	}
+	tc := &mockTaskCreator{create: func(_ context.Context, _, _, _ string, req task.CreateTaskRequest) (task.TaskView, error) {
+		gotReq = req
+		return task.TaskView{ID: "task-1"}, nil
+	}}
+	svc := bucket.NewService(repo, tc, nil, nil)
+	_, err := svc.Process(context.Background(), "u1", "b1", "pro", bucket.ProcessBucketRequest{
+		ProcessingResult: bucket.ResultTask,
+		ProjectID:        ptr("p1"),
+		TaskDetails: &bucket.ProcessTaskDetails{
+			Title: "Call dentist", ScheduledFor: ptr("2026-08-25"), ScheduledTime: ptr("09:00"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotReq.ScheduledTime == nil || *gotReq.ScheduledTime != "09:00" {
+		t.Errorf("scheduledTime not forwarded: %+v", gotReq)
+	}
+}
+
+// ── Process → Task with recurrence ───────────────────────────────────────────
+
+func recurrenceReq(title string) bucket.ProcessBucketRequest {
+	return bucket.ProcessBucketRequest{
+		ProcessingResult: bucket.ResultTask,
+		ProjectID:        ptr("p1"),
+		TaskDetails: &bucket.ProcessTaskDetails{
+			Title: title,
+			Recurrence: &bucket.ProcessRecurrenceDetails{
+				Freq: "daily", Interval: 1, StartDate: "2026-08-24",
+			},
+		},
+	}
+}
+
+func ruleSvcWith(repo bucket.Repository, rc bucket.RuleCreator) bucket.Service {
+	return bucket.NewService(repo, &mockTaskCreator{}, nil, nil).WithRuleCreator(rc)
+}
+
+// Recurrence fields must create a RULE, not a plain task, and the bucket item
+// must still end up marked processed with the materialized instance's task id.
+func TestService_Process_Task_WithRecurrence_CreatesRuleNotTask(t *testing.T) {
+	var gotReq recurrence.CreateRuleRequest
+	var gotProjectID string
+	var gotRefs bucket.ProcessedRefs
+	taskCreateCalled := false
+
+	repo := &mockRepo{
+		getByID: func(_ context.Context, _, id string) (bucket.Bucket, error) { return unprocessed(id), nil },
+		markProcessed: func(_ context.Context, _, id, result string, refs bucket.ProcessedRefs) (bucket.Bucket, error) {
+			gotRefs = refs
+			b := unprocessed(id)
+			b.ProcessingResult, b.CreatedTaskID, b.ProjectID = &result, refs.TaskID, refs.ProjectID
+			return b, nil
+		},
+	}
+	tc := &mockTaskCreator{create: func(context.Context, string, string, string, task.CreateTaskRequest) (task.TaskView, error) {
+		taskCreateCalled = true
+		return task.TaskView{}, nil
+	}}
+	rc := &mockRuleCreator{create: func(_ context.Context, _, projectID, _ string, req recurrence.CreateRuleRequest) (recurrence.CreateResult, error) {
+		gotReq, gotProjectID = req, projectID
+		return recurrence.CreateResult{Rule: recurrence.RuleView{ID: "rule-1"}, TaskID: "task-occ-1"}, nil
+	}}
+
+	svc := bucket.NewService(repo, tc, nil, nil).WithRuleCreator(rc)
+	view, err := svc.Process(context.Background(), "u1", "b1", "free", recurrenceReq("Take vitamins"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if taskCreateCalled {
+		t.Error("plain task creation must NOT be called when recurrence is set")
+	}
+	if gotProjectID != "p1" {
+		t.Errorf("projectID = %q, want p1", gotProjectID)
+	}
+	if gotReq.Title != "Take vitamins" || gotReq.Freq != "daily" || gotReq.Interval != 1 || gotReq.StartDate != "2026-08-24" {
+		t.Errorf("rule create req mapped wrong: %+v", gotReq)
+	}
+	if gotRefs.TaskID == nil || *gotRefs.TaskID != "task-occ-1" {
+		t.Errorf("refs.TaskID = %v, want the materialized instance id", gotRefs.TaskID)
+	}
+	if view.CreatedTaskID == nil || *view.CreatedTaskID != "task-occ-1" {
+		t.Errorf("view.CreatedTaskID = %v, want task-occ-1", view.CreatedTaskID)
+	}
+}
+
+// Without a wired RuleCreator, recurrence processing is unavailable — 501,
+// mirroring the note domain's unwired state.
+func TestService_Process_Task_WithRecurrence_UnavailableWithoutCreator(t *testing.T) {
+	repo := &mockRepo{
+		getByID: func(_ context.Context, _, id string) (bucket.Bucket, error) { return unprocessed(id), nil },
+	}
+	svc := bucket.NewService(repo, &mockTaskCreator{}, nil, nil)
+	_, err := svc.Process(context.Background(), "u1", "b1", "free", recurrenceReq("x"))
+	ae := appErr(err)
+	if ae == nil || ae.Status != http.StatusNotImplemented {
+		t.Fatalf("want 501 with no rule creator wired, got %v", err)
+	}
+}
+
+// The core NFR mirrored for recurrence: a plan-limit failure from
+// recurrence.Create must abort BEFORE the bucket is marked, so the item stays
+// unprocessed and no orphan rule reference is recorded (the recurrence
+// service's own transaction never committed the rule either).
+func TestService_Process_Task_WithRecurrence_PlanLimitAbortsBeforeMark(t *testing.T) {
+	marked := false
+	repo := &mockRepo{
+		getByID: func(_ context.Context, _, id string) (bucket.Bucket, error) { return unprocessed(id), nil },
+		markProcessed: func(context.Context, string, string, string, bucket.ProcessedRefs) (bucket.Bucket, error) {
+			marked = true
+			return bucket.Bucket{}, nil
+		},
+	}
+	planErr := apperror.New(http.StatusForbidden, apperror.ErrPlanLimitExceeded, "free plan allows up to 3 recurrence rules")
+	rc := &mockRuleCreator{create: func(context.Context, string, string, string, recurrence.CreateRuleRequest) (recurrence.CreateResult, error) {
+		return recurrence.CreateResult{}, planErr
+	}}
+
+	svc := ruleSvcWith(repo, rc)
+	_, err := svc.Process(context.Background(), "u1", "b1", "free", recurrenceReq("x"))
+
+	ae := appErr(err)
+	if ae == nil || ae.Code != apperror.ErrPlanLimitExceeded {
+		t.Fatalf("want PLAN_LIMIT_EXCEEDED, got %v", err)
+	}
+	if marked {
+		t.Error("bucket must stay unprocessed when rule creation fails on the plan limit")
+	}
+}
+
+// An already-processed item must reject before the rule service is ever
+// called, same guarantee as the plain-task and note paths.
+func TestService_Process_Task_WithRecurrence_AlreadyProcessed(t *testing.T) {
+	ruleCalled := false
+	repo := &mockRepo{
+		getByID: func(_ context.Context, _, id string) (bucket.Bucket, error) {
+			b := unprocessed(id)
+			now := time.Now()
+			b.ProcessedAt = &now
+			return b, nil
+		},
+	}
+	rc := &mockRuleCreator{create: func(context.Context, string, string, string, recurrence.CreateRuleRequest) (recurrence.CreateResult, error) {
+		ruleCalled = true
+		return recurrence.CreateResult{}, nil
+	}}
+
+	svc := ruleSvcWith(repo, rc)
+	_, err := svc.Process(context.Background(), "u1", "b1", "free", recurrenceReq("x"))
+
+	ae := appErr(err)
+	if ae == nil || ae.Code != apperror.ErrConflict || ae.Status != http.StatusConflict {
+		t.Fatalf("want CONFLICT/409, got %v", err)
+	}
+	if ruleCalled {
+		t.Error("rule creation must NOT be attempted when the item is already processed")
+	}
+}
+
+// Confirms the plain-task-no-recurrence path is unaffected: a TaskDetails with
+// Recurrence == nil must still call the task creator, never the rule creator.
+func TestService_Process_Task_NoRecurrence_UsesTaskCreatorNotRuleCreator(t *testing.T) {
+	taskCalled, ruleCalled := false, false
+	repo := &mockRepo{
+		getByID: func(_ context.Context, _, id string) (bucket.Bucket, error) { return unprocessed(id), nil },
+		markProcessed: func(_ context.Context, _, id, result string, refs bucket.ProcessedRefs) (bucket.Bucket, error) {
+			b := unprocessed(id)
+			b.ProcessingResult, b.CreatedTaskID = &result, refs.TaskID
+			return b, nil
+		},
+	}
+	tc := &mockTaskCreator{create: func(context.Context, string, string, string, task.CreateTaskRequest) (task.TaskView, error) {
+		taskCalled = true
+		return task.TaskView{ID: "task-1"}, nil
+	}}
+	rc := &mockRuleCreator{create: func(context.Context, string, string, string, recurrence.CreateRuleRequest) (recurrence.CreateResult, error) {
+		ruleCalled = true
+		return recurrence.CreateResult{}, nil
+	}}
+
+	svc := bucket.NewService(repo, tc, nil, nil).WithRuleCreator(rc)
+	_, err := svc.Process(context.Background(), "u1", "b1", "free", bucket.ProcessBucketRequest{
+		ProcessingResult: bucket.ResultTask,
+		ProjectID:        ptr("p1"),
+		TaskDetails:      &bucket.ProcessTaskDetails{Title: "plain task"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !taskCalled {
+		t.Error("task creator must be called for a non-recurring process request")
+	}
+	if ruleCalled {
+		t.Error("rule creator must NOT be called for a non-recurring process request")
 	}
 }

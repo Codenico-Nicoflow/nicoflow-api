@@ -203,10 +203,22 @@ type Event struct {
 	Payload any
 }
 
+// CreateResult pairs the created rule with the id of the task instance #1
+// materialized alongside it — a bare RuleView doesn't carry that id, and a
+// caller that needs to link back to the actual task (the bucket-process flow)
+// would otherwise have to re-derive it.
+type CreateResult struct {
+	Rule   RuleView
+	TaskID string
+}
+
 // Service is the recurrence domain's business-logic contract consumed by the
 // handler.
 type Service interface {
 	Create(ctx context.Context, userID, projectID, plan string, req CreateRuleRequest) (RuleView, error)
+	// CreateWithFirstTaskID is Create plus the id of the materialized instance
+	// #1, for callers (bucket-process) that need to link back to the task.
+	CreateWithFirstTaskID(ctx context.Context, userID, projectID, plan string, req CreateRuleRequest) (CreateResult, error)
 	List(ctx context.Context, userID string, projectID *string) (ListRulesResponse, error)
 	Get(ctx context.Context, userID, id string) (RuleView, error)
 	Update(ctx context.Context, userID, id, plan string, req UpdateRuleRequest) (RuleView, error)
