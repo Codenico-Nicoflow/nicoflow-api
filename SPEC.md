@@ -818,7 +818,7 @@ Partial update of any mutable field. `status→done` sets `completedAt` server-s
 
 - **Auth required:** Yes
 
-**Request body** (all fields optional; same types/constraints as create, plus `status`)
+**Request body** (all fields optional; same types/constraints as create, plus `status` and `projectId`)
 
 ```json
 {
@@ -826,15 +826,18 @@ Partial update of any mutable field. `status→done` sets `completedAt` server-s
   "status": "active",
   "energy": "medium",
   "rollsOver": false,
-  "scheduledFor": "2026-05-03"
+  "scheduledFor": "2026-05-03",
+  "projectId": "proj_9f3c2a"
 }
 ```
 
 > `completedAt` and `displayOrder` are **not** client-settable here — `completedAt` is derived from the status transition, and ordering is changed via `PATCH /tasks/:id/reorder`.
+>
+> `projectId` reassigns the task to a different project — the target must belong to the caller (`PROJECT_NOT_FOUND` on a missing or foreign project, same as create). It is a plain optional string, never nullable: a task's project can never be cleared, only swapped. Any other fields in the same PATCH still apply normally alongside a reassignment. Fires `task.updated` over WS like any other field-level PATCH.
 
 **Response — 200 OK** — Updated `ITask`
 
-**Errors:** `TASK_NOT_FOUND` (404), `PLAN_LIMIT_EXCEEDED` (403), `INVALID_INPUT` / `INVALID_STATUS` / `INVALID_PRIORITY` (422)
+**Errors:** `TASK_NOT_FOUND` (404), `PROJECT_NOT_FOUND` (404), `PLAN_LIMIT_EXCEEDED` (403), `INVALID_INPUT` / `INVALID_STATUS` / `INVALID_PRIORITY` (422)
 
 ---
 
