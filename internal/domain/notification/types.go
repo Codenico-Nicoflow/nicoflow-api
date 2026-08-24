@@ -22,6 +22,39 @@ const (
 	TypeStreakMilestone    = "streak_milestone"     // PRO  — end-of-day sweep
 )
 
+// Category values — derived from type, never stored in the DB.
+// Must stay in sync with categoryForType in @nicoflow/shared/types/notification.ts.
+const (
+	CategoryReminder    = "reminder"
+	CategorySummary     = "summary"
+	CategoryCelebration = "celebration"
+	CategorySystem      = "system"
+)
+
+// categoryForType derives the notification category from its type string.
+// The switch is exhaustive over the 12 known types; unknown types return
+// CategorySystem so forward-compat new types never surface a blank field.
+// Adding a new type REQUIRES a matching entry here AND in the TS counterpart.
+func categoryForType(notifType string) string {
+	switch notifType {
+	case TypeTaskDueSoon, TypeTaskOverdue, TypeTaskScheduledToday,
+		TypeNothingScheduled, TypeInboxUnprocessed, TypeInboxStale:
+		return CategoryReminder
+
+	case TypeDailySummary:
+		return CategorySummary
+
+	case TypeTaskCompleted, TypeProjectCompleted, TypeInboxZero, TypeStreakMilestone:
+		return CategoryCelebration
+
+	case TypeSystemAnnouncement:
+		return CategorySystem
+
+	default:
+		return CategorySystem
+	}
+}
+
 // Notification is the internal domain model.
 type Notification struct {
 	ID        string
@@ -37,9 +70,11 @@ type Notification struct {
 }
 
 // NotificationView is the JSON response shape for a single notification.
+// Category is derived from Type — never stored. See categoryForType.
 type NotificationView struct {
 	ID        string          `json:"id"`
 	Type      string          `json:"type"`
+	Category  string          `json:"category"`
 	Title     string          `json:"title"`
 	Body      string          `json:"body"`
 	Metadata  json.RawMessage `json:"metadata" swaggertype:"object"`
@@ -92,6 +127,7 @@ func notificationToView(n Notification) NotificationView {
 	return NotificationView{
 		ID:        n.ID,
 		Type:      n.Type,
+		Category:  categoryForType(n.Type),
 		Title:     n.Title,
 		Body:      n.Body,
 		Metadata:  meta,
