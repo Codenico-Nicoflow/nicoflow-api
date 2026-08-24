@@ -22,6 +22,7 @@ var allowedNodes = map[string]bool{
 	"callout": true, "divider": true, "horizontalRule": true,
 	"toggle": true, "details": true, "detailsSummary": true, "detailsContent": true,
 	"dateMention": true, "noteMention": true,
+	"taskList": true, "taskItem": true,
 }
 
 // allowedMarks is every ProseMirror mark type the server accepts.
