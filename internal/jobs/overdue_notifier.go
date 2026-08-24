@@ -73,6 +73,7 @@ func (n *OverdueNotifier) Run(ctx context.Context, dryRun bool) (*SweepBreakdown
 				Type:      notification.TypeTaskOverdue,
 				Title:     t.Title,
 				Body:      "This task is overdue.",
+				Metadata:  taskReminderMeta(t.ID, t.ProjectID),
 				DedupeKey: notification.DedupeTaskOverdue(t.ID, localToday),
 			})
 			if err != nil {
