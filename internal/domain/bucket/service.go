@@ -10,6 +10,7 @@ import (
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
 	"github.com/nicoflow/nicoflow-api/internal/domain/note"
+	"github.com/nicoflow/nicoflow-api/internal/domain/recurrence"
 	"github.com/nicoflow/nicoflow-api/internal/domain/task"
 )
 
@@ -35,6 +36,16 @@ type TaskCreator interface {
 	CreateWithoutEvent(ctx context.Context, userID, projectID, plan string, req task.CreateTaskRequest) (task.TaskView, error)
 }
 
+// RuleCreator is the slice of the recurrence service the bucket domain depends
+// on to turn a processed item into a recurring task. Defined here (the
+// consumer) so the bucket package never imports the concrete recurrence
+// service. CreateWithFirstTaskID (not Create) so the process flow can link the
+// bucket item to the materialized instance #1, mirroring how the task path
+// links to the created task.
+type RuleCreator interface {
+	CreateWithFirstTaskID(ctx context.Context, userID, projectID, plan string, req recurrence.CreateRuleRequest) (recurrence.CreateResult, error)
+}
+
 // Service defines the bucket (inbox) business logic interface.
 type Service interface {
 	Create(ctx context.Context, userID, content string) (BucketView, error)
@@ -47,6 +58,9 @@ type Service interface {
 
 	// WithNoteCreator injects the note service used by the "note" process result.
 	WithNoteCreator(n NoteCreator) Service
+	// WithRuleCreator injects the recurrence service used when taskDetails
+	// carries a recurrence schedule.
+	WithRuleCreator(r RuleCreator) Service
 	Process(ctx context.Context, userID, id, plan string, req ProcessBucketRequest) (BucketView, error)
 }
 
@@ -54,6 +68,7 @@ type service struct {
 	repo        Repository
 	taskSvc     TaskCreator
 	noteSvc     NoteCreator // nil ⇒ note processing unavailable
+	ruleSvc     RuleCreator // nil ⇒ recurrence processing unavailable
 	notif       notifier    // best-effort notification emitter; nil disables emission
 	broadcaster Broadcaster // nil disables real-time emission
 }
@@ -71,6 +86,13 @@ func NewService(repo Repository, taskSvc TaskCreator, notif notifier, broadcaste
 // and a nil creator stays an explicit, testable "unavailable" state.
 func (s *service) WithNoteCreator(n NoteCreator) Service {
 	s.noteSvc = n
+	return s
+}
+
+// WithRuleCreator enables processing an item into a recurring task. Same
+// post-construction shape as WithNoteCreator.
+func (s *service) WithRuleCreator(r RuleCreator) Service {
+	s.ruleSvc = r
 	return s
 }
 
@@ -169,7 +191,7 @@ func (s *service) processToTask(ctx context.Context, userID, id, plan string, re
 		return BucketView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "taskDetails is required to process into a task")
 	}
 
-	// Fail fast on missing/already-processed before creating any task, so the
+	// Fail fast on missing/already-processed before creating anything, so the
 	// common error cases never leave an orphan.
 	existing, err := s.repo.GetByID(ctx, userID, id)
 	if err != nil {
@@ -177,6 +199,10 @@ func (s *service) processToTask(ctx context.Context, userID, id, plan string, re
 	}
 	if existing.ProcessedAt != nil {
 		return BucketView{}, apperror.New(http.StatusConflict, apperror.ErrConflict, "bucket item is already processed")
+	}
+
+	if req.TaskDetails.Recurrence != nil {
+		return s.processToRecurringTask(ctx, userID, id, plan, req)
 	}
 
 	// Create the task first — without its task.created emit. Its service enforces
@@ -197,6 +223,37 @@ func (s *service) processToTask(ctx context.Context, userID, id, plan string, re
 	view := BucketToView(marked)
 	s.emit(userID, Event{Type: EventProcessed, Payload: view})
 	s.emit(userID, Event{Type: EventTaskCreated, Payload: created})
+	s.maybeEmitInboxZero(ctx, userID, plan)
+	return view, nil
+}
+
+// processToRecurringTask mirrors processToTask's ordering exactly, but creates
+// a recurrence rule (which materializes instance #1 in its own transaction)
+// instead of a plain task. The rule's own transaction enforces title
+// validation, schedule validation, project ownership (PROJECT_NOT_FOUND), and
+// the free-plan rule cap (PLAN_LIMIT_EXCEEDED); any of these abort before the
+// bucket item is marked, so a rejected rule never leaves the item processed.
+func (s *service) processToRecurringTask(ctx context.Context, userID, id, plan string, req ProcessBucketRequest) (BucketView, error) {
+	if s.ruleSvc == nil {
+		return BucketView{}, apperror.New(http.StatusNotImplemented, apperror.ErrServiceUnavailable, "recurrence processing is not available")
+	}
+
+	result, err := s.ruleSvc.CreateWithFirstTaskID(ctx, userID, *req.ProjectID, plan, req.TaskDetails.toRuleCreateRequest())
+	if err != nil {
+		return BucketView{}, err
+	}
+
+	taskID := result.TaskID
+	marked, err := s.repo.MarkProcessed(ctx, userID, id, ResultTask, ProcessedRefs{TaskID: &taskID, ProjectID: req.ProjectID})
+	if err != nil {
+		return BucketView{}, err
+	}
+
+	// Both writes succeeded — fire both events together (both-or-neither). The
+	// rule service already emitted recurrence.created for the rule itself; this
+	// mirrors the plain-task path's task.created for the materialized instance.
+	view := BucketToView(marked)
+	s.emit(userID, Event{Type: EventProcessed, Payload: view})
 	s.maybeEmitInboxZero(ctx, userID, plan)
 	return view, nil
 }
