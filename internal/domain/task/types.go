@@ -112,11 +112,16 @@ type CreateTaskRequest struct {
 
 // UpdateTaskRequest is the body for PATCH /tasks/:id — all fields optional.
 type UpdateTaskRequest struct {
-	Title        *string                `json:"title"`
-	Status       *string                `json:"status"`
-	Priority     *string                `json:"priority"`
-	Energy       *string                `json:"energy"`
-	RollsOver    *bool                  `json:"rollsOver"`
+	Title     *string `json:"title"`
+	Status    *string `json:"status"`
+	Priority  *string `json:"priority"`
+	Energy    *string `json:"energy"`
+	RollsOver *bool   `json:"rollsOver"`
+	// ProjectID reassigns the task to a different project the caller owns. A
+	// task's project can never be cleared to null (SPEC hierarchy requires
+	// every task to live in a project), so this is a plain pointer like
+	// Status/Priority — not a tri-state optional.Field.
+	ProjectID    *string                `json:"projectId"`
 	Notes        optional.Field[string] `json:"notes"`
 	ScheduledFor optional.Field[string] `json:"scheduledFor"`
 	// ScheduledTime is tri-state: absent leaves the stored time alone, an

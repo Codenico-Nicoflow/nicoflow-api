@@ -327,6 +327,125 @@ func TestService_Update_PlanLimitOnMoveIntoActive(t *testing.T) {
 	}
 }
 
+// ── Update project reassignment ─────────────────────────────────────────────────
+
+func TestService_Update_ProjectReassignment(t *testing.T) {
+	tests := []struct {
+		name         string
+		req          UpdateTaskRequest
+		projectOwned bool
+		wantErrCode  string
+		wantProject  *string // expected ProjectID passed to repo.Update
+	}{
+		{
+			name:         "reassigns to a project owned by the caller",
+			req:          UpdateTaskRequest{ProjectID: ptr("p2")},
+			projectOwned: true,
+			wantProject:  ptr("p2"),
+		},
+		{
+			name:         "rejects a project owned by another user",
+			req:          UpdateTaskRequest{ProjectID: ptr("other-users-project")},
+			projectOwned: false,
+			wantErrCode:  apperror.ErrProjectNotFound,
+		},
+		{
+			name:         "rejects a nonexistent project",
+			req:          UpdateTaskRequest{ProjectID: ptr("does-not-exist")},
+			projectOwned: false,
+			wantErrCode:  apperror.ErrProjectNotFound,
+		},
+		{
+			name: "other fields still update alongside a reassignment",
+			req: UpdateTaskRequest{
+				ProjectID: ptr("p2"),
+				Title:     ptr("Renamed while moving"),
+			},
+			projectOwned: true,
+			wantProject:  ptr("p2"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotOwnedCheckProject string
+			var gotUpdateReq UpdateTaskRequest
+			updateCalled := false
+
+			repo := &mockRepo{
+				getByID: func(_ context.Context, _, _ string) (*Task, error) {
+					return &Task{ID: "t1", ProjectID: "p1", Status: "active"}, nil
+				},
+				projectOwned: func(_ context.Context, _, projectID string) (bool, error) {
+					gotOwnedCheckProject = projectID
+					return tt.projectOwned, nil
+				},
+				countActive: func(_ context.Context, _, _ string) (int, error) { return 0, nil },
+				update: func(_ context.Context, _, _ string, req UpdateTaskRequest, _ completedAtChange) (Task, error) {
+					updateCalled = true
+					gotUpdateReq = req
+					return Task{ID: "t1", ProjectID: "p2", Title: "Renamed while moving", Status: "active"}, nil
+				},
+			}
+			svc := NewService(repo, nil, nil)
+
+			_, err := svc.Update(context.Background(), "u1", "t1", "pro", tt.req)
+
+			if tt.wantErrCode != "" {
+				ae := appErr(err)
+				if ae == nil || ae.Code != tt.wantErrCode {
+					t.Fatalf("want %s, got %+v", tt.wantErrCode, err)
+				}
+				if updateCalled {
+					t.Error("repo.Update must not be called when the target project is not owned")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if gotOwnedCheckProject != *tt.req.ProjectID {
+				t.Errorf("ProjectOwned checked %q, want %q", gotOwnedCheckProject, *tt.req.ProjectID)
+			}
+			if !updateCalled {
+				t.Fatal("repo.Update was not called")
+			}
+			if gotUpdateReq.ProjectID == nil || *gotUpdateReq.ProjectID != *tt.wantProject {
+				t.Errorf("repo.Update received ProjectID = %v, want %v", gotUpdateReq.ProjectID, *tt.wantProject)
+			}
+			if tt.req.Title != nil && (gotUpdateReq.Title == nil || *gotUpdateReq.Title != *tt.req.Title) {
+				t.Errorf("repo.Update received Title = %v, want %v", gotUpdateReq.Title, tt.req.Title)
+			}
+		})
+	}
+}
+
+func TestService_Update_NoProjectIDSkipsOwnershipCheck(t *testing.T) {
+	ownedCheckCalled := false
+	repo := &mockRepo{
+		getByID: func(_ context.Context, _, _ string) (*Task, error) {
+			return &Task{ID: "t1", ProjectID: "p1", Status: "active"}, nil
+		},
+		projectOwned: func(_ context.Context, _, _ string) (bool, error) {
+			ownedCheckCalled = true
+			return true, nil
+		},
+		countActive: func(_ context.Context, _, _ string) (int, error) { return 0, nil },
+		update: func(_ context.Context, _, _ string, _ UpdateTaskRequest, _ completedAtChange) (Task, error) {
+			return Task{ID: "t1", ProjectID: "p1", Title: "Renamed"}, nil
+		},
+	}
+	svc := NewService(repo, nil, nil)
+
+	_, err := svc.Update(context.Background(), "u1", "t1", "pro", UpdateTaskRequest{Title: ptr("Renamed")})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ownedCheckCalled {
+		t.Error("ProjectOwned must not be called when projectId is absent from the PATCH")
+	}
+}
+
 // ── List requires project ownership ────────────────────────────────────────────
 
 func TestService_ListByProject_NotOwned(t *testing.T) {

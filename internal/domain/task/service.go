@@ -273,6 +273,19 @@ func (s *service) update(ctx context.Context, userID, id, plan string, req Updat
 	// PATCH, so a new estimate must still respect an already-stored time.
 	req.EstimatedMinutes = clampUpdateEstimate(req, *current)
 
+	// Reassignment: the target project must exist and belong to this user.
+	// Same 404 as a missing project — existence of another user's project is
+	// never revealed.
+	if req.ProjectID != nil {
+		owned, err := s.repo.ProjectOwned(ctx, userID, *req.ProjectID)
+		if err != nil {
+			return TaskView{}, err
+		}
+		if !owned {
+			return TaskView{}, apperror.New(http.StatusNotFound, apperror.ErrProjectNotFound, "project not found")
+		}
+	}
+
 	// Plan limit applies when a PATCH moves a task INTO active.
 	if plan == "free" && req.Status != nil &&
 		*req.Status == statusActive && current.Status != statusActive {
@@ -569,6 +582,9 @@ func validateUpdate(req *UpdateTaskRequest) error {
 	}
 	if req.Energy != nil && !allowedEnergies[*req.Energy] {
 		return errInvalidEnergy()
+	}
+	if req.ProjectID != nil && strings.TrimSpace(*req.ProjectID) == "" {
+		return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "projectId cannot be empty")
 	}
 	if err := validateScheduledFor(req.ScheduledFor.Value); err != nil {
 		return err

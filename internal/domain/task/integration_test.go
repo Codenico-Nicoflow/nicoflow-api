@@ -182,7 +182,15 @@ func decode(t *testing.T, resp *http.Response, dst any) {
 
 func createArea(t *testing.T, srv *httptest.Server, token string) string {
 	t.Helper()
-	resp := do(t, srv, http.MethodPost, "/v1/areas", map[string]any{"name": "A", "color": "#3B82F6"}, token)
+	return createNamedArea(t, srv, token, "A")
+}
+
+// createNamedArea is createArea with an explicit name — area names are unique
+// per user (idx_areas_user_name), so a test that creates a second area for the
+// same user must pick a distinct name.
+func createNamedArea(t *testing.T, srv *httptest.Server, token, name string) string {
+	t.Helper()
+	resp := do(t, srv, http.MethodPost, "/v1/areas", map[string]any{"name": name, "color": "#3B82F6"}, token)
 	assertStatus(t, resp, http.StatusCreated)
 	var env struct {
 		Data struct {
@@ -195,7 +203,15 @@ func createArea(t *testing.T, srv *httptest.Server, token string) string {
 
 func createProject(t *testing.T, srv *httptest.Server, token, areaID string) string {
 	t.Helper()
-	resp := do(t, srv, http.MethodPost, "/v1/areas/"+areaID+"/projects", map[string]any{"name": "P"}, token)
+	return createNamedProject(t, srv, token, areaID, "P")
+}
+
+// createNamedProject is createProject with an explicit name — project names
+// are unique per user (idx_projects_user_name), so a test that creates a
+// second project for the same user must pick a distinct name.
+func createNamedProject(t *testing.T, srv *httptest.Server, token, areaID, name string) string {
+	t.Helper()
+	resp := do(t, srv, http.MethodPost, "/v1/areas/"+areaID+"/projects", map[string]any{"name": name}, token)
 	assertStatus(t, resp, http.StatusCreated)
 	var env struct {
 		Data struct {
@@ -402,6 +418,118 @@ func TestIntegration_Task_Create_ProjectNotOwned_Returns404(t *testing.T) {
 		map[string]any{"title": "x"}, env.token)
 	assertStatus(t, resp, http.StatusNotFound)
 	assertErrCode(t, resp, "PROJECT_NOT_FOUND")
+}
+
+// ── project reassignment (PATCH /tasks/:id projectId) ───────────────────────────
+
+func TestIntegration_Task_Update_ReassignProject_Success(t *testing.T) {
+	env := newTaskServer(t, "pro")
+	created := createTask(t, env, map[string]any{"title": "Move me"})
+
+	otherAreaID := createNamedArea(t, env.srv, env.token, "B")
+	targetProjectID := createNamedProject(t, env.srv, env.token, otherAreaID, "Q")
+
+	resp := do(t, env.srv, http.MethodPatch, "/v1/tasks/"+created.ID,
+		map[string]any{"projectId": targetProjectID}, env.token)
+	assertStatus(t, resp, http.StatusOK)
+	var out struct {
+		Data task.TaskView `json:"data"`
+	}
+	decode(t, resp, &out)
+	if out.Data.ProjectID != targetProjectID {
+		t.Errorf("projectId = %q, want %q", out.Data.ProjectID, targetProjectID)
+	}
+
+	// The list under the OLD project must no longer show the task.
+	resp = do(t, env.srv, http.MethodGet, "/v1/projects/"+env.projectID+"/tasks", nil, env.token)
+	assertStatus(t, resp, http.StatusOK)
+	var oldList struct {
+		Data struct {
+			Items []task.TaskView `json:"items"`
+		} `json:"data"`
+	}
+	decode(t, resp, &oldList)
+	if len(oldList.Data.Items) != 0 {
+		t.Errorf("old project still lists %d task(s), want 0", len(oldList.Data.Items))
+	}
+
+	// The list under the NEW project must show it.
+	resp = do(t, env.srv, http.MethodGet, "/v1/projects/"+targetProjectID+"/tasks", nil, env.token)
+	assertStatus(t, resp, http.StatusOK)
+	var newList struct {
+		Data struct {
+			Items []task.TaskView `json:"items"`
+		} `json:"data"`
+	}
+	decode(t, resp, &newList)
+	if len(newList.Data.Items) != 1 || newList.Data.Items[0].ID != created.ID {
+		t.Fatalf("new project list = %+v, want [%s]", newList.Data.Items, created.ID)
+	}
+}
+
+func TestIntegration_Task_Update_ReassignProject_OtherUsersProject_Returns404(t *testing.T) {
+	env := newTaskServer(t, "pro")
+	created := createTask(t, env, map[string]any{"title": "Mine"})
+
+	// A second user with their own project in the same DB.
+	pool := testutil.NewTestDB(t)
+	_, otherToken := insertUser(t, pool, "intruder-reassign"+testEmailDomain, "pro")
+	otherAreaID := createArea(t, env.srv, otherToken)
+	otherProjectID := createProject(t, env.srv, otherToken, otherAreaID)
+
+	resp := do(t, env.srv, http.MethodPatch, "/v1/tasks/"+created.ID,
+		map[string]any{"projectId": otherProjectID}, env.token)
+	assertStatus(t, resp, http.StatusNotFound)
+	assertErrCode(t, resp, "PROJECT_NOT_FOUND")
+
+	// The task must not have moved.
+	resp = do(t, env.srv, http.MethodGet, "/v1/tasks/"+created.ID, nil, env.token)
+	assertStatus(t, resp, http.StatusOK)
+	var out struct {
+		Data task.TaskView `json:"data"`
+	}
+	decode(t, resp, &out)
+	if out.Data.ProjectID != env.projectID {
+		t.Errorf("projectId = %q, want unchanged %q", out.Data.ProjectID, env.projectID)
+	}
+}
+
+func TestIntegration_Task_Update_ReassignProject_Nonexistent_Returns404(t *testing.T) {
+	env := newTaskServer(t, "pro")
+	created := createTask(t, env, map[string]any{"title": "Mine"})
+
+	resp := do(t, env.srv, http.MethodPatch, "/v1/tasks/"+created.ID,
+		map[string]any{"projectId": uuid.New().String()}, env.token)
+	assertStatus(t, resp, http.StatusNotFound)
+	assertErrCode(t, resp, "PROJECT_NOT_FOUND")
+}
+
+func TestIntegration_Task_Update_ReassignProject_WithOtherFields(t *testing.T) {
+	env := newTaskServer(t, "pro")
+	created := createTask(t, env, map[string]any{"title": "Original title", "priority": "low"})
+
+	otherAreaID := createNamedArea(t, env.srv, env.token, "B")
+	targetProjectID := createNamedProject(t, env.srv, env.token, otherAreaID, "Q")
+
+	resp := do(t, env.srv, http.MethodPatch, "/v1/tasks/"+created.ID, map[string]any{
+		"projectId": targetProjectID,
+		"title":     "Renamed and moved",
+		"priority":  "high",
+	}, env.token)
+	assertStatus(t, resp, http.StatusOK)
+	var out struct {
+		Data task.TaskView `json:"data"`
+	}
+	decode(t, resp, &out)
+	if out.Data.ProjectID != targetProjectID {
+		t.Errorf("projectId = %q, want %q", out.Data.ProjectID, targetProjectID)
+	}
+	if out.Data.Title != "Renamed and moved" {
+		t.Errorf("title = %q, want updated", out.Data.Title)
+	}
+	if out.Data.Priority != "high" {
+		t.Errorf("priority = %q, want updated", out.Data.Priority)
+	}
 }
 
 // ── quick actions ──────────────────────────────────────────────────────────────
