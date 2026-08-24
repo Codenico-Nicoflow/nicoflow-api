@@ -5,6 +5,7 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -40,8 +41,9 @@ type RemindableUser struct {
 
 // DueTask is the minimal task shape the sweep needs to build a notification.
 type DueTask struct {
-	ID    string
-	Title string
+	ID        string
+	Title     string
+	ProjectID string
 }
 
 // Repository is the data access the sweep needs. Defined here (the consumer)
@@ -154,6 +156,7 @@ func (n *DueDateNotifier) Run(ctx context.Context, dryRun bool) (*SweepBreakdown
 				Type:      notification.TypeTaskDueSoon,
 				Title:     t.Title,
 				Body:      "This task is scheduled soon.",
+				Metadata:  taskReminderMeta(t.ID, t.ProjectID),
 				DedupeKey: dedupeKey(t.ID, target),
 			})
 			if err != nil {
@@ -210,4 +213,21 @@ func reminderTargetDate(local time.Time, beforeDueMinutes int) string {
 func dedupeKey(taskID, isoDate string) *string {
 	k := fmt.Sprintf("%s:%s:%s", notification.TypeTaskDueSoon, taskID, isoDate)
 	return &k
+}
+
+// taskReminderMeta encodes the task + project IDs so the client can deep-link
+// directly to the task's detail dialog without an extra lookup. The shape mirrors
+// the ReminderMetadata type in @nicoflow/shared: {entityType, entityId, projectId}.
+// Marshalling a fixed-shape struct never fails, so the error is dropped.
+func taskReminderMeta(taskID, projectID string) json.RawMessage {
+	b, _ := json.Marshal(struct {
+		EntityType string `json:"entityType"`
+		EntityID   string `json:"entityId"`
+		ProjectID  string `json:"projectId"`
+	}{
+		EntityType: "task",
+		EntityID:   taskID,
+		ProjectID:  projectID,
+	})
+	return b
 }

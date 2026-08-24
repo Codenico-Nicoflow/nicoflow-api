@@ -82,7 +82,7 @@ func (r *pgRepository) HasActiveWork(ctx context.Context, userID string) (bool, 
 // excluded.
 func (r *pgRepository) ListOverdueTasks(ctx context.Context, userID, localDate string) ([]DueTask, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id, title
+		SELECT id, title, project_id
 		FROM tasks
 		WHERE user_id = @userID
 		  AND scheduled_for IS NOT NULL
@@ -98,7 +98,7 @@ func (r *pgRepository) ListOverdueTasks(ctx context.Context, userID, localDate s
 	var out []DueTask
 	for rows.Next() {
 		var t DueTask
-		if err := rows.Scan(&t.ID, &t.Title); err != nil {
+		if err := rows.Scan(&t.ID, &t.Title, &t.ProjectID); err != nil {
 			return nil, fmt.Errorf("jobs.ListOverdueTasks scan: %w", err)
 		}
 		out = append(out, t)
@@ -191,7 +191,7 @@ func (r *pgRepository) RecentCompletionDates(ctx context.Context, userID, tz, lo
 // already closed out.
 func (r *pgRepository) ListTasksScheduledOn(ctx context.Context, userID, isoDate string) ([]DueTask, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id, title
+		SELECT id, title, project_id
 		FROM tasks
 		WHERE user_id = @userID
 		  AND scheduled_for = @isoDate
@@ -206,7 +206,7 @@ func (r *pgRepository) ListTasksScheduledOn(ctx context.Context, userID, isoDate
 	var out []DueTask
 	for rows.Next() {
 		var t DueTask
-		if err := rows.Scan(&t.ID, &t.Title); err != nil {
+		if err := rows.Scan(&t.ID, &t.Title, &t.ProjectID); err != nil {
 			return nil, fmt.Errorf("jobs.ListTasksScheduledOn scan: %w", err)
 		}
 		out = append(out, t)

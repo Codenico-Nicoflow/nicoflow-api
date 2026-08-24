@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -204,5 +205,57 @@ func TestRun_DuplicateNotCounted(t *testing.T) {
 	}
 	if len(creator.calls) != 1 {
 		t.Fatalf("Create still attempted once, got %d calls", len(creator.calls))
+	}
+}
+
+func TestRun_MetadataContainsTaskAndProject(t *testing.T) {
+	repo := &fakeRepo{
+		users: []RemindableUser{{UserID: "u1", Timezone: "UTC", BeforeDueMinutes: 1440}},
+		tasksByID: map[string][]DueTask{
+			"u1": {{ID: "t1", Title: "Ship it", ProjectID: "p1"}},
+		},
+	}
+	creator := &fakeCreator{inserted: true}
+	n := NewDueDateNotifier(repo, creator, "")
+	n.now = func() time.Time { return time.Date(2026, 7, 14, 8, 0, 0, 0, time.UTC) }
+
+	if _, err := n.Run(context.Background(), false); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(creator.calls) != 1 {
+		t.Fatalf("Create calls = %d, want 1", len(creator.calls))
+	}
+
+	var meta struct {
+		EntityType string `json:"entityType"`
+		EntityID   string `json:"entityId"`
+		ProjectID  string `json:"projectId"`
+	}
+	if err := json.Unmarshal(creator.calls[0].Metadata, &meta); err != nil {
+		t.Fatalf("Metadata unmarshal: %v", err)
+	}
+	if meta.EntityType != "task" || meta.EntityID != "t1" || meta.ProjectID != "p1" {
+		t.Fatalf("metadata = %+v, want {task, t1, p1}", meta)
+	}
+}
+
+func TestTaskReminderMeta(t *testing.T) {
+	raw := taskReminderMeta("task-42", "proj-7")
+	var meta struct {
+		EntityType string `json:"entityType"`
+		EntityID   string `json:"entityId"`
+		ProjectID  string `json:"projectId"`
+	}
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if meta.EntityType != "task" {
+		t.Fatalf("entityType = %q, want task", meta.EntityType)
+	}
+	if meta.EntityID != "task-42" {
+		t.Fatalf("entityId = %q, want task-42", meta.EntityID)
+	}
+	if meta.ProjectID != "proj-7" {
+		t.Fatalf("projectId = %q, want proj-7", meta.ProjectID)
 	}
 }

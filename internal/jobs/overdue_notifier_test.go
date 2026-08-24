@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -117,5 +118,34 @@ func TestOverdueRun_PerUserIsolation(t *testing.T) {
 	}
 	if generated.Fired != 1 || len(creator.calls) != 1 || creator.calls[0].UserID != "u2" {
 		t.Fatalf("want u2's notification despite u1 failing, got generated=%d calls=%d", generated.Fired, len(creator.calls))
+	}
+}
+
+func TestOverdueRun_MetadataContainsTaskAndProject(t *testing.T) {
+	repo := &fakeRepo{
+		users:       []RemindableUser{{UserID: "u1", Timezone: "UTC"}},
+		overdueByID: map[string][]DueTask{"u1": {{ID: "t1", Title: "Late report", ProjectID: "p1"}}},
+	}
+	creator := &fakeCreator{inserted: true}
+	n := NewOverdueNotifier(repo, creator)
+	n.now = func() time.Time { return time.Date(2026, 7, 14, 8, 0, 0, 0, time.UTC) }
+
+	if _, err := n.Run(context.Background(), false); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(creator.calls) != 1 {
+		t.Fatalf("Create calls = %d, want 1", len(creator.calls))
+	}
+
+	var meta struct {
+		EntityType string `json:"entityType"`
+		EntityID   string `json:"entityId"`
+		ProjectID  string `json:"projectId"`
+	}
+	if err := json.Unmarshal(creator.calls[0].Metadata, &meta); err != nil {
+		t.Fatalf("Metadata unmarshal: %v", err)
+	}
+	if meta.EntityType != "task" || meta.EntityID != "t1" || meta.ProjectID != "p1" {
+		t.Fatalf("metadata = %+v, want {task, t1, p1}", meta)
 	}
 }
