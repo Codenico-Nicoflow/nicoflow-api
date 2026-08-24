@@ -30,7 +30,7 @@ func (s *service) emitTaskCompleted(ctx context.Context, t Task) {
 		Type:      notification.TypeTaskCompleted,
 		Title:     t.Title,
 		Body:      "Task completed.",
-		Metadata:  meta(map[string]string{"taskId": t.ID, "projectId": t.ProjectID}),
+		Metadata:  meta(map[string]string{"entityType": "task", "entityId": t.ID, "projectId": t.ProjectID}),
 		DedupeKey: notification.DedupeTaskCompleted(t.ID),
 	}); err != nil {
 		log.Error().Err(err).Str("task_id", t.ID).Msg("emit task_completed failed")
