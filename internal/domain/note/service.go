@@ -165,10 +165,29 @@ func (s *service) Create(ctx context.Context, userID string, req CreateNoteReque
 		return NoteDetailView{}, err
 	}
 
+	// Best-effort, after the row commits: a link-sync failure must never fail
+	// the save the caller is waiting on. Same posture as cleanAttachments.
+	s.syncLinks(ctx, created.ID, content)
+
 	// The event carries the list shape — a client syncing its list needs the
 	// excerpt, not the body it just sent.
 	s.emit(userID, Event{Type: EventCreated, Payload: toView(created)})
 	return toDetailView(created), nil
+}
+
+// syncLinks replaces note_links for sourceNoteID with the noteMention targets
+// found in content. Logged-and-swallowed on failure: the note itself already
+// saved, and a stale/missing backlink entry is a lesser failure than losing
+// the edit the user is waiting on. A nil links source is a valid no-op, same
+// posture as a nil broadcaster — tests construct the service without one when
+// backlink behavior isn't what's under test.
+func (s *service) syncLinks(ctx context.Context, sourceNoteID string, content json.RawMessage) {
+	if s.links == nil {
+		return
+	}
+	if err := s.links.ReplaceLinksForNote(ctx, sourceNoteID, extractMentionIDs(content)); err != nil {
+		log.Error().Err(err).Str("note_id", sourceNoteID).Msg("note: link sync failed — note saved anyway")
+	}
 }
 
 // Update is the optimistic-concurrency path. The client sends the version it
@@ -219,6 +238,13 @@ func (s *service) Update(ctx context.Context, userID, id string, req UpdateNoteR
 		// can only mean the version moved on between that read and this write.
 		return NoteDetailView{}, apperror.New(http.StatusConflict, apperror.ErrConflict,
 			"note was modified by another session")
+	}
+
+	// Only when content actually changed — autosave fires every ~1–2s even for
+	// title-only edits, and re-diffing an unchanged document against
+	// note_links on every such tick is pure waste.
+	if req.Content != nil {
+		s.syncLinks(ctx, id, content)
 	}
 
 	// List shape deliberately: autosave fires every ~1–2s, so broadcasting the

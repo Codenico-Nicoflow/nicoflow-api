@@ -915,11 +915,19 @@ func TestSearchMentionsNilResultsNormalised(t *testing.T) {
 // ── backlinks ─────────────────────────────────────────────────────────────────
 
 type mockLinks struct {
-	getBacklinks func(ctx context.Context, noteID string) ([]notelink.BacklinkNote, error)
+	getBacklinks        func(ctx context.Context, noteID string) ([]notelink.BacklinkNote, error)
+	replaceLinksForNote func(ctx context.Context, sourceNoteID string, targetNoteIDs []string) error
 }
 
 func (m *mockLinks) GetBacklinks(ctx context.Context, noteID string) ([]notelink.BacklinkNote, error) {
 	return m.getBacklinks(ctx, noteID)
+}
+
+func (m *mockLinks) ReplaceLinksForNote(ctx context.Context, sourceNoteID string, targetNoteIDs []string) error {
+	if m.replaceLinksForNote == nil {
+		return nil
+	}
+	return m.replaceLinksForNote(ctx, sourceNoteID, targetNoteIDs)
 }
 
 // AC1 — happy path: backlinks come back in NoteView shape, no content.
@@ -1020,6 +1028,161 @@ func TestGetBacklinksSkipsVanishedSource(t *testing.T) {
 	}
 	if len(views) != 1 {
 		t.Fatalf("len(views) = %d, want 1 (the vanished source skipped)", len(views))
+	}
+}
+
+// ── link sync (write side of backlinks) ─────────────────────────────────────
+
+// Create with a noteMention in content must sync note_links — without this,
+// GetBacklinks always returns empty regardless of how many real @-mentions a
+// note contains.
+func TestCreateSyncsLinksFromMentions(t *testing.T) {
+	var gotSource string
+	var gotTargets []string
+	links := &mockLinks{replaceLinksForNote: func(ctx context.Context, sourceNoteID string, targetNoteIDs []string) error {
+		gotSource = sourceNoteID
+		gotTargets = targetNoteIDs
+		return nil
+	}}
+	repo := &mockRepo{create: func(ctx context.Context, n note.Note) (note.Note, error) {
+		n.ID = "n_new"
+		return n, nil
+	}}
+	svc := note.NewService(repo, &mockProjects{}, links, nil)
+
+	content := docWithContent(`{"type":"paragraph","content":[
+		{"type":"noteMention","attrs":{"noteId":"n_2"}},
+		{"type":"noteMention","attrs":{"noteId":"n_3"}}
+	]}`)
+
+	if _, err := svc.Create(context.Background(), testUser, note.CreateNoteRequest{
+		ProjectID: testProject, Title: "t", Content: content,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if gotSource != "n_new" {
+		t.Errorf("ReplaceLinksForNote sourceNoteID = %q, want n_new", gotSource)
+	}
+	if len(gotTargets) != 2 || gotTargets[0] != "n_2" || gotTargets[1] != "n_3" {
+		t.Errorf("ReplaceLinksForNote targets = %v, want [n_2 n_3]", gotTargets)
+	}
+}
+
+// A duplicate mention of the same note collapses to one target — the link
+// table has no reason to carry duplicate rows.
+func TestCreateDedupesRepeatedMentions(t *testing.T) {
+	var gotTargets []string
+	links := &mockLinks{replaceLinksForNote: func(ctx context.Context, sourceNoteID string, targetNoteIDs []string) error {
+		gotTargets = targetNoteIDs
+		return nil
+	}}
+	svc := note.NewService(&mockRepo{create: echoCreate}, &mockProjects{}, links, nil)
+
+	content := docWithContent(`{"type":"paragraph","content":[
+		{"type":"noteMention","attrs":{"noteId":"n_2"}},
+		{"type":"noteMention","attrs":{"noteId":"n_2"}}
+	]}`)
+
+	if _, err := svc.Create(context.Background(), testUser, note.CreateNoteRequest{
+		ProjectID: testProject, Title: "t", Content: content,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if len(gotTargets) != 1 || gotTargets[0] != "n_2" {
+		t.Errorf("ReplaceLinksForNote targets = %v, want [n_2]", gotTargets)
+	}
+}
+
+// Update with new content re-syncs links to the new mention set — an edit
+// that removes a mention must drop the corresponding backlink, not leave it
+// stale forever.
+func TestUpdateResyncsLinks(t *testing.T) {
+	var gotTargets []string
+	links := &mockLinks{replaceLinksForNote: func(ctx context.Context, sourceNoteID string, targetNoteIDs []string) error {
+		gotTargets = targetNoteIDs
+		return nil
+	}}
+	repo := &mockRepo{
+		getByID: func(ctx context.Context, userID, id string) (note.Note, error) { return storedNote(1), nil },
+		update: func(ctx context.Context, p note.UpdateParams) (note.Note, bool, error) {
+			n := storedNote(2)
+			n.Content = p.Content
+			return n, true, nil
+		},
+	}
+	svc := note.NewService(repo, &mockProjects{}, links, nil)
+
+	content := docWithContent(`{"type":"paragraph","content":[{"type":"noteMention","attrs":{"noteId":"n_5"}}]}`)
+	version := 1
+	if _, err := svc.Update(context.Background(), testUser, testNoteID, note.UpdateNoteRequest{
+		Version: &version, Content: &content,
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	if len(gotTargets) != 1 || gotTargets[0] != "n_5" {
+		t.Errorf("ReplaceLinksForNote targets = %v, want [n_5]", gotTargets)
+	}
+}
+
+// A title-only update (content untouched) must not touch note_links — the
+// content didn't change, so re-syncing on every autosave tick that only
+// patches the title is pure waste.
+func TestUpdateWithoutContentDoesNotSyncLinks(t *testing.T) {
+	called := false
+	links := &mockLinks{replaceLinksForNote: func(ctx context.Context, sourceNoteID string, targetNoteIDs []string) error {
+		called = true
+		return nil
+	}}
+	repo := &mockRepo{
+		getByID: func(ctx context.Context, userID, id string) (note.Note, error) { return storedNote(1), nil },
+		update: func(ctx context.Context, p note.UpdateParams) (note.Note, bool, error) {
+			return storedNote(2), true, nil
+		},
+	}
+	svc := note.NewService(repo, &mockProjects{}, links, nil)
+
+	title := "new title"
+	version := 1
+	if _, err := svc.Update(context.Background(), testUser, testNoteID, note.UpdateNoteRequest{
+		Version: &version, Title: &title,
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	if called {
+		t.Error("ReplaceLinksForNote was called for a title-only update")
+	}
+}
+
+// A link-sync failure must not fail the save — the note itself already
+// committed by the time syncLinks runs.
+func TestCreateSucceedsWhenLinkSyncFails(t *testing.T) {
+	links := &mockLinks{replaceLinksForNote: func(ctx context.Context, sourceNoteID string, targetNoteIDs []string) error {
+		return errors.New("db unreachable")
+	}}
+	svc := note.NewService(&mockRepo{create: echoCreate}, &mockProjects{}, links, nil)
+
+	content := docWithContent(`{"type":"paragraph","content":[{"type":"noteMention","attrs":{"noteId":"n_2"}}]}`)
+	if _, err := svc.Create(context.Background(), testUser, note.CreateNoteRequest{
+		ProjectID: testProject, Title: "t", Content: content,
+	}); err != nil {
+		t.Fatalf("Create should succeed despite link sync failure: %v", err)
+	}
+}
+
+// A nil links source (as most tests in this file construct the service) must
+// not panic — same posture as a nil broadcaster.
+func TestCreateWithNilLinksSourceIsSafe(t *testing.T) {
+	svc := note.NewService(&mockRepo{create: echoCreate}, &mockProjects{}, nil, nil)
+
+	content := docWithContent(`{"type":"paragraph","content":[{"type":"noteMention","attrs":{"noteId":"n_2"}}]}`)
+	if _, err := svc.Create(context.Background(), testUser, note.CreateNoteRequest{
+		ProjectID: testProject, Title: "t", Content: content,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
 	}
 }
 
