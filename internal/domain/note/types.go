@@ -166,13 +166,14 @@ type ProjectOwnershipVerifier interface {
 	VerifyProjectOwner(ctx context.Context, userID, projectID string) error
 }
 
-// BacklinkSource resolves the notes that mention a given note. notelink is a
-// leaf package with no note import, so note may depend on its concrete
-// Repository directly (it already satisfies this interface) — this alias
-// exists so the Service constructor signature reads in domain terms rather
-// than a cross-package repository type.
+// BacklinkSource resolves and maintains the notes that mention a given note.
+// notelink is a leaf package with no note import, so note may depend on its
+// concrete Repository directly (it already satisfies this interface) — this
+// alias exists so the Service constructor signature reads in domain terms
+// rather than a cross-package repository type.
 type BacklinkSource interface {
 	GetBacklinks(ctx context.Context, noteID string) ([]notelink.BacklinkNote, error)
+	ReplaceLinksForNote(ctx context.Context, sourceNoteID string, targetNoteIDs []string) error
 }
 
 // ListNotesFilter holds pagination params for the project note list.

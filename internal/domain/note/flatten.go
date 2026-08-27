@@ -22,6 +22,52 @@ type docNode struct {
 	Content []json.RawMessage `json:"content"`
 }
 
+// mentionNode is the subset of a noteMention node's shape extractMentionIDs
+// reads. Mirrors the client's NoteMentionNode attrs (noteId/titleSnapshot) —
+// only noteId matters server-side, titleSnapshot is display-only.
+type mentionNode struct {
+	Type    string            `json:"type"`
+	Attrs   mentionAttrs      `json:"attrs"`
+	Content []json.RawMessage `json:"content"`
+}
+
+type mentionAttrs struct {
+	NoteID string `json:"noteId"`
+}
+
+// extractMentionIDs walks a note's content and returns the target note IDs of
+// every noteMention node, deduplicated. This is the write-side counterpart of
+// GetBacklinks: without it, note_links is never populated and the backlinks
+// panel stays empty regardless of how many real @-mentions a note contains.
+// Same depth guard and "malformed input yields nothing rather than an error"
+// posture as flattenDoc — link extraction must never fail a save.
+func extractMentionIDs(doc json.RawMessage) []string {
+	seen := make(map[string]bool)
+	var ids []string
+	walkMentions(doc, 0, seen, &ids)
+	return ids
+}
+
+func walkMentions(raw json.RawMessage, depth int, seen map[string]bool, ids *[]string) {
+	if depth > maxFlattenDepth {
+		return
+	}
+
+	var n mentionNode
+	if err := json.Unmarshal(raw, &n); err != nil {
+		return
+	}
+
+	if n.Type == "noteMention" && n.Attrs.NoteID != "" && !seen[n.Attrs.NoteID] {
+		seen[n.Attrs.NoteID] = true
+		*ids = append(*ids, n.Attrs.NoteID)
+	}
+
+	for _, child := range n.Content {
+		walkMentions(child, depth+1, seen, ids)
+	}
+}
+
 // flattenDoc walks a Tiptap/ProseMirror document and returns its plain text —
 // the source of truth for note search and excerpts.
 //
