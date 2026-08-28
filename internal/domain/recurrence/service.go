@@ -2,7 +2,6 @@ package recurrence
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -22,18 +21,21 @@ type service struct {
 	repo        Repository
 	now         func() time.Time // injectable clock — the cursor is the only time read
 	broadcaster Broadcaster      // nil disables emission
+	taskReader  TaskTemplateReader
 }
 
 // NewService creates a recurrence Service with a real clock. broadcaster may be
 // nil (real-time emission disabled); pass the ws adapter to light up live updates.
-func NewService(repo Repository, broadcaster Broadcaster) Service {
-	return &service{repo: repo, now: time.Now, broadcaster: broadcaster}
+func NewService(repo Repository, broadcaster Broadcaster, taskReader TaskTemplateReader) Service {
+	return &service{repo: repo, now: time.Now, broadcaster: broadcaster, taskReader: taskReader}
 }
 
 // NewServiceWithClock is like NewService but with an injected clock, for
 // deterministic tests of the cursor and the first-occurrence date.
-func NewServiceWithClock(repo Repository, broadcaster Broadcaster, now func() time.Time) Service {
-	return &service{repo: repo, now: now, broadcaster: broadcaster}
+func NewServiceWithClock(
+	repo Repository, broadcaster Broadcaster, taskReader TaskTemplateReader, now func() time.Time,
+) Service {
+	return &service{repo: repo, now: now, broadcaster: broadcaster, taskReader: taskReader}
 }
 
 // emit fans a domain event out best-effort. A nil broadcaster is a valid no-op.
@@ -88,14 +90,13 @@ func (s *service) createRule(ctx context.Context, userID, projectID, plan string
 		return CreateResult{}, apperror.New(http.StatusNotFound, apperror.ErrProjectNotFound, "project not found")
 	}
 
-	if plan == "free" {
-		count, err := s.repo.CountByUser(ctx, userID)
-		if err != nil {
-			return CreateResult{}, fmt.Errorf("recurrence.Create count: %w", err)
-		}
-		if count >= freePlanRuleLimit {
-			return CreateResult{}, apperror.New(http.StatusForbidden, apperror.ErrPlanLimitExceeded, "free plan allows up to 3 recurrence rules")
-		}
+	// The actual cap is enforced atomically inside CreateWithOccurrence (a
+	// per-user advisory lock guards the count-check + insert against a
+	// concurrent create slipping through the same free slot). freeLimit <= 0
+	// tells the repo to skip the guard entirely on Pro.
+	freeLimit := 0
+	if plan == planFree {
+		freeLimit = freePlanRuleLimit
 	}
 
 	rule := Rule{
@@ -143,13 +144,87 @@ func (s *service) createRule(ctx context.Context, userID, projectID, plan string
 		OccurrenceDate:   first,
 	}
 
-	created, err := s.repo.CreateWithOccurrence(ctx, rule, occ)
+	created, err := s.repo.CreateWithOccurrence(ctx, rule, occ, freeLimit)
 	if err != nil {
 		return CreateResult{}, err
 	}
 	view := ToView(created)
 	s.emit(userID, Event{Type: EventCreated, Payload: view})
 	return CreateResult{Rule: view, TaskID: occ.ID}, nil
+}
+
+// ConvertToRecurring turns an existing plain task into instance #1 of a new
+// rule, in place. Template fields on req are ignored — they're read straight
+// off the task row instead, so the produced rule can never drift from what's
+// actually stored (see the Service interface doc for why).
+func (s *service) ConvertToRecurring(
+	ctx context.Context, userID, taskID, plan string, req CreateRuleRequest,
+) (RuleView, error) {
+	tmpl, err := s.taskReader.GetTemplate(ctx, userID, taskID)
+	if err != nil {
+		return RuleView{}, err
+	}
+	if tmpl.RecurrenceRuleID != nil {
+		return RuleView{}, apperror.New(http.StatusConflict, apperror.ErrTaskAlreadyRecurring,
+			"this task is already recurring — edit its existing rule instead")
+	}
+
+	req.Title = tmpl.Title
+	req.Notes = tmpl.Notes
+	req.Priority = tmpl.Priority
+	req.Energy = tmpl.Energy
+	req.EstimatedMinutes = tmpl.EstimatedMinutes
+	if req.Interval == 0 {
+		req.Interval = 1
+	}
+
+	startDate, endDate, err := validateCreate(req)
+	if err != nil {
+		return RuleView{}, err
+	}
+	if err := enforceTimedSchedulingPlan(plan, req.ScheduledTime); err != nil {
+		return RuleView{}, err
+	}
+	req.EstimatedMinutes = clampEstimateToDayEnd(req.ScheduledTime, req.EstimatedMinutes)
+
+	freeLimit := 0
+	if plan == planFree {
+		freeLimit = freePlanRuleLimit
+	}
+
+	rule := Rule{
+		ID:               uuid.New().String(),
+		UserID:           userID,
+		ProjectID:        tmpl.ProjectID,
+		Title:            req.Title,
+		Notes:            req.Notes,
+		Priority:         req.Priority,
+		Energy:           req.Energy,
+		EstimatedMinutes: req.EstimatedMinutes,
+		ScheduledTime:    req.ScheduledTime,
+		Freq:             req.Freq,
+		Interval:         req.Interval,
+		ByWeekday:        normalizeWeekdays(req.ByWeekday),
+		ByMonthday:       req.ByMonthday,
+		StartDate:        startDate,
+		EndDate:          endDate,
+	}
+
+	first, ok := NextOccurrence(rule, startDate.AddDate(0, 0, -1))
+	if !ok {
+		return RuleView{}, errInvalidRecurrence("the rule produces no occurrence before its end date")
+	}
+	if next, ok := NextOccurrence(rule, first); ok {
+		rule.NextOccurrence = &next
+	}
+
+	converted, err := s.repo.ConvertTask(ctx, taskID, rule, first, freeLimit)
+	if err != nil {
+		return RuleView{}, err
+	}
+	view := ToView(converted)
+	s.emit(userID, Event{Type: EventCreated, Payload: view})
+	return view, nil
 }
 
 func (s *service) List(ctx context.Context, userID string, projectID *string) (ListRulesResponse, error) {
@@ -186,6 +261,10 @@ func (s *service) Update(ctx context.Context, userID, id, plan string, req Updat
 
 	existing, err := s.repo.GetByID(ctx, userID, id)
 	if err != nil {
+		return RuleView{}, err
+	}
+
+	if err := s.enforceEditableOnFreePlan(ctx, userID, id, plan); err != nil {
 		return RuleView{}, err
 	}
 
@@ -310,7 +389,15 @@ func applySchedulePatch(r Rule, req UpdateRuleRequest) (Rule, bool, error) {
 	return r, scheduleChanged, nil
 }
 
-func (s *service) SetPaused(ctx context.Context, userID, id string, paused bool) (RuleView, error) {
+func (s *service) SetPaused(ctx context.Context, userID, id, plan string, paused bool) (RuleView, error) {
+	// Pausing an over-cap rule is fine (it's the user reducing what fires), but
+	// resuming one isn't — that's un-pausing a rule the free plan wouldn't let
+	// them create today, so it's gated the same as any other schedule change.
+	if !paused {
+		if err := s.enforceEditableOnFreePlan(ctx, userID, id, plan); err != nil {
+			return RuleView{}, err
+		}
+	}
 	r, err := s.repo.SetPaused(ctx, userID, id, paused)
 	if err != nil {
 		return RuleView{}, err
@@ -318,6 +405,27 @@ func (s *service) SetPaused(ctx context.Context, userID, id string, paused bool)
 	view := ToView(r)
 	s.emit(userID, Event{Type: EventUpdated, Payload: view})
 	return view, nil
+}
+
+// enforceEditableOnFreePlan is the graceful-downgrade gate: a free-plan user
+// keeps their oldest freePlanRuleLimit rules editable; anything past that cap
+// (left over from a Pro downgrade) is read-only until deleted or they
+// re-upgrade. Pro never hits this. The rule is assumed to already exist —
+// callers check that via GetByID first, so a 404 never gets relabeled as a
+// plan-limit error.
+func (s *service) enforceEditableOnFreePlan(ctx context.Context, userID, id, plan string) error {
+	if plan != planFree {
+		return nil
+	}
+	within, err := s.repo.IsWithinFreeLimit(ctx, userID, id, freePlanRuleLimit)
+	if err != nil {
+		return err
+	}
+	if !within {
+		return apperror.New(http.StatusForbidden, apperror.ErrPlanLimitExceeded,
+			"this rule is over the free plan's 3-rule limit and is read-only — delete a rule or upgrade to edit it")
+	}
+	return nil
 }
 
 // Stats derives a rule's history from its occurrence rows. Nothing is stored: a

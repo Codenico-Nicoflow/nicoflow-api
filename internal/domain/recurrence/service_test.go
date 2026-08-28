@@ -3,6 +3,8 @@ package recurrence
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
 	"testing"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 // fakeRepo records what the service asked for and returns scripted results.
 type fakeRepo struct {
 	rules        map[string]Rule
+	ruleOrder    []string // insertion order, for IsWithinFreeLimit's ranking
 	count        int
 	projectOwned bool
 
@@ -21,19 +24,79 @@ type fakeRepo struct {
 	createErr    error
 	statusCounts map[string]int
 	statuses     []string
+
+	// ConvertTask scripting: which task ids already have a rule (so a second
+	// convert attempt on them 409s, mirroring the real UPDATE ... WHERE
+	// recurrence_rule_id IS NULL guard), and which id was last converted.
+	alreadyRecurring map[string]bool
+	convertedTaskID  string
+	convertOccDate   time.Time
 }
 
 func newFakeRepo() *fakeRepo {
-	return &fakeRepo{rules: map[string]Rule{}, projectOwned: true}
+	return &fakeRepo{rules: map[string]Rule{}, projectOwned: true, alreadyRecurring: map[string]bool{}}
 }
 
-func (f *fakeRepo) CreateWithOccurrence(_ context.Context, r Rule, occ Occurrence) (Rule, error) {
+// fakeTaskReader scripts ConvertToRecurring's TaskTemplateReader dependency —
+// the task template a conversion reads instead of trusting the client's copy.
+type fakeTaskReader struct {
+	templates map[string]TaskTemplate
+	err       error
+}
+
+func newFakeTaskReader() *fakeTaskReader {
+	return &fakeTaskReader{templates: map[string]TaskTemplate{}}
+}
+
+func (f *fakeTaskReader) GetTemplate(_ context.Context, userID, taskID string) (TaskTemplate, error) {
+	if f.err != nil {
+		return TaskTemplate{}, f.err
+	}
+	tmpl, ok := f.templates[taskID]
+	if !ok {
+		return TaskTemplate{}, apperror.New(http.StatusNotFound, apperror.ErrTaskNotFound, "task not found")
+	}
+	_ = userID // row-scoping is the real adapter's job; the fake trusts the map key
+	return tmpl, nil
+}
+
+// seedRuleCount pre-populates n placeholder rules so CreateWithOccurrence's
+// len(f.rules) guard (and IsWithinFreeLimit's ranking) see them, mirroring
+// what a real user's existing rule count would look like.
+func (f *fakeRepo) seedRuleCount(n int) {
+	for i := range n {
+		id := fmt.Sprintf("seed-%d", i)
+		f.rules[id] = Rule{ID: id, UserID: "u1"}
+		f.ruleOrder = append(f.ruleOrder, id)
+	}
+}
+
+func (f *fakeRepo) CreateWithOccurrence(_ context.Context, r Rule, occ Occurrence, freeLimit int) (Rule, error) {
 	if f.createErr != nil {
 		return Rule{}, f.createErr
+	}
+	if freeLimit > 0 && len(f.rules) >= freeLimit {
+		return Rule{}, apperror.New(http.StatusForbidden, apperror.ErrPlanLimitExceeded, "free plan allows up to 3 recurrence rules")
 	}
 	f.createdOcc = occ
 	r.CreatedAt, r.UpdatedAt = time.Now(), time.Now()
 	f.rules[r.ID] = r
+	f.ruleOrder = append(f.ruleOrder, r.ID)
+	return r, nil
+}
+
+func (f *fakeRepo) ConvertTask(_ context.Context, taskID string, r Rule, occDate time.Time, freeLimit int) (Rule, error) {
+	if freeLimit > 0 && len(f.rules) >= freeLimit {
+		return Rule{}, apperror.New(http.StatusForbidden, apperror.ErrPlanLimitExceeded, "free plan allows up to 3 recurrence rules")
+	}
+	if f.alreadyRecurring[taskID] {
+		return Rule{}, apperror.New(http.StatusConflict, apperror.ErrTaskAlreadyRecurring, "this task is already recurring")
+	}
+	r.CreatedAt, r.UpdatedAt = time.Now(), time.Now()
+	f.rules[r.ID] = r
+	f.ruleOrder = append(f.ruleOrder, r.ID)
+	f.convertedTaskID = taskID
+	f.convertOccDate = occDate
 	return r, nil
 }
 
@@ -81,6 +144,15 @@ func (f *fakeRepo) Delete(_ context.Context, userID, id string) error {
 }
 
 func (f *fakeRepo) CountByUser(context.Context, string) (int, error) { return f.count, nil }
+
+func (f *fakeRepo) IsWithinFreeLimit(_ context.Context, _, ruleID string, limit int) (bool, error) {
+	for i, id := range f.ruleOrder {
+		if id == ruleID {
+			return i < limit, nil
+		}
+	}
+	return false, nil
+}
 
 func (f *fakeRepo) ListDue(context.Context) ([]DueRule, error) { return nil, nil }
 
@@ -142,7 +214,7 @@ func assertCode(t *testing.T, err error, want string) {
 func TestCreate_MaterializesFirstOccurrence(t *testing.T) {
 	repo := newFakeRepo()
 	rec := &recorder{}
-	svc := NewServiceWithClock(repo, rec, fixedClock("2026-03-01"))
+	svc := NewServiceWithClock(repo, rec, newFakeTaskReader(), fixedClock("2026-03-01"))
 
 	view, err := svc.Create(context.Background(), "u1", "p1", "free", validCreate())
 	if err != nil {
@@ -183,7 +255,8 @@ func TestCreate_PlanLimit(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := newFakeRepo()
 			repo.count = tt.existing
-			svc := NewServiceWithClock(repo, nil, fixedClock("2026-03-01"))
+			repo.seedRuleCount(tt.existing) // CreateWithOccurrence's guard reads len(rules), not count
+			svc := NewServiceWithClock(repo, nil, newFakeTaskReader(), fixedClock("2026-03-01"))
 
 			_, err := svc.Create(context.Background(), "u1", "p1", tt.plan, validCreate())
 			if tt.wantError {
@@ -203,7 +276,7 @@ func TestCreate_ForeignProjectNotFound(t *testing.T) {
 	repo := newFakeRepo()
 	repo.projectOwned = false
 	repo.count = 99
-	svc := NewServiceWithClock(repo, nil, fixedClock("2026-03-01"))
+	svc := NewServiceWithClock(repo, nil, newFakeTaskReader(), fixedClock("2026-03-01"))
 
 	_, err := svc.Create(context.Background(), "u1", "p-other", "free", validCreate())
 	assertCode(t, err, apperror.ErrProjectNotFound)
@@ -248,7 +321,7 @@ func TestCreate_Validation(t *testing.T) {
 			} else {
 				req.Interval = 0
 			}
-			svc := NewServiceWithClock(newFakeRepo(), nil, fixedClock("2026-03-01"))
+			svc := NewServiceWithClock(newFakeRepo(), nil, newFakeTaskReader(), fixedClock("2026-03-01"))
 
 			_, err := svc.Create(context.Background(), "u1", "p1", "free", req)
 			if tt.wantCode == "" {
@@ -265,7 +338,7 @@ func TestCreate_Validation(t *testing.T) {
 // -1 (last day of month) is the one out-of-1..31 monthday that is legal.
 func TestCreate_MonthdayLastIsAccepted(t *testing.T) {
 	repo := newFakeRepo()
-	svc := NewServiceWithClock(repo, nil, fixedClock("2026-01-01"))
+	svc := NewServiceWithClock(repo, nil, newFakeTaskReader(), fixedClock("2026-01-01"))
 
 	req := validCreate()
 	req.Freq, req.ByWeekday, req.ByMonthday = FreqMonthly, nil, ptrInt(MonthdayLast)
@@ -282,7 +355,7 @@ func TestCreate_MonthdayLastIsAccepted(t *testing.T) {
 // A window too narrow to contain any occurrence is rejected rather than stored
 // as a rule that can never fire.
 func TestCreate_NoOccurrenceInWindow(t *testing.T) {
-	svc := NewServiceWithClock(newFakeRepo(), nil, fixedClock("2026-03-01"))
+	svc := NewServiceWithClock(newFakeRepo(), nil, newFakeTaskReader(), fixedClock("2026-03-01"))
 
 	req := validCreate()
 	req.Freq, req.ByWeekday = FreqWeekly, []int{4} // Thursday
@@ -298,7 +371,7 @@ func TestCreate_NoOccurrenceInWindow(t *testing.T) {
 // not "fires again forever".
 func TestCreate_ExhaustedAfterFirstOccurrence(t *testing.T) {
 	repo := newFakeRepo()
-	svc := NewServiceWithClock(repo, nil, fixedClock("2026-03-01"))
+	svc := NewServiceWithClock(repo, nil, newFakeTaskReader(), fixedClock("2026-03-01"))
 
 	req := validCreate()
 	end := "2026-03-05"
@@ -315,7 +388,7 @@ func TestCreate_ExhaustedAfterFirstOccurrence(t *testing.T) {
 
 func TestCreate_EmitsCreatedEvent(t *testing.T) {
 	rec := &recorder{}
-	svc := NewServiceWithClock(newFakeRepo(), rec, fixedClock("2026-03-01"))
+	svc := NewServiceWithClock(newFakeRepo(), rec, newFakeTaskReader(), fixedClock("2026-03-01"))
 
 	if _, err := svc.Create(context.Background(), "u1", "p1", "free", validCreate()); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -334,7 +407,7 @@ func TestCreate_NoEventOnRepoFailure(t *testing.T) {
 	repo := newFakeRepo()
 	repo.createErr = errors.New("db down")
 	rec := &recorder{}
-	svc := NewServiceWithClock(repo, rec, fixedClock("2026-03-01"))
+	svc := NewServiceWithClock(repo, rec, newFakeTaskReader(), fixedClock("2026-03-01"))
 
 	if _, err := svc.Create(context.Background(), "u1", "p1", "free", validCreate()); err == nil {
 		t.Fatal("Create: err = nil, want the repo failure")
@@ -346,7 +419,7 @@ func TestCreate_NoEventOnRepoFailure(t *testing.T) {
 
 // A nil broadcaster is a valid no-op seam, not a panic.
 func TestCreate_NilBroadcasterIsSafe(t *testing.T) {
-	svc := NewServiceWithClock(newFakeRepo(), nil, fixedClock("2026-03-01"))
+	svc := NewServiceWithClock(newFakeRepo(), nil, newFakeTaskReader(), fixedClock("2026-03-01"))
 	if _, err := svc.Create(context.Background(), "u1", "p1", "free", validCreate()); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -364,7 +437,7 @@ func seedRule(t *testing.T, svc Service) RuleView {
 // Another user's rule is indistinguishable from a missing one — no existence leak.
 func TestRowLevelIsolation(t *testing.T) {
 	repo := newFakeRepo()
-	svc := NewServiceWithClock(repo, nil, fixedClock("2026-03-01"))
+	svc := NewServiceWithClock(repo, nil, newFakeTaskReader(), fixedClock("2026-03-01"))
 	view := seedRule(t, svc)
 
 	t.Run("Get", func(t *testing.T) {
@@ -376,7 +449,7 @@ func TestRowLevelIsolation(t *testing.T) {
 		assertCode(t, err, apperror.ErrRecurrenceRuleNotFound)
 	})
 	t.Run("SetPaused", func(t *testing.T) {
-		_, err := svc.SetPaused(context.Background(), "u2", view.ID, true)
+		_, err := svc.SetPaused(context.Background(), "u2", view.ID, "free", true)
 		assertCode(t, err, apperror.ErrRecurrenceRuleNotFound)
 	})
 	t.Run("Delete", func(t *testing.T) {
@@ -392,7 +465,7 @@ func TestRowLevelIsolation(t *testing.T) {
 // A template-only edit leaves the cursor alone: the schedule did not move.
 func TestUpdate_TemplateOnlyKeepsCursor(t *testing.T) {
 	repo := newFakeRepo()
-	svc := NewServiceWithClock(repo, nil, fixedClock("2026-03-01"))
+	svc := NewServiceWithClock(repo, nil, newFakeTaskReader(), fixedClock("2026-03-01"))
 	view := seedRule(t, svc)
 
 	title := "Water the ferns"
@@ -412,7 +485,7 @@ func TestUpdate_TemplateOnlyKeepsCursor(t *testing.T) {
 func TestUpdate_ScheduleChangeRecomputesCursor(t *testing.T) {
 	repo := newFakeRepo()
 	// "Today" is Wednesday 2026-03-04; the seeded rule is weekly on Monday.
-	svc := NewServiceWithClock(repo, nil, fixedClock("2026-03-04"))
+	svc := NewServiceWithClock(repo, nil, newFakeTaskReader(), fixedClock("2026-03-04"))
 	view := seedRule(t, svc)
 
 	weekdays := []int{4} // move to Thursday
@@ -429,7 +502,7 @@ func TestUpdate_ScheduleChangeRecomputesCursor(t *testing.T) {
 // optional.Field: absent and explicit-null have to differ.
 func TestUpdate_ClearingEndDateRevivesSeries(t *testing.T) {
 	repo := newFakeRepo()
-	svc := NewServiceWithClock(repo, nil, fixedClock("2026-03-01"))
+	svc := NewServiceWithClock(repo, nil, newFakeTaskReader(), fixedClock("2026-03-01"))
 
 	req := validCreate()
 	end := "2026-03-05"
@@ -460,7 +533,7 @@ func TestUpdate_ClearingEndDateRevivesSeries(t *testing.T) {
 // row matches what the engine will read.
 func TestUpdate_SwitchingFreqClearsStaleConstraint(t *testing.T) {
 	repo := newFakeRepo()
-	svc := NewServiceWithClock(repo, nil, fixedClock("2026-03-01"))
+	svc := NewServiceWithClock(repo, nil, newFakeTaskReader(), fixedClock("2026-03-01"))
 	view := seedRule(t, svc) // weekly with byWeekday=[1]
 
 	freq := FreqDaily
@@ -476,7 +549,7 @@ func TestUpdate_SwitchingFreqClearsStaleConstraint(t *testing.T) {
 // Every patchable field round-trips, and an absent field is left alone.
 func TestUpdate_PatchesEveryField(t *testing.T) {
 	repo := newFakeRepo()
-	svc := NewServiceWithClock(repo, nil, fixedClock("2026-03-01"))
+	svc := NewServiceWithClock(repo, nil, newFakeTaskReader(), fixedClock("2026-03-01"))
 	view := seedRule(t, svc)
 
 	notes, priority, energy := "water deeply", "high", "deep"
@@ -523,7 +596,7 @@ func TestUpdate_PatchesEveryField(t *testing.T) {
 // Clearing a nullable field is distinct from leaving it absent.
 func TestUpdate_ClearsNullableFields(t *testing.T) {
 	repo := newFakeRepo()
-	svc := NewServiceWithClock(repo, nil, fixedClock("2026-03-01"))
+	svc := NewServiceWithClock(repo, nil, newFakeTaskReader(), fixedClock("2026-03-01"))
 
 	req := validCreate()
 	notes := "original"
@@ -550,7 +623,7 @@ func TestUpdate_ClearsNullableFields(t *testing.T) {
 
 func TestUpdate_RejectsMalformedDates(t *testing.T) {
 	repo := newFakeRepo()
-	svc := NewServiceWithClock(repo, nil, fixedClock("2026-03-01"))
+	svc := NewServiceWithClock(repo, nil, newFakeTaskReader(), fixedClock("2026-03-01"))
 	view := seedRule(t, svc)
 
 	t.Run("startDate", func(t *testing.T) {
@@ -569,7 +642,7 @@ func TestUpdate_RejectsMalformedDates(t *testing.T) {
 
 func TestUpdate_RejectsInvalidSchedule(t *testing.T) {
 	repo := newFakeRepo()
-	svc := NewServiceWithClock(repo, nil, fixedClock("2026-03-01"))
+	svc := NewServiceWithClock(repo, nil, newFakeTaskReader(), fixedClock("2026-03-01"))
 	view := seedRule(t, svc)
 
 	interval := 999
@@ -577,14 +650,69 @@ func TestUpdate_RejectsInvalidSchedule(t *testing.T) {
 	assertCode(t, err, apperror.ErrInvalidRecurrence)
 }
 
+// A graceful downgrade keeps the user's oldest freePlanRuleLimit rules
+// editable and makes the rest read-only until deleted or they re-upgrade —
+// otherwise a Pro user with 10 rules keeps full edit/pause on all 10 forever
+// after downgrading, silently bypassing the cap a new free user can't get past.
+func TestUpdate_ReadOnlyOverFreeLimitAfterDowngrade(t *testing.T) {
+	repo := newFakeRepo()
+	svc := NewServiceWithClock(repo, nil, newFakeTaskReader(), fixedClock("2026-03-01"))
+
+	views := make([]RuleView, 0, 4)
+	for range 4 {
+		// Created on "pro" so the 4th rule (over the free cap) can exist at all.
+		v, err := svc.Create(context.Background(), "u1", "p1", "pro", validCreate())
+		if err != nil {
+			t.Fatalf("seed Create: %v", err)
+		}
+		views = append(views, v)
+	}
+
+	title := "renamed"
+	if _, err := svc.Update(context.Background(), "u1", views[0].ID, "free", UpdateRuleRequest{Title: &title}); err != nil {
+		t.Errorf("Update on rule 1 of 4 (within the free cap) = %v, want success", err)
+	}
+
+	_, err := svc.Update(context.Background(), "u1", views[3].ID, "free", UpdateRuleRequest{Title: &title})
+	assertCode(t, err, apperror.ErrPlanLimitExceeded)
+
+	// Pro never hits the gate, even on the same over-cap rule.
+	if _, err := svc.Update(context.Background(), "u1", views[3].ID, "pro", UpdateRuleRequest{Title: &title}); err != nil {
+		t.Errorf("Update on rule 4 of 4 as pro = %v, want success", err)
+	}
+}
+
+// Resuming an over-cap paused rule is un-pausing a rule the free plan wouldn't
+// let the user create today, so it's gated the same as any other edit — but
+// pausing one (reducing what fires) is always allowed, even over the cap.
+func TestSetPaused_ReadOnlyOverFreeLimitAfterDowngrade(t *testing.T) {
+	repo := newFakeRepo()
+	svc := NewServiceWithClock(repo, nil, newFakeTaskReader(), fixedClock("2026-03-01"))
+
+	views := make([]RuleView, 0, 4)
+	for range 4 {
+		v, err := svc.Create(context.Background(), "u1", "p1", "pro", validCreate())
+		if err != nil {
+			t.Fatalf("seed Create: %v", err)
+		}
+		views = append(views, v)
+	}
+
+	if _, err := svc.SetPaused(context.Background(), "u1", views[3].ID, "free", true); err != nil {
+		t.Errorf("pausing over-cap rule = %v, want success", err)
+	}
+	_, err := svc.SetPaused(context.Background(), "u1", views[3].ID, "free", false)
+	assertCode(t, err, apperror.ErrPlanLimitExceeded)
+}
+
 func TestSetPaused(t *testing.T) {
 	repo := newFakeRepo()
 	rec := &recorder{}
-	svc := NewServiceWithClock(repo, rec, fixedClock("2026-03-01"))
+	svc := NewServiceWithClock(repo, rec, newFakeTaskReader(), fixedClock("2026-03-01"))
 	view := seedRule(t, svc)
 	rec.events = nil
 
-	got, err := svc.SetPaused(context.Background(), "u1", view.ID, true)
+	got, err := svc.SetPaused(context.Background(), "u1", view.ID, "free", true)
 	if err != nil {
 		t.Fatalf("SetPaused: %v", err)
 	}
@@ -595,7 +723,7 @@ func TestSetPaused(t *testing.T) {
 		t.Errorf("events = %+v, want one %s", rec.events, EventUpdated)
 	}
 
-	resumed, err := svc.SetPaused(context.Background(), "u1", view.ID, false)
+	resumed, err := svc.SetPaused(context.Background(), "u1", view.ID, "free", false)
 	if err != nil {
 		t.Fatalf("SetPaused resume: %v", err)
 	}
@@ -604,10 +732,133 @@ func TestSetPaused(t *testing.T) {
 	}
 }
 
+func plainTaskTemplate() TaskTemplate {
+	return TaskTemplate{
+		ProjectID: "p1",
+		Title:     "Wash the floors",
+		Priority:  "high",
+		Energy:    "low",
+	}
+}
+
+// The request's own template fields must be ignored — the task's stored
+// values are what the rule is built from, never a client-supplied copy that
+// could drift from what's actually on the row.
+func TestConvertToRecurring_UsesTaskTemplateNotRequestTemplate(t *testing.T) {
+	repo := newFakeRepo()
+	reader := newFakeTaskReader()
+	reader.templates["t1"] = plainTaskTemplate()
+	svc := NewServiceWithClock(repo, nil, reader, fixedClock("2026-03-01"))
+
+	req := validCreate()
+	req.Title = "ignored client title"
+	req.Priority = "low"
+	req.Energy = "deep"
+
+	view, err := svc.ConvertToRecurring(context.Background(), "u1", "t1", "free", req)
+	if err != nil {
+		t.Fatalf("ConvertToRecurring: %v", err)
+	}
+	if view.Title != "Wash the floors" || view.Priority != "high" || view.Energy != "low" {
+		t.Errorf("rule = %+v, want the task's own template, not the request's", view)
+	}
+	if repo.convertedTaskID != "t1" {
+		t.Errorf("convertedTaskID = %q, want t1", repo.convertedTaskID)
+	}
+}
+
+// A task that already belongs to a rule must be rejected — re-parenting it
+// silently would orphan the old rule's cursor/history unexpectedly. Editing
+// the existing rule is the only supported path once a task is recurring.
+func TestConvertToRecurring_RejectsAlreadyRecurringTask(t *testing.T) {
+	repo := newFakeRepo()
+	repo.alreadyRecurring["t1"] = true
+	reader := newFakeTaskReader()
+	reader.templates["t1"] = plainTaskTemplate()
+	svc := NewServiceWithClock(repo, nil, reader, fixedClock("2026-03-01"))
+
+	_, err := svc.ConvertToRecurring(context.Background(), "u1", "t1", "free", validCreate())
+	assertCode(t, err, apperror.ErrTaskAlreadyRecurring)
+}
+
+// A missing/foreign task 404s exactly like every other task-scoped endpoint —
+// the reader's row-scoping is what a real caller relies on for isolation.
+func TestConvertToRecurring_TaskNotFound(t *testing.T) {
+	repo := newFakeRepo()
+	svc := NewServiceWithClock(repo, nil, newFakeTaskReader(), fixedClock("2026-03-01"))
+
+	_, err := svc.ConvertToRecurring(context.Background(), "u1", "missing", "free", validCreate())
+	assertCode(t, err, apperror.ErrTaskNotFound)
+}
+
+// Convert goes through the identical free-plan gating as create — a rule is a
+// rule regardless of whether instance #1 came from an existing task.
+func TestConvertToRecurring_RespectsFreePlanCap(t *testing.T) {
+	repo := newFakeRepo()
+	repo.seedRuleCount(3)
+	reader := newFakeTaskReader()
+	reader.templates["t1"] = plainTaskTemplate()
+	svc := NewServiceWithClock(repo, nil, reader, fixedClock("2026-03-01"))
+
+	_, err := svc.ConvertToRecurring(context.Background(), "u1", "t1", "free", validCreate())
+	assertCode(t, err, apperror.ErrPlanLimitExceeded)
+}
+
+// Setting a scheduledTime on convert is gated exactly like create — Pro-only.
+func TestConvertToRecurring_ScheduledTimeIsProOnly(t *testing.T) {
+	repo := newFakeRepo()
+	reader := newFakeTaskReader()
+	reader.templates["t1"] = plainTaskTemplate()
+	svc := NewServiceWithClock(repo, nil, reader, fixedClock("2026-03-01"))
+
+	req := timedCreate("09:00")
+	_, err := svc.ConvertToRecurring(context.Background(), "u1", "t1", "free", req)
+	assertCode(t, err, apperror.ErrPlanLimitExceeded)
+}
+
+// The projectId on convert always comes from the task's own row — never the
+// request — so a client can't move the resulting rule into a project it
+// doesn't actually belong to.
+func TestConvertToRecurring_ProjectIDComesFromTask(t *testing.T) {
+	repo := newFakeRepo()
+	reader := newFakeTaskReader()
+	tmpl := plainTaskTemplate()
+	tmpl.ProjectID = "p-real"
+	reader.templates["t1"] = tmpl
+	svc := NewServiceWithClock(repo, nil, reader, fixedClock("2026-03-01"))
+
+	req := validCreate()
+	view, err := svc.ConvertToRecurring(context.Background(), "u1", "t1", "free", req)
+	if err != nil {
+		t.Fatalf("ConvertToRecurring: %v", err)
+	}
+	if view.ProjectID != "p-real" {
+		t.Errorf("projectId = %q, want p-real (from the task, not the request)", view.ProjectID)
+	}
+}
+
+// Emits recurrence.created (unchanged event/payload) — the frontend's existing
+// TASK_TAGS invalidation on that event already covers "some task changed", so
+// convert deliberately doesn't need a new event type.
+func TestConvertToRecurring_EmitsCreatedEvent(t *testing.T) {
+	repo := newFakeRepo()
+	rec := &recorder{}
+	reader := newFakeTaskReader()
+	reader.templates["t1"] = plainTaskTemplate()
+	svc := NewServiceWithClock(repo, rec, reader, fixedClock("2026-03-01"))
+
+	if _, err := svc.ConvertToRecurring(context.Background(), "u1", "t1", "free", validCreate()); err != nil {
+		t.Fatalf("ConvertToRecurring: %v", err)
+	}
+	if len(rec.events) != 1 || rec.events[0].Type != EventCreated {
+		t.Errorf("events = %+v, want one %s", rec.events, EventCreated)
+	}
+}
+
 func TestDelete_EmitsRefPayload(t *testing.T) {
 	repo := newFakeRepo()
 	rec := &recorder{}
-	svc := NewServiceWithClock(repo, rec, fixedClock("2026-03-01"))
+	svc := NewServiceWithClock(repo, rec, newFakeTaskReader(), fixedClock("2026-03-01"))
 	view := seedRule(t, svc)
 	rec.events = nil
 
@@ -628,7 +879,7 @@ func TestDelete_EmitsRefPayload(t *testing.T) {
 
 func TestList_FiltersByProject(t *testing.T) {
 	repo := newFakeRepo()
-	svc := NewServiceWithClock(repo, nil, fixedClock("2026-03-01"))
+	svc := NewServiceWithClock(repo, nil, newFakeTaskReader(), fixedClock("2026-03-01"))
 
 	if _, err := svc.Create(context.Background(), "u1", "p1", "pro", validCreate()); err != nil {
 		t.Fatalf("Create p1: %v", err)

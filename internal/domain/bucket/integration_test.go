@@ -107,7 +107,9 @@ func newBucketServer(t *testing.T, plan string) bucketEnv {
 	projectSvc := project.NewService(project.NewRepository(pool), nil)
 	noteSvc := note.NewService(note.NewRepository(pool), noteProjectVerifier{projects: projectSvc}, notelink.NewRepository(pool), nil)
 	// Real recurrence service so the bucket→recurrence path runs end-to-end.
-	recurrenceSvc := recurrence.NewService(recurrence.NewRepository(pool), nil)
+	// taskReader nil is safe: this test never exercises ConvertToRecurring, the
+	// only path that reads it.
+	recurrenceSvc := recurrence.NewService(recurrence.NewRepository(pool), nil, nil)
 	h := handler.Handlers{
 		Auth:       auth.NewHandler(auth.NewService(auth.NewRepository(pool), cfg), auth.HandlerConfig{}),
 		Area:       area.NewHandler(area.NewService(area.NewRepository(pool), nil)),

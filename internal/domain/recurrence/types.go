@@ -222,10 +222,41 @@ type Service interface {
 	List(ctx context.Context, userID string, projectID *string) (ListRulesResponse, error)
 	Get(ctx context.Context, userID, id string) (RuleView, error)
 	Update(ctx context.Context, userID, id, plan string, req UpdateRuleRequest) (RuleView, error)
-	SetPaused(ctx context.Context, userID, id string, paused bool) (RuleView, error)
+	SetPaused(ctx context.Context, userID, id, plan string, paused bool) (RuleView, error)
 	Delete(ctx context.Context, userID, id string) error
 	// Stats derives a rule's history: per-status counts plus the current streak.
 	Stats(ctx context.Context, userID, id string) (StatsView, error)
+	// ConvertToRecurring turns an existing plain task into instance #1 of a
+	// new rule, in place — no new task row. The request's template fields
+	// (title/notes/priority/energy/estimatedMinutes) are IGNORED in favor of
+	// the task's own current values, read via TaskTemplateReader: the
+	// template a conversion produces must always match what's actually
+	// stored on the task, never a client-supplied copy that could drift.
+	ConvertToRecurring(ctx context.Context, userID, taskID, plan string, req CreateRuleRequest) (RuleView, error)
+}
+
+// TaskTemplateReader is the narrow seam for reading a task's current template
+// fields during conversion. Defined here (the consumer) so recurrence never
+// imports the task domain — the dependency runs the other way, exactly like
+// task's own RecurrenceMaterializer seam. The concrete is the task repository,
+// adapted at wire-up in main.go.
+type TaskTemplateReader interface {
+	// GetTemplate returns the task's project id, title/notes/priority/energy/
+	// estimatedMinutes, and its current recurrence_rule_id (nil if none) —
+	// scoped to userID, so a foreign task is indistinguishable from a missing
+	// one. TASK_NOT_FOUND if no such row exists for this user.
+	GetTemplate(ctx context.Context, userID, taskID string) (TaskTemplate, error)
+}
+
+// TaskTemplate is the slice of a task's row that ConvertToRecurring needs.
+type TaskTemplate struct {
+	ProjectID        string
+	Title            string
+	Notes            *string
+	Priority         string
+	Energy           string
+	EstimatedMinutes *int
+	RecurrenceRuleID *string
 }
 
 // Repository is the data-access contract. Every method is row-scoped by user_id.
@@ -235,7 +266,20 @@ type Repository interface {
 	// CreateWithOccurrence inserts the rule and materializes instance #1 in one
 	// transaction, so a rule can never exist without its first task. The
 	// occurrence's display_order is resolved inside the transaction.
-	CreateWithOccurrence(ctx context.Context, r Rule, occ Occurrence) (Rule, error)
+	//
+	// freeLimit > 0 makes the insert conditional on the user's current rule count
+	// staying under it, checked under a per-user advisory lock so two concurrent
+	// creates on a free plan can't both slip through the same free slot (TOCTOU).
+	// freeLimit <= 0 (Pro) skips the lock and check entirely. ErrPlanLimitExceeded
+	// is returned when the guard rejects the insert.
+	CreateWithOccurrence(ctx context.Context, r Rule, occ Occurrence, freeLimit int) (Rule, error)
+
+	// ConvertTask turns an existing plain task into instance #1 of a new rule,
+	// in place — no new task row. occurrenceDate is the rule's actual first
+	// occurrence (may differ from r.StartDate — see NextOccurrence). Conditioned
+	// on the task having no rule yet; TASK_ALREADY_RECURRING otherwise. Shares
+	// CreateWithOccurrence's free-plan guard via freeLimit (<= 0 skips it, Pro).
+	ConvertTask(ctx context.Context, taskID string, r Rule, occurrenceDate time.Time, freeLimit int) (Rule, error)
 
 	// List returns the user's rules, optionally filtered to one project.
 	List(ctx context.Context, userID string, projectID *string) ([]Rule, error)
@@ -259,6 +303,13 @@ type Repository interface {
 
 	// CountByUser is the plan-limit count.
 	CountByUser(ctx context.Context, userID string) (int, error)
+
+	// IsWithinFreeLimit reports whether the given rule is among the user's
+	// `limit` oldest rules (by created_at, ties broken by id) — the set graceful
+	// downgrade keeps editable. A rule outside that set is read-only on the free
+	// plan until deleted or the user re-upgrades. Returns false for a missing
+	// rule; the caller's own GetByID already turns that into 404 first.
+	IsWithinFreeLimit(ctx context.Context, userID, ruleID string, limit int) (bool, error)
 
 	// ProjectOwned reports whether the project exists and belongs to the user.
 	ProjectOwned(ctx context.Context, userID, projectID string) (bool, error)

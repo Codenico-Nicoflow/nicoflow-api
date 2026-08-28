@@ -196,7 +196,7 @@ func main() {
 	// instance #1 in the same transaction. FREE on every plan for reads; the
 	// 3-rule cap on free is enforced in the service.
 	recurrenceRepo := recurrence.NewRepository(pool)
-	recurrenceSvc := recurrence.NewService(recurrenceRepo, ws.NewRecurrenceBroadcaster(wsHub))
+	recurrenceSvc := recurrence.NewService(recurrenceRepo, ws.NewRecurrenceBroadcaster(wsHub), recurrenceTaskAdapter{tasks: taskSvc})
 
 	// The materializer (E-050 / NIC-1773) drives both triggers: the hourly cron
 	// sweep via run-all, and the synchronous successor on completion. It enforces
@@ -437,6 +437,30 @@ func (a recurrenceSweepAdapter) Run(ctx context.Context, dryRun bool) (*jobs.Rec
 		SkippedExisting:  res.SkippedExisting,
 		SkippedNotDue:    res.SkippedNotDue,
 		SkippedBadZone:   res.SkippedBadZone,
+	}, nil
+}
+
+// recurrenceTaskAdapter adapts the task service to recurrence.TaskTemplateReader
+// so the recurrence domain never imports task — the dependency runs the other
+// way (task consumes recurrence via the RecurrenceMaterializer seam), exactly
+// like recurrenceSweepAdapter above.
+type recurrenceTaskAdapter struct {
+	tasks task.Service
+}
+
+func (a recurrenceTaskAdapter) GetTemplate(ctx context.Context, userID, taskID string) (recurrence.TaskTemplate, error) {
+	t, err := a.tasks.Get(ctx, userID, taskID)
+	if err != nil {
+		return recurrence.TaskTemplate{}, err
+	}
+	return recurrence.TaskTemplate{
+		ProjectID:        t.ProjectID,
+		Title:            t.Title,
+		Notes:            t.Notes,
+		Priority:         t.Priority,
+		Energy:           t.Energy,
+		EstimatedMinutes: t.EstimatedMinutes,
+		RecurrenceRuleID: t.RecurrenceRuleID,
 	}, nil
 }
 

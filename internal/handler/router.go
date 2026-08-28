@@ -241,6 +241,10 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 		r.Patch("/recurrence-rules/{id}", h.Recurrence.Update)
 		r.Patch("/recurrence-rules/{id}/pause", h.Recurrence.Pause)
 		r.Delete("/recurrence-rules/{id}", h.Recurrence.Delete)
+		// Converting a plain task into a repeating one reuses that same task row
+		// as instance #1 — never a new task — so it's routed under the task
+		// itself rather than the projects/{id}/recurrence-rules creation path.
+		r.Post("/tasks/{taskId}/convert-to-recurring", h.Recurrence.ConvertToRecurring)
 
 		// Focus timer (E-049). "current" is the user's single open segment — the
 		// one-open-per-user invariant means it needs no id. FREE on every plan.
