@@ -1894,6 +1894,35 @@ project can't be used to probe the caller's rule count), `PLAN_LIMIT_EXCEEDED` (
 4th rule on Free, or a `scheduledTime` on Free), `INVALID_RECURRENCE` (422),
 `INVALID_INPUT` (422), `INVALID_DATE` (422)
 
+#### POST /v1/tasks/:taskId/convert-to-recurring
+
+Turn an existing plain task into instance #1 of a new rule, **in place — no new
+task row**. This is the counterpart to the create endpoint above for a task that
+already exists: same request/response shape (`CreateRuleRequest`/`RecurrenceRuleView`),
+different target.
+
+Template fields on the request (`title`, `notes`, `priority`, `energy`,
+`estimatedMinutes`) are **ignored** — the rule is built from the task's own
+current values instead, so it can never drift from what the task actually
+stores. `projectId` likewise always comes from the task's row, never the
+request. Only the schedule fields (`freq`, `interval`, `byWeekday`,
+`byMonthday`, `startDate`, `endDate`, `scheduledTime`) are read from the body.
+
+The converted task's `status` is forced to `active`; subtasks, attachments,
+and focus-session history are left untouched — they're per-instance
+artifacts, not rule-template concepts. Broadcasts `recurrence.created`
+(unchanged payload — the client's existing task-tag invalidation on that
+event already covers a task's shape changing).
+
+- **Auth required:** Yes
+
+**Response — 201 Created:** `RecurrenceRuleView`
+
+**Errors:** `TASK_NOT_FOUND` (404), `TASK_ALREADY_RECURRING` (409 — the task
+already belongs to a rule; edit that rule instead of converting a second
+time), `PLAN_LIMIT_EXCEEDED` (403 — 4th rule on Free, or a `scheduledTime` on
+Free), `INVALID_RECURRENCE` (422), `INVALID_INPUT` (422), `INVALID_DATE` (422)
+
 #### GET /v1/recurrence-rules
 
 List the caller's rules, newest first. Optional `?projectId=` filter.
@@ -2627,6 +2656,7 @@ These are the exact constants defined in `internal/apperror/errors.go` of the Go
 | `USERNAME_ALREADY_EXISTS` | 409         | Registration attempted with a username already taken                              |
 | `DUPLICATE_NAME`          | 409         | Area or project name already exists for this user                                 |
 | `IDEMPOTENCY_CONFLICT`    | 409         | Duplicate webhook event already processed                                         |
+| `TASK_ALREADY_RECURRING`  | 409         | Convert-to-recurring rejected: the task already belongs to a rule — edit that rule instead |
 | `RATE_LIMITED`            | 429         | Too many requests — back off and retry after `Retry-After` header                 |
 | `AI_LIMIT_REACHED`        | 429         | AI quota exhausted (Free 5 lifetime · Pro 500/month)                              |
 | `AI_UNAVAILABLE`          | 503         | AI feature disabled (no key), provider 429/529, or first-token timeout            |
