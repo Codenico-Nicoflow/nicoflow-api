@@ -18,7 +18,7 @@ func timedCreate(t string) CreateRuleRequest {
 
 func TestCreate_StampsScheduledTimeOnFirstOccurrence(t *testing.T) {
 	repo := newFakeRepo()
-	svc := NewServiceWithClock(repo, &recorder{}, fixedClock("2026-03-01"))
+	svc := NewServiceWithClock(repo, &recorder{}, newFakeTaskReader(), fixedClock("2026-03-01"))
 
 	view, err := svc.Create(context.Background(), "u1", "p1", "pro", timedCreate("09:00"))
 	if err != nil {
@@ -34,7 +34,7 @@ func TestCreate_StampsScheduledTimeOnFirstOccurrence(t *testing.T) {
 
 func TestCreate_ScheduledTimeIsProOnly(t *testing.T) {
 	repo := newFakeRepo()
-	svc := NewServiceWithClock(repo, &recorder{}, fixedClock("2026-03-01"))
+	svc := NewServiceWithClock(repo, &recorder{}, newFakeTaskReader(), fixedClock("2026-03-01"))
 
 	_, err := svc.Create(context.Background(), "u1", "p1", "free", timedCreate("09:00"))
 	assertCode(t, err, apperror.ErrPlanLimitExceeded)
@@ -42,7 +42,7 @@ func TestCreate_ScheduledTimeIsProOnly(t *testing.T) {
 
 func TestCreate_AllDayRuleIsFreeOnEveryPlan(t *testing.T) {
 	repo := newFakeRepo()
-	svc := NewServiceWithClock(repo, &recorder{}, fixedClock("2026-03-01"))
+	svc := NewServiceWithClock(repo, &recorder{}, newFakeTaskReader(), fixedClock("2026-03-01"))
 
 	view, err := svc.Create(context.Background(), "u1", "p1", "free", validCreate())
 	if err != nil {
@@ -65,7 +65,7 @@ func TestCreate_RejectsMalformedAndUnsnappedTimes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			svc := NewServiceWithClock(newFakeRepo(), &recorder{}, fixedClock("2026-03-01"))
+			svc := NewServiceWithClock(newFakeRepo(), &recorder{}, newFakeTaskReader(), fixedClock("2026-03-01"))
 			_, err := svc.Create(context.Background(), "u1", "p1", "pro", timedCreate(tt.time))
 			assertCode(t, err, apperror.ErrInvalidInput)
 		})
@@ -76,7 +76,7 @@ func TestCreate_RejectsMalformedAndUnsnappedTimes(t *testing.T) {
 // lives on exactly one scheduled_for.
 func TestCreate_ClampsEstimateToDayEnd(t *testing.T) {
 	repo := newFakeRepo()
-	svc := NewServiceWithClock(repo, &recorder{}, fixedClock("2026-03-01"))
+	svc := NewServiceWithClock(repo, &recorder{}, newFakeTaskReader(), fixedClock("2026-03-01"))
 
 	req := timedCreate("23:00")
 	req.EstimatedMinutes = ptrInt(120)
@@ -91,7 +91,7 @@ func TestCreate_ClampsEstimateToDayEnd(t *testing.T) {
 
 func TestUpdate_SetsAndClearsScheduledTime(t *testing.T) {
 	repo := newFakeRepo()
-	svc := NewServiceWithClock(repo, &recorder{}, fixedClock("2026-03-01"))
+	svc := NewServiceWithClock(repo, &recorder{}, newFakeTaskReader(), fixedClock("2026-03-01"))
 	view, err := svc.Create(context.Background(), "u1", "p1", "pro", timedCreate("09:00"))
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
@@ -122,7 +122,7 @@ func TestUpdate_SetsAndClearsScheduledTime(t *testing.T) {
 
 func TestUpdate_SettingScheduledTimeIsProOnly(t *testing.T) {
 	repo := newFakeRepo()
-	svc := NewServiceWithClock(repo, &recorder{}, fixedClock("2026-03-01"))
+	svc := NewServiceWithClock(repo, &recorder{}, newFakeTaskReader(), fixedClock("2026-03-01"))
 	view, err := svc.Create(context.Background(), "u1", "p1", "free", validCreate())
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
@@ -138,7 +138,7 @@ func TestUpdate_SettingScheduledTimeIsProOnly(t *testing.T) {
 // editing a title on a rule they set up while Pro is not blocked.
 func TestUpdate_AbsentScheduledTimeIsUntouchedOnFreePlan(t *testing.T) {
 	repo := newFakeRepo()
-	svc := NewServiceWithClock(repo, &recorder{}, fixedClock("2026-03-01"))
+	svc := NewServiceWithClock(repo, &recorder{}, newFakeTaskReader(), fixedClock("2026-03-01"))
 	view, err := svc.Create(context.Background(), "u1", "p1", "pro", timedCreate("09:00"))
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
@@ -158,7 +158,7 @@ func TestUpdate_AbsentScheduledTimeIsUntouchedOnFreePlan(t *testing.T) {
 // whole point of the time living on the rule rather than the occurrence.
 func TestMaterializeAfterCompletion_InheritsScheduledTime(t *testing.T) {
 	repo := newFakeRepo()
-	svc := NewServiceWithClock(repo, &recorder{}, fixedClock("2026-03-01"))
+	svc := NewServiceWithClock(repo, &recorder{}, newFakeTaskReader(), fixedClock("2026-03-01"))
 	view, err := svc.Create(context.Background(), "u1", "p1", "pro", timedCreate("09:00"))
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)

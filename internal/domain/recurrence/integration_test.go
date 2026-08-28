@@ -105,6 +105,23 @@ func newRule(userID, projectID string) recurrence.Rule {
 	}
 }
 
+// seedPlainTask inserts an ordinary, non-recurring task — the row a
+// convert-to-recurring call targets — with a caller-chosen scheduled_for so
+// tests can exercise the "start date doesn't itself satisfy the schedule"
+// case where the first real occurrence lands on a different date.
+func seedPlainTask(t *testing.T, pool *pgxpool.Pool, userID, projectID, scheduledFor string) string {
+	t.Helper()
+	taskID := uuid.NewString()
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO tasks (id, user_id, project_id, title, status, priority, energy, scheduled_for, display_order)
+		VALUES ($1, $2, $3, 'Wash the floors', 'active', 'high', 'low', $4, 0)`,
+		taskID, userID, projectID, scheduledFor,
+	); err != nil {
+		t.Fatalf("seedPlainTask: %v", err)
+	}
+	return taskID
+}
+
 func newOccurrence(r recurrence.Rule, d string) recurrence.Occurrence {
 	return recurrence.Occurrence{
 		ID:             uuid.NewString(),
@@ -202,6 +219,124 @@ func TestRepo_CreateWithOccurrence_FreeLimit(t *testing.T) {
 	}
 	if count != 3 {
 		t.Errorf("rule count = %d, want 3 (rejected insert must not land a row)", count)
+	}
+}
+
+// Converting a plain task attaches a brand-new rule to the SAME row — no new
+// task is inserted — and forces it back to active.
+func TestRepo_ConvertTask(t *testing.T) {
+	r, pool := newRepo(t)
+	ctx := context.Background()
+	userID := seedUser(t, pool)
+	projectID := seedProject(t, pool, userID)
+	taskID := seedPlainTask(t, pool, userID, projectID, "2026-03-09") // a Monday, matches the rule below
+
+	rule := newRule(userID, projectID)
+	got, err := r.ConvertTask(ctx, taskID, rule, date("2026-03-09"), 0)
+	if err != nil {
+		t.Fatalf("ConvertTask: %v", err)
+	}
+	if got.ID != rule.ID {
+		t.Errorf("rule.ID = %s, want %s", got.ID, rule.ID)
+	}
+
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM tasks WHERE user_id = $1`, userID).Scan(&count); err != nil {
+		t.Fatalf("count tasks: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("task count = %d, want 1 — convert must reuse the existing row, never insert a new one", count)
+	}
+
+	var status, scheduledFor, ruleID string
+	if err := pool.QueryRow(ctx,
+		`SELECT status, scheduled_for, recurrence_rule_id FROM tasks WHERE id = $1`, taskID,
+	).Scan(&status, &scheduledFor, &ruleID); err != nil {
+		t.Fatalf("read converted task: %v", err)
+	}
+	if status != "active" {
+		t.Errorf("status = %q, want active (forced on convert)", status)
+	}
+	if scheduledFor != "2026-03-09" {
+		t.Errorf("scheduledFor = %q, want 2026-03-09", scheduledFor)
+	}
+	if ruleID != rule.ID {
+		t.Errorf("recurrence_rule_id = %q, want %s", ruleID, rule.ID)
+	}
+}
+
+// A task already governed by a rule must reject a second convert rather than
+// silently re-parenting it — that would orphan the first rule's cursor.
+func TestRepo_ConvertTask_RejectsAlreadyRecurring(t *testing.T) {
+	r, pool := newRepo(t)
+	ctx := context.Background()
+	userID := seedUser(t, pool)
+	projectID := seedProject(t, pool, userID)
+
+	firstRule := newRule(userID, projectID)
+	firstOcc := newOccurrence(firstRule, "2026-03-02")
+	if _, err := r.CreateWithOccurrence(ctx, firstRule, firstOcc, 0); err != nil {
+		t.Fatalf("seed first rule: %v", err)
+	}
+
+	secondRule := newRule(userID, projectID)
+	_, err := r.ConvertTask(ctx, firstOcc.ID, secondRule, date("2026-03-09"), 0)
+	if err == nil {
+		t.Fatal("convert on an already-recurring task succeeded, want TASK_ALREADY_RECURRING")
+	}
+	var ae *apperror.AppError
+	if !errors.As(err, &ae) || ae.Code != apperror.ErrTaskAlreadyRecurring {
+		t.Errorf("err = %v, want TASK_ALREADY_RECURRING", err)
+	}
+
+	// The rejected convert must not have landed the second rule row either —
+	// the whole attempt rolls back together.
+	var count int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM recurrence_rules WHERE id = $1`, secondRule.ID,
+	).Scan(&count); err != nil {
+		t.Fatalf("count rules: %v", err)
+	}
+	if count != 0 {
+		t.Error("second rule was inserted despite the rejected convert — the transaction did not roll back")
+	}
+}
+
+// Convert shares the same free-plan guard as CreateWithOccurrence.
+func TestRepo_ConvertTask_FreeLimit(t *testing.T) {
+	r, pool := newRepo(t)
+	ctx := context.Background()
+	userID := seedUser(t, pool)
+	projectID := seedProject(t, pool, userID)
+
+	dates := []string{"2026-03-02", "2026-03-09", "2026-03-16"}
+	for i := 0; i < 3; i++ {
+		rule := newRule(userID, projectID)
+		if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, dates[i]), 3); err != nil {
+			t.Fatalf("seed rule %d: %v", i, err)
+		}
+	}
+
+	taskID := seedPlainTask(t, pool, userID, projectID, "2026-03-23")
+	fourth := newRule(userID, projectID)
+	_, err := r.ConvertTask(ctx, taskID, fourth, date("2026-03-23"), 3)
+	if err == nil {
+		t.Fatal("convert under a limit of 3 succeeded, want PLAN_LIMIT_EXCEEDED")
+	}
+	var ae *apperror.AppError
+	if !errors.As(err, &ae) || ae.Code != apperror.ErrPlanLimitExceeded {
+		t.Errorf("err = %v, want PLAN_LIMIT_EXCEEDED", err)
+	}
+
+	// The task must be left exactly as it was — still a plain task.
+	var ruleID *string
+	if err := pool.QueryRow(ctx,
+		`SELECT recurrence_rule_id FROM tasks WHERE id = $1`, taskID,
+	).Scan(&ruleID); err != nil {
+		t.Fatalf("read task: %v", err)
+	}
+	if ruleID != nil {
+		t.Error("task gained a recurrence_rule_id despite the rejected convert")
 	}
 }
 

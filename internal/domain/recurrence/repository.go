@@ -80,22 +80,36 @@ func (r *pgRepo) CreateWithOccurrence(ctx context.Context, rule Rule, occ Occurr
 		}
 	}()
 
+	out, err := insertRuleGuarded(ctx, tx, rule, freeLimit)
+	if err != nil {
+		return Rule{}, err
+	}
+
+	if err := insertOccurrence(ctx, tx, occ); err != nil {
+		return Rule{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Rule{}, fmt.Errorf("recurrence.CreateWithOccurrence commit: %w", err)
+	}
+	return out, nil
+}
+
+// insertRuleGuarded inserts a rule row under the free-plan cap guard shared by
+// CreateWithOccurrence and ConvertTask — the per-user advisory lock + guarded
+// insert described on CreateWithOccurrence's freeLimit param.
+func insertRuleGuarded(ctx context.Context, tx pgx.Tx, rule Rule, freeLimit int) (Rule, error) {
 	if freeLimit > 0 {
-		// The free-plan cap is a COUNT(*) the row lock below does not cover (the
-		// row being inserted doesn't exist yet), so a per-user advisory lock
-		// serializes concurrent creates before the guarded insert — same pattern
-		// as ai.ReserveLifetime. Without this, two concurrent creates can both
-		// read count=2 and both insert, landing the user at 5 rules on a 3 cap.
 		if _, err := tx.Exec(ctx,
 			`SELECT pg_advisory_xact_lock(hashtextextended('recurrence_rules:' || $1, 0))`,
 			rule.UserID,
 		); err != nil {
-			return Rule{}, fmt.Errorf("recurrence.CreateWithOccurrence lock: %w", err)
+			return Rule{}, fmt.Errorf("recurrence.insertRuleGuarded lock: %w", err)
 		}
 	}
 
 	var out Rule
-	err = scanRule(tx.QueryRow(ctx, `
+	err := scanRule(tx.QueryRow(ctx, `
 		INSERT INTO recurrence_rules
 			(id, user_id, project_id, title, notes, priority, energy, estimated_minutes,
 			 freq, interval, by_weekday, by_monthday, start_date, end_date, next_occurrence,
@@ -111,15 +125,63 @@ func (r *pgRepo) CreateWithOccurrence(ctx context.Context, rule Rule, occ Occurr
 		return Rule{}, apperror.New(http.StatusForbidden, apperror.ErrPlanLimitExceeded, "free plan allows up to 3 recurrence rules")
 	}
 	if err != nil {
-		return Rule{}, fmt.Errorf("recurrence.CreateWithOccurrence insert rule: %w", err)
+		return Rule{}, fmt.Errorf("recurrence.insertRuleGuarded insert: %w", err)
 	}
+	return out, nil
+}
 
-	if err := insertOccurrence(ctx, tx, occ); err != nil {
+// ConvertTask turns an existing plain task into instance #1 of a brand-new
+// rule, in place — no new task row. The rule insert shares CreateWithOccurrence's
+// free-plan guard; the task update is conditioned on recurrence_rule_id IS NULL
+// so a task already governed by another rule is never silently re-parented.
+func (r *pgRepo) ConvertTask(ctx context.Context, taskID string, rule Rule, occurrenceDate time.Time, freeLimit int) (Rule, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return Rule{}, fmt.Errorf("recurrence.ConvertTask begin: %w", err)
+	}
+	defer func() {
+		if rbErr := tx.Rollback(ctx); rbErr != nil && !errors.Is(rbErr, pgx.ErrTxClosed) {
+			_ = rbErr
+		}
+	}()
+
+	out, err := insertRuleGuarded(ctx, tx, rule, freeLimit)
+	if err != nil {
 		return Rule{}, err
 	}
 
+	// Forcing status back to active matches "this is now a live recurring
+	// task"; subtasks/attachments/focus history are per-instance artifacts,
+	// not rule-template concepts, so they're left untouched. occurrenceDate is
+	// the rule's actual first occurrence (from NextOccurrence), which may
+	// differ from StartDate when the start doesn't itself satisfy the
+	// weekday/monthday constraint — the same distinction insertOccurrence
+	// makes for a from-scratch create.
+	tag, err := tx.Exec(ctx, `
+		UPDATE tasks SET
+			recurrence_rule_id = $1,
+			status = 'active',
+			scheduled_for = $2::date::text,
+			occurrence_date = $2::date,
+			scheduled_time = $3::time,
+			updated_at = NOW()
+		WHERE id = $4 AND user_id = $5 AND recurrence_rule_id IS NULL`,
+		rule.ID, occurrenceDate, rule.ScheduledTime, taskID, rule.UserID,
+	)
+	if err != nil {
+		return Rule{}, fmt.Errorf("recurrence.ConvertTask update task: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		// Either the task doesn't exist/isn't the caller's (handled as 404 by
+		// the service's own ownership check before this ever runs) or it
+		// already has a rule — the only case that can still land here given
+		// the service checked ownership first.
+		return Rule{}, apperror.New(http.StatusConflict, apperror.ErrTaskAlreadyRecurring,
+			"this task is already recurring — edit its existing rule instead")
+	}
+
 	if err := tx.Commit(ctx); err != nil {
-		return Rule{}, fmt.Errorf("recurrence.CreateWithOccurrence commit: %w", err)
+		return Rule{}, fmt.Errorf("recurrence.ConvertTask commit: %w", err)
 	}
 	return out, nil
 }

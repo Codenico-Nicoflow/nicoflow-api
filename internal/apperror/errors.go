@@ -63,7 +63,11 @@ const (
 	ErrTaskNotMissable = "TASK_NOT_MISSABLE"
 	// INVALID_RECURRENCE (422) — a malformed schedule: bad freq, interval outside
 	// 1..366, weekday/monthday out of range, or a field set on the wrong freq.
-	ErrInvalidRecurrence   = "INVALID_RECURRENCE"
+	ErrInvalidRecurrence = "INVALID_RECURRENCE"
+	// TASK_ALREADY_RECURRING (409) — convert-to-recurring rejected: the task
+	// already belongs to a rule. Edit that rule instead (PATCH
+	// /recurrence-rules/:id), never a second convert on the same task.
+	ErrTaskAlreadyRecurring = "TASK_ALREADY_RECURRING"
 	ErrInvalidDate         = "INVALID_DATE"
 	ErrInvalidPriority     = "INVALID_PRIORITY"
 	ErrInvalidAIContext    = "INVALID_AI_CONTEXT"

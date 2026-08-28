@@ -21,18 +21,21 @@ type service struct {
 	repo        Repository
 	now         func() time.Time // injectable clock — the cursor is the only time read
 	broadcaster Broadcaster      // nil disables emission
+	taskReader  TaskTemplateReader
 }
 
 // NewService creates a recurrence Service with a real clock. broadcaster may be
 // nil (real-time emission disabled); pass the ws adapter to light up live updates.
-func NewService(repo Repository, broadcaster Broadcaster) Service {
-	return &service{repo: repo, now: time.Now, broadcaster: broadcaster}
+func NewService(repo Repository, broadcaster Broadcaster, taskReader TaskTemplateReader) Service {
+	return &service{repo: repo, now: time.Now, broadcaster: broadcaster, taskReader: taskReader}
 }
 
 // NewServiceWithClock is like NewService but with an injected clock, for
 // deterministic tests of the cursor and the first-occurrence date.
-func NewServiceWithClock(repo Repository, broadcaster Broadcaster, now func() time.Time) Service {
-	return &service{repo: repo, now: now, broadcaster: broadcaster}
+func NewServiceWithClock(
+	repo Repository, broadcaster Broadcaster, taskReader TaskTemplateReader, now func() time.Time,
+) Service {
+	return &service{repo: repo, now: now, broadcaster: broadcaster, taskReader: taskReader}
 }
 
 // emit fans a domain event out best-effort. A nil broadcaster is a valid no-op.
@@ -148,6 +151,80 @@ func (s *service) createRule(ctx context.Context, userID, projectID, plan string
 	view := ToView(created)
 	s.emit(userID, Event{Type: EventCreated, Payload: view})
 	return CreateResult{Rule: view, TaskID: occ.ID}, nil
+}
+
+// ConvertToRecurring turns an existing plain task into instance #1 of a new
+// rule, in place. Template fields on req are ignored — they're read straight
+// off the task row instead, so the produced rule can never drift from what's
+// actually stored (see the Service interface doc for why).
+func (s *service) ConvertToRecurring(
+	ctx context.Context, userID, taskID, plan string, req CreateRuleRequest,
+) (RuleView, error) {
+	tmpl, err := s.taskReader.GetTemplate(ctx, userID, taskID)
+	if err != nil {
+		return RuleView{}, err
+	}
+	if tmpl.RecurrenceRuleID != nil {
+		return RuleView{}, apperror.New(http.StatusConflict, apperror.ErrTaskAlreadyRecurring,
+			"this task is already recurring — edit its existing rule instead")
+	}
+
+	req.Title = tmpl.Title
+	req.Notes = tmpl.Notes
+	req.Priority = tmpl.Priority
+	req.Energy = tmpl.Energy
+	req.EstimatedMinutes = tmpl.EstimatedMinutes
+	if req.Interval == 0 {
+		req.Interval = 1
+	}
+
+	startDate, endDate, err := validateCreate(req)
+	if err != nil {
+		return RuleView{}, err
+	}
+	if err := enforceTimedSchedulingPlan(plan, req.ScheduledTime); err != nil {
+		return RuleView{}, err
+	}
+	req.EstimatedMinutes = clampEstimateToDayEnd(req.ScheduledTime, req.EstimatedMinutes)
+
+	freeLimit := 0
+	if plan == planFree {
+		freeLimit = freePlanRuleLimit
+	}
+
+	rule := Rule{
+		ID:               uuid.New().String(),
+		UserID:           userID,
+		ProjectID:        tmpl.ProjectID,
+		Title:            req.Title,
+		Notes:            req.Notes,
+		Priority:         req.Priority,
+		Energy:           req.Energy,
+		EstimatedMinutes: req.EstimatedMinutes,
+		ScheduledTime:    req.ScheduledTime,
+		Freq:             req.Freq,
+		Interval:         req.Interval,
+		ByWeekday:        normalizeWeekdays(req.ByWeekday),
+		ByMonthday:       req.ByMonthday,
+		StartDate:        startDate,
+		EndDate:          endDate,
+	}
+
+	first, ok := NextOccurrence(rule, startDate.AddDate(0, 0, -1))
+	if !ok {
+		return RuleView{}, errInvalidRecurrence("the rule produces no occurrence before its end date")
+	}
+	if next, ok := NextOccurrence(rule, first); ok {
+		rule.NextOccurrence = &next
+	}
+
+	converted, err := s.repo.ConvertTask(ctx, taskID, rule, first, freeLimit)
+	if err != nil {
+		return RuleView{}, err
+	}
+	view := ToView(converted)
+	s.emit(userID, Event{Type: EventCreated, Payload: view})
+	return view, nil
 }
 
 func (s *service) List(ctx context.Context, userID string, projectID *string) (ListRulesResponse, error) {

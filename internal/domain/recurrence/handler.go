@@ -123,6 +123,28 @@ func (h *Handler) Pause(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, view)
 }
 
+// ConvertToRecurring handles POST /tasks/{taskId}/convert-to-recurring — turns
+// an existing plain task into instance #1 of a new rule, in place.
+func (h *Handler) ConvertToRecurring(w http.ResponseWriter, r *http.Request) {
+	var req CreateRuleRequest
+	if err := decodeJSON(r, &req); err != nil {
+		respond.Error(w, http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "invalid request body")
+		return
+	}
+	view, err := h.svc.ConvertToRecurring(
+		r.Context(),
+		mw.UserIDFromCtx(r.Context()),
+		chi.URLParam(r, "taskId"),
+		mw.PlanFromCtx(r.Context()),
+		req,
+	)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusCreated, view)
+}
+
 // Delete handles DELETE /recurrence-rules/{id} — ends the series, 204.
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	if err := h.svc.Delete(r.Context(), mw.UserIDFromCtx(r.Context()), chi.URLParam(r, "id")); err != nil {
