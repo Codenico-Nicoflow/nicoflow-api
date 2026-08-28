@@ -2,7 +2,6 @@ package recurrence
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -88,14 +87,13 @@ func (s *service) createRule(ctx context.Context, userID, projectID, plan string
 		return CreateResult{}, apperror.New(http.StatusNotFound, apperror.ErrProjectNotFound, "project not found")
 	}
 
-	if plan == "free" {
-		count, err := s.repo.CountByUser(ctx, userID)
-		if err != nil {
-			return CreateResult{}, fmt.Errorf("recurrence.Create count: %w", err)
-		}
-		if count >= freePlanRuleLimit {
-			return CreateResult{}, apperror.New(http.StatusForbidden, apperror.ErrPlanLimitExceeded, "free plan allows up to 3 recurrence rules")
-		}
+	// The actual cap is enforced atomically inside CreateWithOccurrence (a
+	// per-user advisory lock guards the count-check + insert against a
+	// concurrent create slipping through the same free slot). freeLimit <= 0
+	// tells the repo to skip the guard entirely on Pro.
+	freeLimit := 0
+	if plan == planFree {
+		freeLimit = freePlanRuleLimit
 	}
 
 	rule := Rule{
@@ -143,7 +141,7 @@ func (s *service) createRule(ctx context.Context, userID, projectID, plan string
 		OccurrenceDate:   first,
 	}
 
-	created, err := s.repo.CreateWithOccurrence(ctx, rule, occ)
+	created, err := s.repo.CreateWithOccurrence(ctx, rule, occ, freeLimit)
 	if err != nil {
 		return CreateResult{}, err
 	}
@@ -186,6 +184,10 @@ func (s *service) Update(ctx context.Context, userID, id, plan string, req Updat
 
 	existing, err := s.repo.GetByID(ctx, userID, id)
 	if err != nil {
+		return RuleView{}, err
+	}
+
+	if err := s.enforceEditableOnFreePlan(ctx, userID, id, plan); err != nil {
 		return RuleView{}, err
 	}
 
@@ -310,7 +312,15 @@ func applySchedulePatch(r Rule, req UpdateRuleRequest) (Rule, bool, error) {
 	return r, scheduleChanged, nil
 }
 
-func (s *service) SetPaused(ctx context.Context, userID, id string, paused bool) (RuleView, error) {
+func (s *service) SetPaused(ctx context.Context, userID, id, plan string, paused bool) (RuleView, error) {
+	// Pausing an over-cap rule is fine (it's the user reducing what fires), but
+	// resuming one isn't — that's un-pausing a rule the free plan wouldn't let
+	// them create today, so it's gated the same as any other schedule change.
+	if !paused {
+		if err := s.enforceEditableOnFreePlan(ctx, userID, id, plan); err != nil {
+			return RuleView{}, err
+		}
+	}
 	r, err := s.repo.SetPaused(ctx, userID, id, paused)
 	if err != nil {
 		return RuleView{}, err
@@ -318,6 +328,27 @@ func (s *service) SetPaused(ctx context.Context, userID, id string, paused bool)
 	view := ToView(r)
 	s.emit(userID, Event{Type: EventUpdated, Payload: view})
 	return view, nil
+}
+
+// enforceEditableOnFreePlan is the graceful-downgrade gate: a free-plan user
+// keeps their oldest freePlanRuleLimit rules editable; anything past that cap
+// (left over from a Pro downgrade) is read-only until deleted or they
+// re-upgrade. Pro never hits this. The rule is assumed to already exist —
+// callers check that via GetByID first, so a 404 never gets relabeled as a
+// plan-limit error.
+func (s *service) enforceEditableOnFreePlan(ctx context.Context, userID, id, plan string) error {
+	if plan != planFree {
+		return nil
+	}
+	within, err := s.repo.IsWithinFreeLimit(ctx, userID, id, freePlanRuleLimit)
+	if err != nil {
+		return err
+	}
+	if !within {
+		return apperror.New(http.StatusForbidden, apperror.ErrPlanLimitExceeded,
+			"this rule is over the free plan's 3-rule limit and is read-only — delete a rule or upgrade to edit it")
+	}
+	return nil
 }
 
 // Stats derives a rule's history from its occurrence rows. Nothing is stored: a

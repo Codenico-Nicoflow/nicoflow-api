@@ -222,7 +222,7 @@ type Service interface {
 	List(ctx context.Context, userID string, projectID *string) (ListRulesResponse, error)
 	Get(ctx context.Context, userID, id string) (RuleView, error)
 	Update(ctx context.Context, userID, id, plan string, req UpdateRuleRequest) (RuleView, error)
-	SetPaused(ctx context.Context, userID, id string, paused bool) (RuleView, error)
+	SetPaused(ctx context.Context, userID, id, plan string, paused bool) (RuleView, error)
 	Delete(ctx context.Context, userID, id string) error
 	// Stats derives a rule's history: per-status counts plus the current streak.
 	Stats(ctx context.Context, userID, id string) (StatsView, error)
@@ -235,7 +235,13 @@ type Repository interface {
 	// CreateWithOccurrence inserts the rule and materializes instance #1 in one
 	// transaction, so a rule can never exist without its first task. The
 	// occurrence's display_order is resolved inside the transaction.
-	CreateWithOccurrence(ctx context.Context, r Rule, occ Occurrence) (Rule, error)
+	//
+	// freeLimit > 0 makes the insert conditional on the user's current rule count
+	// staying under it, checked under a per-user advisory lock so two concurrent
+	// creates on a free plan can't both slip through the same free slot (TOCTOU).
+	// freeLimit <= 0 (Pro) skips the lock and check entirely. ErrPlanLimitExceeded
+	// is returned when the guard rejects the insert.
+	CreateWithOccurrence(ctx context.Context, r Rule, occ Occurrence, freeLimit int) (Rule, error)
 
 	// List returns the user's rules, optionally filtered to one project.
 	List(ctx context.Context, userID string, projectID *string) ([]Rule, error)
@@ -259,6 +265,13 @@ type Repository interface {
 
 	// CountByUser is the plan-limit count.
 	CountByUser(ctx context.Context, userID string) (int, error)
+
+	// IsWithinFreeLimit reports whether the given rule is among the user's
+	// `limit` oldest rules (by created_at, ties broken by id) — the set graceful
+	// downgrade keeps editable. A rule outside that set is read-only on the free
+	// plan until deleted or the user re-upgrades. Returns false for a missing
+	// rule; the caller's own GetByID already turns that into 404 first.
+	IsWithinFreeLimit(ctx context.Context, userID, ruleID string, limit int) (bool, error)
 
 	// ProjectOwned reports whether the project exists and belongs to the user.
 	ProjectOwned(ctx context.Context, userID, projectID string) (bool, error)

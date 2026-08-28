@@ -3,6 +3,8 @@ package recurrence
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
 	"testing"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 // fakeRepo records what the service asked for and returns scripted results.
 type fakeRepo struct {
 	rules        map[string]Rule
+	ruleOrder    []string // insertion order, for IsWithinFreeLimit's ranking
 	count        int
 	projectOwned bool
 
@@ -27,13 +30,28 @@ func newFakeRepo() *fakeRepo {
 	return &fakeRepo{rules: map[string]Rule{}, projectOwned: true}
 }
 
-func (f *fakeRepo) CreateWithOccurrence(_ context.Context, r Rule, occ Occurrence) (Rule, error) {
+// seedRuleCount pre-populates n placeholder rules so CreateWithOccurrence's
+// len(f.rules) guard (and IsWithinFreeLimit's ranking) see them, mirroring
+// what a real user's existing rule count would look like.
+func (f *fakeRepo) seedRuleCount(n int) {
+	for i := range n {
+		id := fmt.Sprintf("seed-%d", i)
+		f.rules[id] = Rule{ID: id, UserID: "u1"}
+		f.ruleOrder = append(f.ruleOrder, id)
+	}
+}
+
+func (f *fakeRepo) CreateWithOccurrence(_ context.Context, r Rule, occ Occurrence, freeLimit int) (Rule, error) {
 	if f.createErr != nil {
 		return Rule{}, f.createErr
+	}
+	if freeLimit > 0 && len(f.rules) >= freeLimit {
+		return Rule{}, apperror.New(http.StatusForbidden, apperror.ErrPlanLimitExceeded, "free plan allows up to 3 recurrence rules")
 	}
 	f.createdOcc = occ
 	r.CreatedAt, r.UpdatedAt = time.Now(), time.Now()
 	f.rules[r.ID] = r
+	f.ruleOrder = append(f.ruleOrder, r.ID)
 	return r, nil
 }
 
@@ -81,6 +99,15 @@ func (f *fakeRepo) Delete(_ context.Context, userID, id string) error {
 }
 
 func (f *fakeRepo) CountByUser(context.Context, string) (int, error) { return f.count, nil }
+
+func (f *fakeRepo) IsWithinFreeLimit(_ context.Context, _, ruleID string, limit int) (bool, error) {
+	for i, id := range f.ruleOrder {
+		if id == ruleID {
+			return i < limit, nil
+		}
+	}
+	return false, nil
+}
 
 func (f *fakeRepo) ListDue(context.Context) ([]DueRule, error) { return nil, nil }
 
@@ -183,6 +210,7 @@ func TestCreate_PlanLimit(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := newFakeRepo()
 			repo.count = tt.existing
+			repo.seedRuleCount(tt.existing) // CreateWithOccurrence's guard reads len(rules), not count
 			svc := NewServiceWithClock(repo, nil, fixedClock("2026-03-01"))
 
 			_, err := svc.Create(context.Background(), "u1", "p1", tt.plan, validCreate())
@@ -376,7 +404,7 @@ func TestRowLevelIsolation(t *testing.T) {
 		assertCode(t, err, apperror.ErrRecurrenceRuleNotFound)
 	})
 	t.Run("SetPaused", func(t *testing.T) {
-		_, err := svc.SetPaused(context.Background(), "u2", view.ID, true)
+		_, err := svc.SetPaused(context.Background(), "u2", view.ID, "free", true)
 		assertCode(t, err, apperror.ErrRecurrenceRuleNotFound)
 	})
 	t.Run("Delete", func(t *testing.T) {
@@ -577,6 +605,61 @@ func TestUpdate_RejectsInvalidSchedule(t *testing.T) {
 	assertCode(t, err, apperror.ErrInvalidRecurrence)
 }
 
+// A graceful downgrade keeps the user's oldest freePlanRuleLimit rules
+// editable and makes the rest read-only until deleted or they re-upgrade —
+// otherwise a Pro user with 10 rules keeps full edit/pause on all 10 forever
+// after downgrading, silently bypassing the cap a new free user can't get past.
+func TestUpdate_ReadOnlyOverFreeLimitAfterDowngrade(t *testing.T) {
+	repo := newFakeRepo()
+	svc := NewServiceWithClock(repo, nil, fixedClock("2026-03-01"))
+
+	var views []RuleView
+	for range 4 {
+		// Created on "pro" so the 4th rule (over the free cap) can exist at all.
+		v, err := svc.Create(context.Background(), "u1", "p1", "pro", validCreate())
+		if err != nil {
+			t.Fatalf("seed Create: %v", err)
+		}
+		views = append(views, v)
+	}
+
+	title := "renamed"
+	if _, err := svc.Update(context.Background(), "u1", views[0].ID, "free", UpdateRuleRequest{Title: &title}); err != nil {
+		t.Errorf("Update on rule 1 of 4 (within the free cap) = %v, want success", err)
+	}
+
+	_, err := svc.Update(context.Background(), "u1", views[3].ID, "free", UpdateRuleRequest{Title: &title})
+	assertCode(t, err, apperror.ErrPlanLimitExceeded)
+
+	// Pro never hits the gate, even on the same over-cap rule.
+	if _, err := svc.Update(context.Background(), "u1", views[3].ID, "pro", UpdateRuleRequest{Title: &title}); err != nil {
+		t.Errorf("Update on rule 4 of 4 as pro = %v, want success", err)
+	}
+}
+
+// Resuming an over-cap paused rule is un-pausing a rule the free plan wouldn't
+// let the user create today, so it's gated the same as any other edit — but
+// pausing one (reducing what fires) is always allowed, even over the cap.
+func TestSetPaused_ReadOnlyOverFreeLimitAfterDowngrade(t *testing.T) {
+	repo := newFakeRepo()
+	svc := NewServiceWithClock(repo, nil, fixedClock("2026-03-01"))
+
+	var views []RuleView
+	for range 4 {
+		v, err := svc.Create(context.Background(), "u1", "p1", "pro", validCreate())
+		if err != nil {
+			t.Fatalf("seed Create: %v", err)
+		}
+		views = append(views, v)
+	}
+
+	if _, err := svc.SetPaused(context.Background(), "u1", views[3].ID, "free", true); err != nil {
+		t.Errorf("pausing over-cap rule = %v, want success", err)
+	}
+	_, err := svc.SetPaused(context.Background(), "u1", views[3].ID, "free", false)
+	assertCode(t, err, apperror.ErrPlanLimitExceeded)
+}
+
 func TestSetPaused(t *testing.T) {
 	repo := newFakeRepo()
 	rec := &recorder{}
@@ -584,7 +667,7 @@ func TestSetPaused(t *testing.T) {
 	view := seedRule(t, svc)
 	rec.events = nil
 
-	got, err := svc.SetPaused(context.Background(), "u1", view.ID, true)
+	got, err := svc.SetPaused(context.Background(), "u1", view.ID, "free", true)
 	if err != nil {
 		t.Fatalf("SetPaused: %v", err)
 	}
@@ -595,7 +678,7 @@ func TestSetPaused(t *testing.T) {
 		t.Errorf("events = %+v, want one %s", rec.events, EventUpdated)
 	}
 
-	resumed, err := svc.SetPaused(context.Background(), "u1", view.ID, false)
+	resumed, err := svc.SetPaused(context.Background(), "u1", view.ID, "free", false)
 	if err != nil {
 		t.Fatalf("SetPaused resume: %v", err)
 	}

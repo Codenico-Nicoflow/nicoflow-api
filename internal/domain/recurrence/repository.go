@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/nicoflow/nicoflow-api/internal/apperror"
 )
 
 type pgRepo struct{ db *pgxpool.Pool }
@@ -63,7 +66,7 @@ func ruleFields(r *Rule) []any {
 
 // CreateWithOccurrence writes the rule and its first task in one transaction, so
 // a rule can never exist without the instance the user expects to see.
-func (r *pgRepo) CreateWithOccurrence(ctx context.Context, rule Rule, occ Occurrence) (Rule, error) {
+func (r *pgRepo) CreateWithOccurrence(ctx context.Context, rule Rule, occ Occurrence, freeLimit int) (Rule, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return Rule{}, fmt.Errorf("recurrence.CreateWithOccurrence begin: %w", err)
@@ -77,18 +80,36 @@ func (r *pgRepo) CreateWithOccurrence(ctx context.Context, rule Rule, occ Occurr
 		}
 	}()
 
+	if freeLimit > 0 {
+		// The free-plan cap is a COUNT(*) the row lock below does not cover (the
+		// row being inserted doesn't exist yet), so a per-user advisory lock
+		// serializes concurrent creates before the guarded insert — same pattern
+		// as ai.ReserveLifetime. Without this, two concurrent creates can both
+		// read count=2 and both insert, landing the user at 5 rules on a 3 cap.
+		if _, err := tx.Exec(ctx,
+			`SELECT pg_advisory_xact_lock(hashtextextended('recurrence_rules:' || $1, 0))`,
+			rule.UserID,
+		); err != nil {
+			return Rule{}, fmt.Errorf("recurrence.CreateWithOccurrence lock: %w", err)
+		}
+	}
+
 	var out Rule
 	err = scanRule(tx.QueryRow(ctx, `
 		INSERT INTO recurrence_rules
 			(id, user_id, project_id, title, notes, priority, energy, estimated_minutes,
 			 freq, interval, by_weekday, by_monthday, start_date, end_date, next_occurrence,
 			 scheduled_time)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::time)
+		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::time
+		WHERE $17 <= 0 OR (SELECT COUNT(*) FROM recurrence_rules WHERE user_id = $2) < $17
 		RETURNING`+selectCols,
 		rule.ID, rule.UserID, rule.ProjectID, rule.Title, rule.Notes, rule.Priority, rule.Energy, rule.EstimatedMinutes,
 		rule.Freq, rule.Interval, rule.ByWeekday, rule.ByMonthday, rule.StartDate, rule.EndDate, rule.NextOccurrence,
-		rule.ScheduledTime,
+		rule.ScheduledTime, freeLimit,
 	), &out)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Rule{}, apperror.New(http.StatusForbidden, apperror.ErrPlanLimitExceeded, "free plan allows up to 3 recurrence rules")
+	}
 	if err != nil {
 		return Rule{}, fmt.Errorf("recurrence.CreateWithOccurrence insert rule: %w", err)
 	}
@@ -530,6 +551,29 @@ func (r *pgRepo) CountByUser(ctx context.Context, userID string) (int, error) {
 		return 0, fmt.Errorf("recurrence.CountByUser: %w", err)
 	}
 	return count, nil
+}
+
+// IsWithinFreeLimit ranks the user's rules oldest-first and reports whether
+// ruleID falls inside the first `limit` of them — those are what a graceful
+// downgrade keeps editable; the rest are read-only until deleted. Ties in
+// created_at (same-millisecond bulk inserts) are broken by id so the ranking
+// is stable rather than flapping between requests.
+func (r *pgRepo) IsWithinFreeLimit(ctx context.Context, userID, ruleID string, limit int) (bool, error) {
+	var within bool
+	err := r.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM (
+				SELECT id, ROW_NUMBER() OVER (ORDER BY created_at, id) AS rn
+				FROM recurrence_rules WHERE user_id = $1
+			) ranked
+			WHERE ranked.id = $2 AND ranked.rn <= $3
+		)`,
+		userID, ruleID, limit,
+	).Scan(&within)
+	if err != nil {
+		return false, fmt.Errorf("recurrence.IsWithinFreeLimit: %w", err)
+	}
+	return within, nil
 }
 
 func (r *pgRepo) ProjectOwned(ctx context.Context, userID, projectID string) (bool, error) {

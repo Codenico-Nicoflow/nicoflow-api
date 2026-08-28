@@ -137,7 +137,7 @@ func TestRepo_CreateWithOccurrence(t *testing.T) {
 	projectID := seedProject(t, pool, userID)
 
 	rule := newRule(userID, projectID)
-	got, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02"))
+	got, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02"), 0)
 	if err != nil {
 		t.Fatalf("CreateWithOccurrence: %v", err)
 	}
@@ -165,6 +165,46 @@ func TestRepo_CreateWithOccurrence(t *testing.T) {
 	}
 }
 
+// freeLimit makes the insert conditional on the user's live rule count, so a
+// 4th create on a 3-rule free plan is rejected — and rejected atomically: the
+// count-check and the insert happen under the same advisory lock, closing the
+// TOCTOU window a plain "count then insert" would leave open between two
+// concurrent requests.
+func TestRepo_CreateWithOccurrence_FreeLimit(t *testing.T) {
+	r, pool := newRepo(t)
+	ctx := context.Background()
+	userID := seedUser(t, pool)
+	projectID := seedProject(t, pool, userID)
+
+	dates := []string{"2026-03-02", "2026-03-09", "2026-03-16", "2026-03-23"}
+	for i := 0; i < 3; i++ {
+		rule := newRule(userID, projectID)
+		if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, dates[i]), 3); err != nil {
+			t.Fatalf("create rule %d: %v", i, err)
+		}
+	}
+
+	fourth := newRule(userID, projectID)
+	_, err := r.CreateWithOccurrence(ctx, fourth, newOccurrence(fourth, dates[3]), 3)
+	if err == nil {
+		t.Fatal("4th create under a limit of 3 succeeded, want PLAN_LIMIT_EXCEEDED")
+	}
+	var ae *apperror.AppError
+	if !errors.As(err, &ae) || ae.Code != apperror.ErrPlanLimitExceeded {
+		t.Errorf("err = %v, want PLAN_LIMIT_EXCEEDED", err)
+	}
+
+	var count int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM recurrence_rules WHERE user_id = $1`, userID,
+	).Scan(&count); err != nil {
+		t.Fatalf("count rules: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("rule count = %d, want 3 (rejected insert must not land a row)", count)
+	}
+}
+
 // The partial unique index is the idempotency guarantee the cron sweep and the
 // sync-on-complete path both rely on: a duplicate (rule, date) must not double-insert.
 func TestRepo_DuplicateOccurrenceIsRejected(t *testing.T) {
@@ -174,7 +214,7 @@ func TestRepo_DuplicateOccurrenceIsRejected(t *testing.T) {
 	projectID := seedProject(t, pool, userID)
 
 	rule := newRule(userID, projectID)
-	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02")); err != nil {
+	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02"), 0); err != nil {
 		t.Fatalf("first create: %v", err)
 	}
 
@@ -204,7 +244,7 @@ func TestRepo_DistinctRulesShareADate(t *testing.T) {
 
 	for range 2 {
 		rule := newRule(userID, projectID)
-		if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02")); err != nil {
+		if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02"), 0); err != nil {
 			t.Fatalf("create: %v", err)
 		}
 	}
@@ -229,7 +269,7 @@ func TestRepo_DeleteOrphansHistoryAndReapsPending(t *testing.T) {
 	projectID := seedProject(t, pool, userID)
 
 	rule := newRule(userID, projectID)
-	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02")); err != nil {
+	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02"), 0); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	// Mark the first instance done — it is history now.
@@ -281,7 +321,7 @@ func TestRepo_RowLevelIsolation(t *testing.T) {
 	projectID := seedProject(t, pool, owner)
 
 	rule := newRule(owner, projectID)
-	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02")); err != nil {
+	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02"), 0); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
@@ -328,7 +368,7 @@ func TestRepo_UpdateRestampsLiveInstanceOnly(t *testing.T) {
 	projectID := seedProject(t, pool, userID)
 
 	rule := newRule(userID, projectID)
-	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02")); err != nil {
+	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02"), 0); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	doneID := uuid.NewString()
@@ -375,7 +415,7 @@ func TestRepo_ListFilterAndCount(t *testing.T) {
 
 	for _, pid := range []string{p1, p1, p2} {
 		rule := newRule(userID, pid)
-		if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02")); err != nil {
+		if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02"), 0); err != nil {
 			t.Fatalf("create: %v", err)
 		}
 	}
@@ -435,7 +475,7 @@ func TestRepo_NullableCursorRoundTrips(t *testing.T) {
 	end := date("2026-03-02")
 	rule.EndDate = &end
 
-	created, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02"))
+	created, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02"), 0)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -462,7 +502,7 @@ func TestRepo_SetPausedTogglesCursorEligibility(t *testing.T) {
 	projectID := seedProject(t, pool, userID)
 
 	rule := newRule(userID, projectID)
-	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02")); err != nil {
+	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02"), 0); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
@@ -532,7 +572,7 @@ func TestRepo_MaterializeReapsAndAdvances(t *testing.T) {
 	projectID := seedProject(t, pool, userID)
 
 	rule := newRule(userID, projectID)
-	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02")); err != nil {
+	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02"), 0); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
@@ -571,7 +611,7 @@ func TestRepo_MaterializeDoesNotReapCompleted(t *testing.T) {
 	projectID := seedProject(t, pool, userID)
 
 	rule := newRule(userID, projectID)
-	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02")); err != nil {
+	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02"), 0); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	if _, err := pool.Exec(ctx,
@@ -604,7 +644,7 @@ func TestRepo_MaterializeIsIdempotent(t *testing.T) {
 	projectID := seedProject(t, pool, userID)
 
 	rule := newRule(userID, projectID)
-	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02")); err != nil {
+	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02"), 0); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
@@ -638,7 +678,7 @@ func TestRepo_MaterializeRespectsHorizon(t *testing.T) {
 	projectID := seedProject(t, pool, userID)
 
 	rule := newRule(userID, projectID)
-	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-09")); err != nil {
+	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-09"), 0); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
@@ -667,7 +707,7 @@ func TestRepo_MaterializePlanLimitLeavesCursorUnchanged(t *testing.T) {
 	projectID := seedProject(t, pool, userID)
 
 	rule := newRule(userID, projectID)
-	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02")); err != nil {
+	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02"), 0); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	// Complete it so the horizon is free, leaving the project's one active task
@@ -718,7 +758,7 @@ func TestRepo_ListDue(t *testing.T) {
 		rule := newRule(userID, projectID)
 		rule.NextOccurrence = next
 		rule.Paused = paused
-		created, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02"))
+		created, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02"), 0)
 		if err != nil {
 			t.Fatalf("create: %v", err)
 		}
@@ -760,7 +800,7 @@ func TestRepo_OccurrenceStatsAndStreak(t *testing.T) {
 	projectID := seedProject(t, pool, userID)
 
 	rule := newRule(userID, projectID)
-	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02")); err != nil {
+	if _, err := r.CreateWithOccurrence(ctx, rule, newOccurrence(rule, "2026-03-02"), 0); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	// add seeds an occurrence row with the given *effective* status (what the

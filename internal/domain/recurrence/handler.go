@@ -109,7 +109,13 @@ func (h *Handler) Pause(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "invalid request body")
 		return
 	}
-	view, err := h.svc.SetPaused(r.Context(), mw.UserIDFromCtx(r.Context()), chi.URLParam(r, "id"), req.Paused)
+	view, err := h.svc.SetPaused(
+		r.Context(),
+		mw.UserIDFromCtx(r.Context()),
+		chi.URLParam(r, "id"),
+		mw.PlanFromCtx(r.Context()),
+		req.Paused,
+	)
 	if err != nil {
 		writeErr(w, r, err)
 		return
