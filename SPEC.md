@@ -1992,9 +1992,12 @@ derived label.
 
 #### DELETE /v1/recurrence-rules/:id
 
-End the series. The **pending** (un-done) occurrence is deleted; **past occurrences
-are orphaned, not destroyed** (`ON DELETE SET NULL` on `tasks.recurrence_rule_id`) —
-they are the user's record of what they did. Broadcasts `recurrence.deleted`.
+End the series. **Every task the rule ever touched — including the still-live,
+pending one — is detached, never destroyed** (`recurrence_rule_id` and
+`occurrence_date` cleared; `ON DELETE SET NULL` on `tasks.recurrence_rule_id`
+handles the FK side). A task created via convert-to-recurring has no other row
+representing it, so destroying its live occurrence here would destroy the task
+entirely, not just end its series. Broadcasts `recurrence.deleted`.
 
 - **Auth required:** Yes
 

@@ -395,9 +395,11 @@ func TestRepo_DistinctRulesShareADate(t *testing.T) {
 	}
 }
 
-// Deleting a rule orphans its history (ON DELETE SET NULL) and removes only the
-// pending instance. Completed occurrences are the user's record of what they did.
-func TestRepo_DeleteOrphansHistoryAndReapsPending(t *testing.T) {
+// Deleting a rule detaches EVERY task it ever touched — done, cancelled, or
+// still live — never destroys any of them. A hard delete of the live instance
+// used to happen here instead, which meant turning recurrence off on the task
+// a user was actively looking at deleted that exact task out from under them.
+func TestRepo_DeleteDetachesEveryTaskIncludingTheLiveOne(t *testing.T) {
 	r, pool := newRepo(t)
 	ctx := context.Background()
 	userID := seedUser(t, pool)
@@ -413,7 +415,7 @@ func TestRepo_DeleteOrphansHistoryAndReapsPending(t *testing.T) {
 	); err != nil {
 		t.Fatalf("complete first: %v", err)
 	}
-	// A second, still-pending instance.
+	// A second, still-pending (live) instance.
 	pending := newOccurrence(rule, "2026-03-09")
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO tasks (id, user_id, project_id, title, status, priority, energy,
@@ -428,22 +430,44 @@ func TestRepo_DeleteOrphansHistoryAndReapsPending(t *testing.T) {
 		t.Fatalf("Delete: %v", err)
 	}
 
-	// The done instance survives, orphaned.
-	var status string
-	var ruleRef *string
-	if err := pool.QueryRow(ctx,
-		`SELECT status, recurrence_rule_id FROM tasks WHERE user_id = $1`, userID,
-	).Scan(&status, &ruleRef); err != nil {
-		t.Fatalf("read survivor: %v", err)
-	}
-	if status != "done" {
-		t.Errorf("surviving task status = %q, want done", status)
-	}
-	if ruleRef != nil {
-		t.Errorf("recurrence_rule_id = %v, want NULL (orphaned, not cascaded)", *ruleRef)
-	}
 	if n := countTasks(t, pool, rule.ID); n != 0 {
-		t.Errorf("tasks still pointing at the rule = %d, want 0", n)
+		t.Errorf("tasks still pointing at the rule = %d, want 0 (all detached, not deleted)", n)
+	}
+
+	rows, err := pool.Query(ctx,
+		`SELECT id, status, recurrence_rule_id, occurrence_date FROM tasks WHERE user_id = $1 ORDER BY status`, userID,
+	)
+	if err != nil {
+		t.Fatalf("read survivors: %v", err)
+	}
+	defer rows.Close()
+
+	type survivor struct {
+		id, status string
+		ruleRef    *string
+		occDate    *string
+	}
+	var survivors []survivor
+	for rows.Next() {
+		var s survivor
+		if err := rows.Scan(&s.id, &s.status, &s.ruleRef, &s.occDate); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		survivors = append(survivors, s)
+	}
+	if len(survivors) != 2 {
+		t.Fatalf("survivor count = %d, want 2 (both the done AND the live instance)", len(survivors))
+	}
+	for _, s := range survivors {
+		if s.ruleRef != nil {
+			t.Errorf("task %s recurrence_rule_id = %v, want NULL", s.id, *s.ruleRef)
+		}
+		if s.occDate != nil {
+			t.Errorf("task %s occurrence_date = %v, want NULL", s.id, *s.occDate)
+		}
+	}
+	if survivors[0].status != "active" || survivors[1].status != "done" {
+		t.Errorf("statuses = %+v, want one active (the detached live task) and one done (history)", survivors)
 	}
 }
 

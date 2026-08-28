@@ -473,8 +473,9 @@ func currentStreak(newestFirst []string) int {
 	return streak
 }
 
-// Delete ends the series. Past occurrences are orphaned (FK ON DELETE SET NULL),
-// never destroyed — they are the user's record of what they did.
+// Delete ends the series. Every task the rule ever touched — past or the
+// still-live one — is detached, never destroyed: they're the user's record
+// of what they did (or are still doing).
 func (s *service) Delete(ctx context.Context, userID, id string) error {
 	if err := s.repo.Delete(ctx, userID, id); err != nil {
 		return err
