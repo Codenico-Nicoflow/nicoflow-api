@@ -68,13 +68,13 @@ const (
 	// already belongs to a rule. Edit that rule instead (PATCH
 	// /recurrence-rules/:id), never a second convert on the same task.
 	ErrTaskAlreadyRecurring = "TASK_ALREADY_RECURRING"
-	ErrInvalidDate         = "INVALID_DATE"
-	ErrInvalidPriority     = "INVALID_PRIORITY"
-	ErrInvalidAIContext    = "INVALID_AI_CONTEXT"
-	ErrInvalidEmail        = "INVALID_EMAIL"
-	ErrWeakPassword        = "WEAK_PASSWORD"
-	ErrRequired            = "REQUIRED"
-	ErrDatabaseError       = "DATABASE_ERROR"
-	ErrInternalServerError = "INTERNAL_SERVER_ERROR"
-	ErrServiceUnavailable  = "SERVICE_UNAVAILABLE"
+	ErrInvalidDate          = "INVALID_DATE"
+	ErrInvalidPriority      = "INVALID_PRIORITY"
+	ErrInvalidAIContext     = "INVALID_AI_CONTEXT"
+	ErrInvalidEmail         = "INVALID_EMAIL"
+	ErrWeakPassword         = "WEAK_PASSWORD"
+	ErrRequired             = "REQUIRED"
+	ErrDatabaseError        = "DATABASE_ERROR"
+	ErrInternalServerError  = "INTERNAL_SERVER_ERROR"
+	ErrServiceUnavailable   = "SERVICE_UNAVAILABLE"
 )

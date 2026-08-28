@@ -658,7 +658,7 @@ func TestUpdate_ReadOnlyOverFreeLimitAfterDowngrade(t *testing.T) {
 	repo := newFakeRepo()
 	svc := NewServiceWithClock(repo, nil, newFakeTaskReader(), fixedClock("2026-03-01"))
 
-	var views []RuleView
+	views := make([]RuleView, 0, 4)
 	for range 4 {
 		// Created on "pro" so the 4th rule (over the free cap) can exist at all.
 		v, err := svc.Create(context.Background(), "u1", "p1", "pro", validCreate())
@@ -689,7 +689,7 @@ func TestSetPaused_ReadOnlyOverFreeLimitAfterDowngrade(t *testing.T) {
 	repo := newFakeRepo()
 	svc := NewServiceWithClock(repo, nil, newFakeTaskReader(), fixedClock("2026-03-01"))
 
-	var views []RuleView
+	views := make([]RuleView, 0, 4)
 	for range 4 {
 		v, err := svc.Create(context.Background(), "u1", "p1", "pro", validCreate())
 		if err != nil {
