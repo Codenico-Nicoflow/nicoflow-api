@@ -329,8 +329,16 @@ func (r *pgRepo) SetPaused(ctx context.Context, userID, id string, paused bool) 
 	return out, nil
 }
 
-// Delete removes the pending occurrence, then the rule. Past occurrences survive
-// with a NULL recurrence_rule_id via the FK's ON DELETE SET NULL.
+// Delete ends the series. EVERY task the rule ever touched — including the
+// live, still-pending occurrence — is detached, never destroyed: the FK's
+// ON DELETE SET NULL already did this for done/cancelled occurrences, but the
+// live one used to be hard-deleted here instead, which meant turning
+// recurrence off on the task a user was actively looking at deleted that
+// exact task out from under them (worse yet for a task created via
+// ConvertTask, whose row IS the only one that ever existed for it — deleting
+// it destroyed the task entirely, not just "ended the series"). occurrence_date
+// is cleared alongside recurrence_rule_id since the FK doesn't reach it, and a
+// plain task has no business carrying a leftover occurrence date.
 func (r *pgRepo) Delete(ctx context.Context, userID, id string) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
@@ -342,12 +350,18 @@ func (r *pgRepo) Delete(ctx context.Context, userID, id string) error {
 		}
 	}()
 
+	// Clearing occurrence_date must happen BEFORE the rule delete: it's the
+	// only moment recurrence_rule_id = $1 still identifies exactly the rows
+	// this rule touched. The FK's own ON DELETE SET NULL fires afterward for
+	// recurrence_rule_id itself; occurrence_date needs this separate pass
+	// because the FK doesn't reach it, and a detached task has no business
+	// carrying a leftover occurrence date.
 	if _, err := tx.Exec(ctx,
-		`DELETE FROM tasks
-		 WHERE recurrence_rule_id = $1 AND user_id = $2 AND status NOT IN ('done', 'cancelled')`,
+		`UPDATE tasks SET occurrence_date = NULL, updated_at = NOW()
+		 WHERE recurrence_rule_id = $1 AND user_id = $2`,
 		id, userID,
 	); err != nil {
-		return fmt.Errorf("recurrence.Delete pending occurrence: %w", err)
+		return fmt.Errorf("recurrence.Delete clear occurrence_date: %w", err)
 	}
 
 	tag, err := tx.Exec(ctx, `DELETE FROM recurrence_rules WHERE id = $1 AND user_id = $2`, id, userID)

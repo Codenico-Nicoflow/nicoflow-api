@@ -296,9 +296,11 @@ type Repository interface {
 	// SetPaused flips the paused flag, scoped to the user.
 	SetPaused(ctx context.Context, userID, id string, paused bool) (Rule, error)
 
-	// Delete ends the series: the pending (un-done) occurrence is removed and the
-	// rule dropped. Past occurrences survive with a NULL recurrence_rule_id via
-	// the FK's ON DELETE SET NULL.
+	// Delete ends the series: the rule is dropped and every task it ever
+	// touched — including the still-live one — is detached (recurrence_rule_id
+	// and occurrence_date cleared), never deleted. A task converted via
+	// ConvertTask has no other row representing it, so destroying it here
+	// would destroy the task entirely, not just end its series.
 	Delete(ctx context.Context, userID, id string) error
 
 	// CountByUser is the plan-limit count.
