@@ -456,15 +456,16 @@ func (s *service) Stats(ctx context.Context, userID, id string) (StatsView, erro
 
 // currentStreak walks the occurrences newest-first and counts consecutive dones.
 // The still-open instance (active) is skipped rather than breaking the streak —
-// today being unfinished is not a failure yet. `cancelled` also passes: the user
-// deliberately opted out, which is not the same as letting the window lapse.
+// today being unfinished is not a failure yet. `cancelled` and `skipped` also
+// pass: both are the user deliberately opting out, which is not the same as
+// letting the window lapse.
 func currentStreak(newestFirst []string) int {
 	streak := 0
 	for _, st := range newestFirst {
 		switch st {
 		case StatusDone:
 			streak++
-		case StatusActive, StatusCancelled:
+		case StatusActive, StatusCancelled, StatusSkipped:
 			continue
 		default:
 			return streak

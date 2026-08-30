@@ -1504,6 +1504,40 @@ for Pro (`limit` = 500, `month` = the current `YYYY-MM`).
 
 ---
 
+#### AI tool catalog — write tools (NIC-1997)
+
+Every write tool follows the same **propose → confirm/reject** contract: the
+model emits a `tool_proposal` SSE frame the client renders as a confirm card;
+nothing executes until `POST /v1/ai/sessions/:id/tool-calls/:toolUseId/confirm`
+(or `/reject`) is called. A tool whose backing service isn't wired at startup is
+simply absent from the catalog Claude sees that turn — never a runtime error.
+
+| Tool | Confirm action |
+| --- | --- |
+| `complete_task` | Mark a task done |
+| `reschedule_task` | Change a task's soft date/time |
+| `create_task` | Create a task in a project |
+| `setup_recurring_task` | Create a new recurring task, or convert an existing task into instance #1 of a new series (`taskId` set) |
+| `adjust_recurring_task` | Edit an existing series' schedule/template (tri-state: omitted = unchanged, explicit `null` = clear) |
+| `pause_recurring_task` | Pause or resume a series |
+| `end_recurring_series` | End a series (detaches every task it ever produced, destroys none) |
+| `create_note` | Create a project note from structured blocks (paragraph, heading, bulletList, orderedList, taskList, blockquote, codeBlock, callout, table — no images) |
+| `create_area` | Create a top-level area |
+| `create_project` | Create a project inside an area |
+| `update_project` | Edit an existing project (name, description, area, folder icon) |
+| `add_subtask` | Add a subtask to a task |
+| `complete_subtask` | Mark a subtask done |
+| `process_bucket_item` | Process one inbox item into a task, a note, or trash |
+
+`create_note` and the note branch of `process_bucket_item` share one block→Tiptap
+converter; the propose-time response includes both the raw tool `input` and a
+`preview` field (the converted Tiptap doc) so the client can render the note body
+without a second round-trip. Plan-limit errors from the underlying service (e.g.
+`PLAN_LIMIT_EXCEEDED` on a 4th recurrence rule, or a 6th area on Free) surface
+through the existing tool_result `is_error` envelope unchanged — no new plumbing.
+
+---
+
 ### 3.10 Search
 
 #### GET /v1/search
@@ -1978,8 +2012,9 @@ materializations, not completions, and drift the moment either trigger retries.
 
 `streak` walks occurrences newest-first and counts consecutive `done`. The
 still-open instance (`active`) is skipped rather than breaking it — today being
-unfinished is not a failure yet — and a user-cancelled occurrence is skipped too,
-since opting out deliberately is not the same as letting the window lapse.
+unfinished is not a failure yet — and a `cancelled` or `skipped` occurrence is
+skipped too, since opting out deliberately (via `POST /tasks/:id/skip`, NIC-1997,
+or an explicit cancel) is not the same as letting the window lapse.
 **⚠️ Implementation note (2026-08-09):** `missed` is no longer a `tasks.status`
 value — `tasks.status` is exactly `active | done | cancelled`. A reaped
 occurrence's `status` is `cancelled`; the "it lapsed rather than was cancelled"
@@ -2003,12 +2038,44 @@ entirely, not just end its series. Broadcasts `recurrence.deleted`.
 
 **Response — 204 No Content** · **Errors:** `RECURRENCE_RULE_NOT_FOUND` (404)
 
-**No skip endpoint.** Ignoring an occurrence yields the reap (see Materialization
-below) — `status` becomes `cancelled` same as an explicit "no" via
-`PATCH /tasks/:id/status`, but the reap additionally stamps `occurrence_status =
-'missed'`. The two are deliberately distinguishable at the storage layer — the
-streak calculation tells them apart — even though both read as `cancelled` on
-the wire.
+**Ignoring an occurrence** (letting the window lapse) yields the automatic reap
+(see Materialization below) — `status` becomes `cancelled`, and the reap
+additionally stamps `occurrence_status = 'missed'`.
+
+#### POST /v1/tasks/:id/skip — NIC-1997
+
+**Deliberately opting out** of the live recurring occurrence is a distinct action
+from letting it lapse: `Skip` never breaks the streak (see below) and, unlike the
+automatic reap, is eligible **any time** — including ahead of the occurrence's due
+date. `status` becomes `cancelled` with `occurrence_status = 'skipped'`. Best-effort
+cancels any pending notification tied to the task. Broadcasts the existing
+`task.status_changed` event (no new WS event type).
+
+- **Auth required:** Yes
+
+**Response — 200 OK:** `TaskView`
+
+**Errors:** `TASK_NOT_FOUND` (404), `TASK_NOT_SKIPPABLE` (409 — not a recurring
+occurrence, this occurrence already skipped/missed/cancelled, or the task is no
+longer active)
+
+**`missed` / `cancelled` / `skipped` are deliberately distinguishable at the
+storage layer** — the streak calculation tells them apart — even though all three
+read as `status: "cancelled"` on the wire, discriminated by the backend-internal
+`occurrence_status` column (never exposed on `ITask`; see the stats endpoint above).
+
+#### Delete guard for a live recurring instance — NIC-1997
+
+`DELETE /v1/tasks/:id` now rejects hard-deleting **the still-live instance** of a
+recurring series (`recurrenceRuleId` set, `occurrenceStatus` null, `status:
+"active"`): the live instance is the recurrence engine's anchor for "what happens
+next," and destroying it out from under the engine would leave the rule with no
+successor to reap or materialize from. Historical rows the series ever produced —
+done, cancelled, skipped, or missed — carry no such role and stay deletable exactly
+as before.
+
+**Errors (new):** `RECURRING_LIVE_INSTANCE` (409 — "cannot delete the live instance
+of a recurring series; skip this occurrence or end the series instead")
 
 #### Materialization (E-050 / NIC-1773)
 

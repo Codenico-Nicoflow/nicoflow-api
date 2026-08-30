@@ -27,6 +27,40 @@ type ToolExecutor interface {
 	ExecComplete(ctx context.Context, userID, plan string, input json.RawMessage) (json.RawMessage, error)
 	ExecReschedule(ctx context.Context, userID, plan string, input json.RawMessage) (json.RawMessage, error)
 	ExecCreate(ctx context.Context, userID, plan string, input json.RawMessage) (json.RawMessage, error)
+
+	// ExecSetupRecurring / ExecAdjustRecurring / ExecPauseRecurring /
+	// ExecEndRecurringSeries / ExecCreateNote / ExecCreateArea /
+	// ExecCreateProject / ExecUpdateProject / ExecAddSubtask /
+	// ExecCompleteSubtask / ExecProcessBucketItem (NIC-1997): the 11 additional
+	// write tools, one Exec method each, matching the existing pattern exactly.
+	ExecSetupRecurring(ctx context.Context, userID, plan string, input json.RawMessage) (json.RawMessage, error)
+	ExecAdjustRecurring(ctx context.Context, userID, plan string, input json.RawMessage) (json.RawMessage, error)
+	ExecPauseRecurring(ctx context.Context, userID, plan string, input json.RawMessage) (json.RawMessage, error)
+	ExecEndRecurringSeries(ctx context.Context, userID string, input json.RawMessage) (json.RawMessage, error)
+	ExecCreateNote(ctx context.Context, userID string, input json.RawMessage) (json.RawMessage, error)
+	ExecCreateArea(ctx context.Context, userID, plan string, input json.RawMessage) (json.RawMessage, error)
+	ExecCreateProject(ctx context.Context, userID, plan string, input json.RawMessage) (json.RawMessage, error)
+	ExecUpdateProject(ctx context.Context, userID string, input json.RawMessage) (json.RawMessage, error)
+	ExecAddSubtask(ctx context.Context, userID string, input json.RawMessage) (json.RawMessage, error)
+	ExecCompleteSubtask(ctx context.Context, userID string, input json.RawMessage) (json.RawMessage, error)
+	ExecProcessBucketItem(ctx context.Context, userID, plan string, input json.RawMessage) (json.RawMessage, error)
+
+	// AvailableTools reports, by tool name, which of the 11 NIC-1997 write
+	// tools have their backing seam wired. A name absent from the map is
+	// unconditionally available (the six original tools). Read by
+	// buildChatRequest to filter DefaultTools() down to what can actually run.
+	AvailableTools() map[string]bool
+
+	// With... options inject each optional seam post-construction (mirrors
+	// task.Service's WithCleaner/WithMaterializer pattern) and return the
+	// executor for chaining. A nil argument leaves the seam (and its tools)
+	// disabled — never causes a startup error.
+	WithRecurrence(r RecurrenceCommands) ToolExecutor
+	WithNotes(n NoteService) ToolExecutor
+	WithProjectMgmt(p ProjectService) ToolExecutor
+	WithAreas(a AreaService) ToolExecutor
+	WithSubtasks(s SubtaskService) ToolExecutor
+	WithBuckets(b BucketService) ToolExecutor
 }
 
 // TaskCommands is the narrow slice of the task service the executor calls into.
@@ -142,15 +176,53 @@ type createTaskArgs struct {
 	URL              *string `json:"url,omitempty"`
 }
 
-// toolExecutor is the concrete ToolExecutor wired at startup.
+// toolExecutor is the concrete ToolExecutor wired at startup. The six
+// original fields are required; the NIC-1997 seams are optional (nil ⇒ their
+// tools are excluded from AvailableTools()).
 type toolExecutor struct {
 	tasks    TaskCommands
 	projects ProjectCommands
+
+	recurrence  RecurrenceCommands
+	notes       NoteService
+	projectMgmt ProjectService
+	areas       AreaService
+	subtasks    SubtaskService
+	buckets     BucketService
 }
 
 // NewToolExecutor builds the executor with its downstream services.
 func NewToolExecutor(tasks TaskCommands, projects ProjectCommands) ToolExecutor {
 	return &toolExecutor{tasks: tasks, projects: projects}
+}
+
+func (e *toolExecutor) WithRecurrence(r RecurrenceCommands) ToolExecutor { e.recurrence = r; return e }
+func (e *toolExecutor) WithNotes(n NoteService) ToolExecutor             { e.notes = n; return e }
+func (e *toolExecutor) WithProjectMgmt(p ProjectService) ToolExecutor    { e.projectMgmt = p; return e }
+func (e *toolExecutor) WithAreas(a AreaService) ToolExecutor             { e.areas = a; return e }
+func (e *toolExecutor) WithSubtasks(s SubtaskService) ToolExecutor       { e.subtasks = s; return e }
+func (e *toolExecutor) WithBuckets(b BucketService) ToolExecutor         { e.buckets = b; return e }
+
+// AvailableTools reports which of the 11 optional-seam tools can actually run.
+// Only entries present in the map gate a tool (see AvailableTools in tools.go);
+// omitting an entry here would incorrectly leave that tool ungated (always on).
+func (e *toolExecutor) AvailableTools() map[string]bool {
+	return map[string]bool{
+		ToolSetupRecurringTask:  e.recurrence != nil,
+		ToolAdjustRecurringTask: e.recurrence != nil,
+		ToolPauseRecurringTask:  e.recurrence != nil,
+		ToolEndRecurringSeries:  e.recurrence != nil,
+		ToolCreateNote:          e.notes != nil,
+		ToolCreateArea:          e.areas != nil,
+		ToolCreateProject:       e.projectMgmt != nil,
+		ToolUpdateProject:       e.projectMgmt != nil,
+		ToolAddSubtask:          e.subtasks != nil,
+		ToolCompleteSubtask:     e.subtasks != nil,
+		// process_bucket_item's note path also needs notes wired; gated by
+		// buckets alone here, ExecProcessBucketItem returns AI_UNAVAILABLE for
+		// the note branch specifically if notes is nil despite buckets being set.
+		ToolProcessBucketItem: e.buckets != nil,
+	}
 }
 
 // slimTasks projects an ai-domain task list into the slim payload. The concrete

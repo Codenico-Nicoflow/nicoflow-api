@@ -254,6 +254,29 @@ func (h *Handler) MarkMissed(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, view)
 }
 
+// Skip godoc
+// @Summary      Skip a recurring occurrence
+// @Description  Marks the live recurring occurrence skipped — the user deliberately opting out, without breaking their streak. Unlike mark-missed, eligible any time (including ahead of the occurrence's due date). Best-effort cancels any pending notification tied to the task.
+// @Tags         tasks
+// @Produce      json
+// @Param        id  path      string  true  "Task ID"
+// @Security     BearerAuth
+// @Success      200  {object}  TaskEnvelope   "The skipped task"
+// @Failure      404  {object}  ErrorEnvelope  "TASK_NOT_FOUND"
+// @Failure      409  {object}  ErrorEnvelope  "TASK_NOT_SKIPPABLE — not recurring, not the live instance, or not active"
+// @Router       /tasks/{id}/skip [post]
+func (h *Handler) Skip(w http.ResponseWriter, r *http.Request) {
+	userID := mw.UserIDFromCtx(r.Context())
+	id := chi.URLParam(r, "id")
+
+	view, err := h.svc.Skip(r.Context(), userID, id)
+	if err != nil {
+		writeAppError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, view)
+}
+
 // Schedule godoc
 // @Summary      Schedule a task (soft)
 // @Description  Sets the soft scheduledFor intention, optional scheduledTime (HH:MM, Pro-only) and rollsOver flag. scheduledFor null (or absent) unschedules. A bad date returns 400 INVALID_DATE.

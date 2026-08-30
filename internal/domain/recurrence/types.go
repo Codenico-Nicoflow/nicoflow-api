@@ -41,6 +41,10 @@ const (
 	StatusDone      = "done"
 	StatusMissed    = "missed"
 	StatusCancelled = "cancelled"
+	// StatusSkipped mirrors task.OccurrenceStatusSkipped (NIC-1997): the user
+	// deliberately opted out of an occurrence, same streak treatment as
+	// StatusCancelled — it must not break the streak.
+	StatusSkipped = "skipped"
 )
 
 var (
