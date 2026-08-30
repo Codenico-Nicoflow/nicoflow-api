@@ -46,12 +46,12 @@ func (s *fakeProviderStream) Next() bool {
 	s.i++
 	return true
 }
-func (s *fakeProviderStream) Text() string                   { return s.deltas[s.i-1] }
-func (s *fakeProviderStream) Err() error                     { return s.err }
-func (s *fakeProviderStream) Usage() ai.Usage                { return ai.Usage{InputTokens: 4, OutputTokens: 6} }
-func (s *fakeProviderStream) Close() error                   { return nil }
-func (s *fakeProviderStream) ToolUses() []ai.ToolUseBlock    { return nil }
-func (s *fakeProviderStream) StopReason() string             { return "end_turn" }
+func (s *fakeProviderStream) Text() string                { return s.deltas[s.i-1] }
+func (s *fakeProviderStream) Err() error                  { return s.err }
+func (s *fakeProviderStream) Usage() ai.Usage             { return ai.Usage{InputTokens: 4, OutputTokens: 6} }
+func (s *fakeProviderStream) Close() error                { return nil }
+func (s *fakeProviderStream) ToolUses() []ai.ToolUseBlock { return nil }
+func (s *fakeProviderStream) StopReason() string          { return "end_turn" }
 
 // collectSink records every delta; failAfter>0 simulates a client drop.
 type collectSink struct {

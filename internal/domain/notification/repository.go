@@ -20,6 +20,12 @@ type Repository interface {
 	MarkRead(ctx context.Context, userID, id string) (Notification, error)
 	MarkAllRead(ctx context.Context, userID string) (int, error)
 	Delete(ctx context.Context, userID, id string) error
+	// DeleteByEntity removes every notification whose metadata names the given
+	// entity — e.g. metadata->>'entityType'='task' AND metadata->>'entityId'=id.
+	// Best-effort cancellation callers (task.Skip, NIC-1997) use this rather than
+	// Delete-by-id because they don't know which notification ids, if any, exist
+	// for the entity. Idempotent: zero matches is not an error.
+	DeleteByEntity(ctx context.Context, userID, entityType, entityID string) (int, error)
 	// InsertIfAbsent inserts the notification, skipping it if a row with the same
 	// (user_id, dedupe_key) already exists. Returns the inserted row and true, or a
 	// zero row and false when it was a duplicate. Used by producers (cron) for
@@ -161,6 +167,23 @@ func (r *pgRepository) Delete(ctx context.Context, userID, id string) error {
 		return apperror.New(http.StatusNotFound, apperror.ErrNotificationNotFound, "notification not found")
 	}
 	return nil
+}
+
+// DeleteByEntity removes every notification tagged with the given entity in its
+// JSONB metadata. entityType/entityId are the same keys notify.go's meta()
+// helper writes (e.g. {"entityType":"task","entityId":"<id>"}).
+func (r *pgRepository) DeleteByEntity(ctx context.Context, userID, entityType, entityID string) (int, error) {
+	tag, err := r.db.Exec(ctx, `
+		DELETE FROM notifications
+		WHERE user_id = @userID
+		  AND metadata->>'entityType' = @entityType
+		  AND metadata->>'entityId' = @entityID`,
+		pgx.NamedArgs{"userID": userID, "entityType": entityType, "entityID": entityID},
+	)
+	if err != nil {
+		return 0, fmt.Errorf("notification.DeleteByEntity: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 func (r *pgRepository) InsertIfAbsent(ctx context.Context, n Notification) (Notification, bool, error) {

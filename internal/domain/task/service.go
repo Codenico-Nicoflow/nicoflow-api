@@ -30,6 +30,12 @@ const (
 	defaultPriorty  = "medium"
 	defaultEnergy   = "medium"
 
+	// OccurrenceStatusSkipped marks a live recurring occurrence the user
+	// explicitly opted out of — distinct from occurrence_status='missed' (the
+	// window lapsed unattended). Both are neutral for the streak calc; only
+	// skipped is settable directly by the user ahead of its due date (NIC-1997).
+	OccurrenceStatusSkipped = "skipped"
+
 	maxTitleLen = 255
 	maxNotesLen = 2000
 	maxURLLen   = 2048
@@ -61,6 +67,12 @@ type Service interface {
 	// has fully passed, just triggered by the user instead of waiting for the
 	// nightly-local-midnight sweep. Guarded to today-or-past occurrences only.
 	MarkMissed(ctx context.Context, userID, id string) (TaskView, error)
+	// Skip marks the live recurring occurrence skipped — the user deliberately
+	// opting out, without breaking their streak (NIC-1997). Unlike MarkMissed,
+	// eligible any time (not just today-or-past): skipping a future occurrence
+	// ahead of its due date is legitimate. Best-effort cancels any pending
+	// notification tied to the task via the NotificationCanceller seam.
+	Skip(ctx context.Context, userID, id string) (TaskView, error)
 	Schedule(ctx context.Context, userID, id, plan string, req ScheduleRequest) (TaskView, error)
 	// ListByDateRange returns the user's tasks scheduled within an inclusive date
 	// window, in calendar-grid order and with no roll-forward applied.
@@ -77,6 +89,9 @@ type Service interface {
 	// WithFocusTotals injects the focus-totals reader that enriches Focus +
 	// GetTask responses with totalFocusSeconds. Wired once in main.go.
 	WithFocusTotals(f FocusTotals) Service
+	// WithNotificationCanceller injects the seam Skip uses to best-effort cancel
+	// a task's pending notifications. Wired once in main.go.
+	WithNotificationCanceller(c NotificationCanceller) Service
 	// ListForUser is the cross-project user-scoped read backing the AI tool
 	// executor's list_tasks. See user_list.go.
 	ListForUser(ctx context.Context, userID string, f UserListFilter) (ListTasksResponse, error)
@@ -91,6 +106,16 @@ type service struct {
 	// best-effort recurrence successor on completion; nil disables (cron still catches it)
 	materializer RecurrenceMaterializer
 	focusTotals  FocusTotals // enriches Focus/GetTask with totalFocusSeconds; nil = zero-default
+	// best-effort notification cleanup on Skip; nil disables (NIC-1997)
+	notifCanceller NotificationCanceller
+}
+
+// WithNotificationCanceller injects the seam Skip uses to best-effort cancel a
+// task's pending notifications. Same post-construction shape as WithCleaner —
+// wired once in main.go once the notification service concrete is available.
+func (s *service) WithNotificationCanceller(c NotificationCanceller) Service {
+	s.notifCanceller = c
+	return s
 }
 
 // WithCleaner injects the attachment cleaner used on task delete. Kept as a
@@ -316,6 +341,20 @@ func (s *service) update(ctx context.Context, userID, id, plan string, req Updat
 }
 
 func (s *service) Delete(ctx context.Context, userID, id string) error {
+	// A recurring series' still-live instance is the recurrence engine's anchor
+	// for "what happens next" — hard-deleting it out from under the engine
+	// would leave the rule with no successor to reap or materialize from.
+	// Historical rows (done/cancelled/skipped/missed) carry no such role and
+	// stay deletable exactly as today.
+	current, err := s.repo.GetByID(ctx, userID, id)
+	if err != nil {
+		return err
+	}
+	if current.RecurrenceRuleID != nil && current.OccurrenceStatus == nil && current.Status == statusActive {
+		return apperror.New(http.StatusConflict, apperror.ErrRecurringLiveInstance,
+			"cannot delete the live instance of a recurring series; skip this occurrence or end the series instead")
+	}
+
 	if err := s.repo.Delete(ctx, userID, id); err != nil {
 		return err
 	}
@@ -436,6 +475,60 @@ func (s *service) MarkMissed(ctx context.Context, userID, id string) (TaskView, 
 	view := TaskToView(*t)
 	s.emit(userID, Event{Type: EventStatusChanged, Payload: view})
 	return view, nil
+}
+
+// Skip marks the live recurring occurrence skipped: the user deliberately
+// opting out, which (unlike MarkMissed) never breaks their streak and is
+// eligible any time — including ahead of the occurrence's due date. The
+// eligibility guard lives here in the service (not just the repo's WHERE
+// clause) so a rejected Skip can report WHY: not recurring, already
+// skipped/missed, or not the live instance. A GetByID first means a foreign or
+// missing task 404s before any eligibility question is asked.
+func (s *service) Skip(ctx context.Context, userID, id string) (TaskView, error) {
+	current, err := s.repo.GetByID(ctx, userID, id)
+	if err != nil {
+		return TaskView{}, err
+	}
+	if err := requireSkippable(current); err != nil {
+		return TaskView{}, err
+	}
+
+	t, err := s.repo.MarkSkipped(ctx, userID, id)
+	if err != nil {
+		return TaskView{}, err
+	}
+	if t == nil {
+		// Lost a race between the GetByID guard and the write (e.g. concurrently
+		// skipped/reaped) — re-derive the precise reason from a fresh read.
+		refetched, getErr := s.repo.GetByID(ctx, userID, id)
+		if getErr != nil {
+			return TaskView{}, getErr
+		}
+		return TaskView{}, requireSkippable(refetched)
+	}
+
+	view := TaskToView(*t)
+	s.cancelTaskNotifications(ctx, userID, id)
+	s.emit(userID, Event{Type: EventStatusChanged, Payload: view})
+	return view, nil
+}
+
+// requireSkippable reports the specific reason a task cannot be skipped, or nil
+// if it can. Checked in this order so the message names the first thing wrong.
+func requireSkippable(t *Task) error {
+	if t.RecurrenceRuleID == nil {
+		return apperror.New(http.StatusConflict, apperror.ErrTaskNotSkippable,
+			"this task is not a recurring occurrence")
+	}
+	if t.OccurrenceStatus != nil {
+		return apperror.New(http.StatusConflict, apperror.ErrTaskNotSkippable,
+			"this occurrence has already been "+*t.OccurrenceStatus)
+	}
+	if t.Status != statusActive {
+		return apperror.New(http.StatusConflict, apperror.ErrTaskNotSkippable,
+			"this occurrence is no longer active")
+	}
+	return nil
 }
 
 // validateScheduledFor rejects a non-ISO scheduledFor. It is a soft date

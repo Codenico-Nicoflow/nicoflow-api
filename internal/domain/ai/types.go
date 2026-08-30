@@ -2,6 +2,7 @@
 package ai
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 )
@@ -132,6 +133,139 @@ type (
 		Input              json.RawMessage `json:"input"`
 	}
 )
+
+// ── write-tool command seams (NIC-1997) ─────────────────────────────────────
+//
+// Each interface is the narrow slice of a domain service one or more new AI
+// write tools call into. Defined here (the consumer) so ai never imports
+// recurrence/note/project/area/task/bucket directly — the same JSON-carrier
+// pattern as TaskCommands/ProjectCommands above. Every concrete adapter is
+// wired post-construction in main.go via NewToolExecutor's With... options; a
+// nil seam simply excludes its tools from DefaultTools() rather than erroring
+// at call time (see toolExecutor.availableTools).
+
+// RecurrenceCommands is the narrow slice of the recurrence service the
+// setup/adjust/pause/end-series tools call into.
+type RecurrenceCommands interface {
+	Create(ctx context.Context, userID, projectID, plan string, req RuleCreateInput) (RuleViewJSON, error)
+	ConvertToRecurring(ctx context.Context, userID, taskID, plan string, req RuleCreateInput) (RuleViewJSON, error)
+	Update(ctx context.Context, userID, id, plan string, req RuleUpdateInput) (RuleViewJSON, error)
+	SetPaused(ctx context.Context, userID, id, plan string, paused bool) (RuleViewJSON, error)
+	Delete(ctx context.Context, userID, id string) error
+}
+
+// NoteService is the narrow slice of the note service create_note and the
+// note branch of process_bucket_item call into.
+type NoteService interface {
+	Create(ctx context.Context, userID, projectID, title string, content json.RawMessage) (NoteViewJSON, error)
+}
+
+// ProjectService is the narrow slice of the project service create_project /
+// update_project call into.
+type ProjectService interface {
+	Create(ctx context.Context, userID, areaID, plan string, req ProjectCreateInput) (ProjectViewJSON, error)
+	Update(ctx context.Context, userID, id string, req ProjectUpdateInput) (ProjectViewJSON, error)
+}
+
+// AreaService is the narrow slice of the area service create_area calls into.
+type AreaService interface {
+	Create(ctx context.Context, userID, plan string, name, color, icon string) (AreaViewJSON, error)
+}
+
+// SubtaskService is the narrow slice of the subtask service add_subtask /
+// complete_subtask call into.
+type SubtaskService interface {
+	Add(ctx context.Context, userID, taskID, title string) (SubtaskViewJSON, error)
+	SetDone(ctx context.Context, userID, taskID, subtaskID string, done bool) (SubtaskViewJSON, error)
+}
+
+// BucketService is the narrow slice of the bucket service process_bucket_item
+// calls into.
+type BucketService interface {
+	Process(ctx context.Context, userID, id, plan string, req BucketProcessInput) (BucketViewJSON, error)
+}
+
+// RuleViewJSON / NoteViewJSON / ProjectViewJSON / AreaViewJSON / SubtaskViewJSON
+// / BucketViewJSON are opaque JSON-carrier handles, exactly like TaskViewJSON —
+// the executor never inspects them, just re-marshals through json.Marshal.
+type (
+	RuleViewJSON    struct{ Value any }
+	NoteViewJSON    struct{ Value any }
+	ProjectViewJSON struct{ Value any }
+	AreaViewJSON    struct{ Value any }
+	SubtaskViewJSON struct{ Value any }
+	BucketViewJSON  struct{ Value any }
+)
+
+// RuleCreateInput mirrors recurrence.CreateRuleRequest.
+type RuleCreateInput struct {
+	Title            string
+	Notes            *string
+	Priority         string
+	Energy           string
+	EstimatedMinutes *int
+	ScheduledTime    *string
+	Freq             string
+	Interval         int
+	ByWeekday        []int
+	ByMonthday       *int
+	StartDate        string
+	EndDate          *string
+}
+
+// RuleUpdateInput mirrors recurrence.UpdateRuleRequest's tri-state optional
+// fields via the Set/Value pair (mirrors optional.Field's shape without ai
+// importing pkg/optional's generic — the adapter reconstructs the real type).
+type RuleUpdateInput struct {
+	Title            *string
+	NotesSet         bool
+	Notes            *string
+	Priority         *string
+	Energy           *string
+	EstimatedMinsSet bool
+	EstimatedMinutes *int
+	ScheduledTimeSet bool
+	ScheduledTime    *string
+	Freq             *string
+	Interval         *int
+	ByWeekday        *[]int
+	ByMonthdaySet    bool
+	ByMonthday       *int
+	StartDate        *string
+	EndDateSet       bool
+	EndDate          *string
+}
+
+// ProjectCreateInput mirrors project.CreateProjectRequest.
+type ProjectCreateInput struct {
+	Name        string
+	FolderIcon  string
+	Description *string
+}
+
+// ProjectUpdateInput mirrors project.UpdateProjectRequest.
+type ProjectUpdateInput struct {
+	Name        *string
+	AreaID      *string
+	FolderIcon  *string
+	DescSet     bool
+	Description *string
+}
+
+// BucketProcessInput mirrors bucket.ProcessBucketRequest for the task/note
+// processing paths the process_bucket_item tool supports (trash is handled
+// without either sub-detail).
+type BucketProcessInput struct {
+	ProcessingResult string
+	ProjectID        *string
+	TaskTitle        string
+	TaskNotes        *string
+	TaskPriority     *string
+	TaskEnergy       *string
+	TaskScheduledFor *string
+	NoteTitle        string
+	NoteContent      json.RawMessage
+}
 
 func sessionToView(s Session) SessionView {
 	return SessionView{

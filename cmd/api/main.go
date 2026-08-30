@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
@@ -41,6 +42,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/storage"
 	"github.com/nicoflow/nicoflow-api/internal/ws"
 	"github.com/nicoflow/nicoflow-api/pkg/cryptoutil"
+	"github.com/nicoflow/nicoflow-api/pkg/optional"
 	"github.com/nicoflow/nicoflow-api/pkg/pushutil"
 
 	// Generated Swagger docs (make swagger). Imported for the side-effect of
@@ -136,6 +138,10 @@ func main() {
 	taskBroadcaster := ws.NewTaskBroadcaster(wsHub)
 	taskSvc := task.NewService(taskRepo, notificationSvc, taskBroadcaster)
 	subtaskSvc := task.NewSubtaskService(task.NewSubtaskRepository(pool), taskBroadcaster)
+	// Skip (NIC-1997) best-effort cancels any pending notification tied to the
+	// skipped task via the notification repo directly — no service round-trip
+	// needed for a delete-by-metadata-match.
+	taskSvc = taskSvc.WithNotificationCanceller(taskNotificationCancelAdapter{notifications: notificationRepo})
 
 	// Bucket (inbox) — process turns an item into a task via the task service;
 	// notificationSvc drives the Pro inbox_zero notification (best-effort).
@@ -249,7 +255,13 @@ func main() {
 	aiSvc = aiSvc.WithExecutor(ai.NewToolExecutor(
 		aiTaskAdapter{tasks: taskSvc},
 		aiProjectAdapter{projects: projectSvc},
-	))
+	).
+		WithRecurrence(aiRecurrenceAdapter{rules: recurrenceSvc}).
+		WithNotes(aiNoteAdapter{notes: noteSvc}).
+		WithProjectMgmt(aiProjectMgmtAdapter{projects: projectSvc}).
+		WithAreas(aiAreaAdapter{areas: areaSvc}).
+		WithSubtasks(aiSubtaskAdapter{subtasks: subtaskSvc}).
+		WithBuckets(aiBucketAdapter{buckets: bucketSvc}))
 
 	// Google Calendar connection (E-052 / NIC-1844). Any credential or the
 	// encryption key missing ⇒ every endpoint returns a typed 503 and nothing
@@ -444,6 +456,18 @@ func (a recurrenceSweepAdapter) Run(ctx context.Context, dryRun bool) (*jobs.Rec
 // so the recurrence domain never imports task — the dependency runs the other
 // way (task consumes recurrence via the RecurrenceMaterializer seam), exactly
 // like recurrenceSweepAdapter above.
+// taskNotificationCancelAdapter adapts the notification repository to
+// task.NotificationCanceller (NIC-1997). Repository, not Service, is enough —
+// deleting by entity-metadata match needs no business logic.
+type taskNotificationCancelAdapter struct {
+	notifications notification.Repository
+}
+
+func (a taskNotificationCancelAdapter) CancelForTask(ctx context.Context, userID, taskID string) error {
+	_, err := a.notifications.DeleteByEntity(ctx, userID, "task", taskID)
+	return err
+}
+
 type recurrenceTaskAdapter struct {
 	tasks task.Service
 }
@@ -546,6 +570,171 @@ func (a aiProjectAdapter) List(ctx context.Context, userID string) (ai.ProjectLi
 		return ai.ProjectListJSON{}, err
 	}
 	return ai.ProjectListJSON{Value: list}, nil
+}
+
+// aiRecurrenceAdapter adapts the recurrence service to ai.RecurrenceCommands
+// (NIC-1997) so the ai domain never imports recurrence.
+type aiRecurrenceAdapter struct {
+	rules recurrence.Service
+}
+
+func toRuleCreateRequest(in ai.RuleCreateInput) recurrence.CreateRuleRequest {
+	return recurrence.CreateRuleRequest{
+		Title: in.Title, Notes: in.Notes, Priority: in.Priority, Energy: in.Energy,
+		EstimatedMinutes: in.EstimatedMinutes, ScheduledTime: in.ScheduledTime,
+		Freq: in.Freq, Interval: in.Interval, ByWeekday: in.ByWeekday, ByMonthday: in.ByMonthday,
+		StartDate: in.StartDate, EndDate: in.EndDate,
+	}
+}
+
+func (a aiRecurrenceAdapter) Create(ctx context.Context, userID, projectID, plan string, req ai.RuleCreateInput) (ai.RuleViewJSON, error) {
+	v, err := a.rules.Create(ctx, userID, projectID, plan, toRuleCreateRequest(req))
+	if err != nil {
+		return ai.RuleViewJSON{}, err
+	}
+	return ai.RuleViewJSON{Value: v}, nil
+}
+
+func (a aiRecurrenceAdapter) ConvertToRecurring(ctx context.Context, userID, taskID, plan string, req ai.RuleCreateInput) (ai.RuleViewJSON, error) {
+	v, err := a.rules.ConvertToRecurring(ctx, userID, taskID, plan, toRuleCreateRequest(req))
+	if err != nil {
+		return ai.RuleViewJSON{}, err
+	}
+	return ai.RuleViewJSON{Value: v}, nil
+}
+
+func (a aiRecurrenceAdapter) Update(ctx context.Context, userID, id, plan string, req ai.RuleUpdateInput) (ai.RuleViewJSON, error) {
+	v, err := a.rules.Update(ctx, userID, id, plan, recurrence.UpdateRuleRequest{
+		Title:            req.Title,
+		Notes:            optional.Field[string]{Set: req.NotesSet, Value: req.Notes},
+		Priority:         req.Priority,
+		Energy:           req.Energy,
+		EstimatedMinutes: optional.Field[int]{Set: req.EstimatedMinsSet, Value: req.EstimatedMinutes},
+		ScheduledTime:    optional.Field[string]{Set: req.ScheduledTimeSet, Value: req.ScheduledTime},
+		Freq:             req.Freq,
+		Interval:         req.Interval,
+		ByWeekday:        req.ByWeekday,
+		ByMonthday:       optional.Field[int]{Set: req.ByMonthdaySet, Value: req.ByMonthday},
+		StartDate:        req.StartDate,
+		EndDate:          optional.Field[string]{Set: req.EndDateSet, Value: req.EndDate},
+	})
+	if err != nil {
+		return ai.RuleViewJSON{}, err
+	}
+	return ai.RuleViewJSON{Value: v}, nil
+}
+
+func (a aiRecurrenceAdapter) SetPaused(ctx context.Context, userID, id, plan string, paused bool) (ai.RuleViewJSON, error) {
+	v, err := a.rules.SetPaused(ctx, userID, id, plan, paused)
+	if err != nil {
+		return ai.RuleViewJSON{}, err
+	}
+	return ai.RuleViewJSON{Value: v}, nil
+}
+
+func (a aiRecurrenceAdapter) Delete(ctx context.Context, userID, id string) error {
+	return a.rules.Delete(ctx, userID, id)
+}
+
+// aiNoteAdapter adapts the note service to ai.NoteService (NIC-1997).
+type aiNoteAdapter struct {
+	notes note.Service
+}
+
+func (a aiNoteAdapter) Create(ctx context.Context, userID, projectID, title string, content json.RawMessage) (ai.NoteViewJSON, error) {
+	v, err := a.notes.Create(ctx, userID, note.CreateNoteRequest{ProjectID: projectID, Title: title, Content: content})
+	if err != nil {
+		return ai.NoteViewJSON{}, err
+	}
+	return ai.NoteViewJSON{Value: v}, nil
+}
+
+// aiProjectMgmtAdapter adapts the project service to ai.ProjectService
+// (create_project / update_project, NIC-1997) — distinct from aiProjectAdapter
+// above, which only serves the read-only list_projects tool.
+type aiProjectMgmtAdapter struct {
+	projects project.Service
+}
+
+func (a aiProjectMgmtAdapter) Create(ctx context.Context, userID, areaID, plan string, req ai.ProjectCreateInput) (ai.ProjectViewJSON, error) {
+	v, err := a.projects.Create(ctx, userID, areaID, plan, project.CreateProjectRequest{
+		Name: req.Name, FolderIcon: req.FolderIcon, Description: req.Description,
+	})
+	if err != nil {
+		return ai.ProjectViewJSON{}, err
+	}
+	return ai.ProjectViewJSON{Value: v}, nil
+}
+
+func (a aiProjectMgmtAdapter) Update(ctx context.Context, userID, id string, req ai.ProjectUpdateInput) (ai.ProjectViewJSON, error) {
+	v, err := a.projects.Update(ctx, userID, id, project.UpdateProjectRequest{
+		Name: req.Name, AreaID: req.AreaID, FolderIcon: req.FolderIcon,
+		Description: optional.Field[string]{Set: req.DescSet, Value: req.Description},
+	})
+	if err != nil {
+		return ai.ProjectViewJSON{}, err
+	}
+	return ai.ProjectViewJSON{Value: v}, nil
+}
+
+// aiAreaAdapter adapts the area service to ai.AreaService (create_area, NIC-1997).
+type aiAreaAdapter struct {
+	areas area.Service
+}
+
+func (a aiAreaAdapter) Create(ctx context.Context, userID, plan, name, color, icon string) (ai.AreaViewJSON, error) {
+	v, err := a.areas.Create(ctx, userID, plan, area.CreateAreaRequest{Name: name, Color: color, Icon: icon})
+	if err != nil {
+		return ai.AreaViewJSON{}, err
+	}
+	return ai.AreaViewJSON{Value: v}, nil
+}
+
+// aiSubtaskAdapter adapts the task package's SubtaskService to ai.SubtaskService
+// (add_subtask / complete_subtask, NIC-1997).
+type aiSubtaskAdapter struct {
+	subtasks task.SubtaskService
+}
+
+func (a aiSubtaskAdapter) Add(ctx context.Context, userID, taskID, title string) (ai.SubtaskViewJSON, error) {
+	v, err := a.subtasks.Create(ctx, userID, taskID, task.CreateSubtaskRequest{Title: title})
+	if err != nil {
+		return ai.SubtaskViewJSON{}, err
+	}
+	return ai.SubtaskViewJSON{Value: v}, nil
+}
+
+func (a aiSubtaskAdapter) SetDone(ctx context.Context, userID, taskID, subtaskID string, done bool) (ai.SubtaskViewJSON, error) {
+	v, err := a.subtasks.Update(ctx, userID, taskID, subtaskID, task.UpdateSubtaskRequest{Done: &done})
+	if err != nil {
+		return ai.SubtaskViewJSON{}, err
+	}
+	return ai.SubtaskViewJSON{Value: v}, nil
+}
+
+// aiBucketAdapter adapts the bucket service to ai.BucketService
+// (process_bucket_item, NIC-1997).
+type aiBucketAdapter struct {
+	buckets bucket.Service
+}
+
+func (a aiBucketAdapter) Process(ctx context.Context, userID, id, plan string, req ai.BucketProcessInput) (ai.BucketViewJSON, error) {
+	preq := bucket.ProcessBucketRequest{ProcessingResult: req.ProcessingResult, ProjectID: req.ProjectID}
+	switch req.ProcessingResult {
+	case bucket.ResultTask:
+		preq.TaskDetails = &bucket.ProcessTaskDetails{
+			Title: req.TaskTitle, Notes: req.TaskNotes, Priority: req.TaskPriority,
+			Energy: req.TaskEnergy, ScheduledFor: req.TaskScheduledFor,
+		}
+	case bucket.ResultNote:
+		content := req.NoteContent
+		preq.NoteDetails = &bucket.ProcessNoteDetails{Title: req.NoteTitle, Content: &content}
+	}
+	v, err := a.buckets.Process(ctx, userID, id, plan, preq)
+	if err != nil {
+		return ai.BucketViewJSON{}, err
+	}
+	return ai.BucketViewJSON{Value: v}, nil
 }
 
 // aiToolExpiryAdapter adapts the ai repository to jobs.AIToolExpirySweeper so

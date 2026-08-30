@@ -68,13 +68,22 @@ const (
 	// already belongs to a rule. Edit that rule instead (PATCH
 	// /recurrence-rules/:id), never a second convert on the same task.
 	ErrTaskAlreadyRecurring = "TASK_ALREADY_RECURRING"
-	ErrInvalidDate          = "INVALID_DATE"
-	ErrInvalidPriority      = "INVALID_PRIORITY"
-	ErrInvalidAIContext     = "INVALID_AI_CONTEXT"
-	ErrInvalidEmail         = "INVALID_EMAIL"
-	ErrWeakPassword         = "WEAK_PASSWORD"
-	ErrRequired             = "REQUIRED"
-	ErrDatabaseError        = "DATABASE_ERROR"
-	ErrInternalServerError  = "INTERNAL_SERVER_ERROR"
-	ErrServiceUnavailable   = "SERVICE_UNAVAILABLE"
+	// TASK_NOT_SKIPPABLE (409) — Skip rejected: not a recurring occurrence, not
+	// the live instance (already reaped missed/skipped), or not active
+	// (NIC-1997).
+	ErrTaskNotSkippable = "TASK_NOT_SKIPPABLE"
+	// RECURRING_LIVE_INSTANCE (409) — Delete rejected: the task is the still-live
+	// instance of a recurring series. Skip the occurrence or end the series
+	// instead of hard-deleting it out from under the recurrence engine
+	// (NIC-1997).
+	ErrRecurringLiveInstance = "RECURRING_LIVE_INSTANCE"
+	ErrInvalidDate           = "INVALID_DATE"
+	ErrInvalidPriority       = "INVALID_PRIORITY"
+	ErrInvalidAIContext      = "INVALID_AI_CONTEXT"
+	ErrInvalidEmail          = "INVALID_EMAIL"
+	ErrWeakPassword          = "WEAK_PASSWORD"
+	ErrRequired              = "REQUIRED"
+	ErrDatabaseError         = "DATABASE_ERROR"
+	ErrInternalServerError   = "INTERNAL_SERVER_ERROR"
+	ErrServiceUnavailable    = "SERVICE_UNAVAILABLE"
 )
