@@ -202,7 +202,8 @@ func main() {
 	// instance #1 in the same transaction. FREE on every plan for reads; the
 	// 3-rule cap on free is enforced in the service.
 	recurrenceRepo := recurrence.NewRepository(pool)
-	recurrenceSvc := recurrence.NewService(recurrenceRepo, ws.NewRecurrenceBroadcaster(wsHub), recurrenceTaskAdapter{tasks: taskSvc})
+	recurrenceSvc := recurrence.NewService(recurrenceRepo, ws.NewRecurrenceBroadcaster(wsHub), recurrenceTaskAdapter{tasks: taskSvc}).
+		WithTaskBroadcaster(taskBroadcaster)
 
 	// The materializer (E-050 / NIC-1773) drives both triggers: the hourly cron
 	// sweep via run-all, and the synchronous successor on completion. It enforces
@@ -485,6 +486,7 @@ func (a recurrenceTaskAdapter) GetTemplate(ctx context.Context, userID, taskID s
 		Energy:           t.Energy,
 		EstimatedMinutes: t.EstimatedMinutes,
 		RecurrenceRuleID: t.RecurrenceRuleID,
+		Status:           t.Status,
 	}, nil
 }
 
@@ -552,6 +554,14 @@ func (a aiTaskAdapter) ListForUser(ctx context.Context, userID string, f ai.User
 		return ai.TaskListJSON{}, err
 	}
 	return ai.TaskListJSON{Value: list}, nil
+}
+
+func (a aiTaskAdapter) Skip(ctx context.Context, userID, id string) (ai.TaskViewJSON, error) {
+	v, err := a.tasks.Skip(ctx, userID, id)
+	if err != nil {
+		return ai.TaskViewJSON{}, err
+	}
+	return ai.TaskViewJSON{Value: v}, nil
 }
 
 // aiProjectAdapter adapts the project service to ai.ProjectCommands. Returns a

@@ -17,6 +17,7 @@ type stubTasks struct {
 	setStatus  func(ctx context.Context, userID, id, plan, status string) (TaskViewJSON, error)
 	schedule   func(ctx context.Context, userID, id, plan string, req ScheduleInput) (TaskViewJSON, error)
 	listForUsr func(ctx context.Context, userID string, f UserListInput) (TaskListJSON, error)
+	skip       func(ctx context.Context, userID, id string) (TaskViewJSON, error)
 }
 
 func (s stubTasks) Get(ctx context.Context, userID, id string) (TaskViewJSON, error) {
@@ -33,6 +34,12 @@ func (s stubTasks) Schedule(ctx context.Context, userID, id, plan string, req Sc
 }
 func (s stubTasks) ListForUser(ctx context.Context, userID string, f UserListInput) (TaskListJSON, error) {
 	return s.listForUsr(ctx, userID, f)
+}
+func (s stubTasks) Skip(ctx context.Context, userID, id string) (TaskViewJSON, error) {
+	if s.skip != nil {
+		return s.skip(ctx, userID, id)
+	}
+	return TaskViewJSON{}, nil
 }
 
 type stubProjects struct {

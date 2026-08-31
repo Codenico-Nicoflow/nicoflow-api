@@ -298,25 +298,8 @@ func (s *service) update(ctx context.Context, userID, id, plan string, req Updat
 	// PATCH, so a new estimate must still respect an already-stored time.
 	req.EstimatedMinutes = clampUpdateEstimate(req, *current)
 
-	// Reassignment: the target project must exist and belong to this user.
-	// Same 404 as a missing project — existence of another user's project is
-	// never revealed.
-	if req.ProjectID != nil {
-		owned, err := s.repo.ProjectOwned(ctx, userID, *req.ProjectID)
-		if err != nil {
-			return TaskView{}, err
-		}
-		if !owned {
-			return TaskView{}, apperror.New(http.StatusNotFound, apperror.ErrProjectNotFound, "project not found")
-		}
-	}
-
-	// Plan limit applies when a PATCH moves a task INTO active.
-	if plan == "free" && req.Status != nil &&
-		*req.Status == statusActive && current.Status != statusActive {
-		if err := s.enforceTaskLimit(ctx, userID, current.ProjectID); err != nil {
-			return TaskView{}, err
-		}
+	if err := s.requireUpdateAllowed(ctx, userID, plan, req, current); err != nil {
+		return TaskView{}, err
 	}
 
 	transition := completedAtTransition(current.Status, req.Status)
@@ -338,6 +321,30 @@ func (s *service) update(ctx context.Context, userID, id, plan string, req Updat
 		s.materializeSuccessor(ctx, userID, view)
 	}
 	return view, nil
+}
+
+// requireUpdateAllowed applies guards that depend on both the request and the
+// current task row: project ownership, recurring-occurrence reversal, plan limit.
+func (s *service) requireUpdateAllowed(ctx context.Context, userID, plan string, req UpdateTaskRequest, current *Task) error {
+	if req.ProjectID != nil {
+		owned, err := s.repo.ProjectOwned(ctx, userID, *req.ProjectID)
+		if err != nil {
+			return err
+		}
+		if !owned {
+			return apperror.New(http.StatusNotFound, apperror.ErrProjectNotFound, "project not found")
+		}
+	}
+	if req.Status != nil && *req.Status == statusActive &&
+		current.Status == statusDone && current.RecurrenceRuleID != nil {
+		return apperror.New(http.StatusConflict, apperror.ErrTaskRecurringNotReversible,
+			"a completed recurring occurrence cannot be reopened — its successor has already been created")
+	}
+	if plan == "free" && req.Status != nil &&
+		*req.Status == statusActive && current.Status != statusActive {
+		return s.enforceTaskLimit(ctx, userID, current.ProjectID)
+	}
+	return nil
 }
 
 func (s *service) Delete(ctx context.Context, userID, id string) error {
@@ -474,6 +481,9 @@ func (s *service) MarkMissed(ctx context.Context, userID, id string) (TaskView, 
 	}
 	view := TaskToView(*t)
 	s.emit(userID, Event{Type: EventStatusChanged, Payload: view})
+	// Spawn the successor synchronously so the series continues immediately —
+	// same best-effort semantics as completion (NIC-2000).
+	s.materializeSuccessor(ctx, userID, view)
 	return view, nil
 }
 
@@ -510,23 +520,42 @@ func (s *service) Skip(ctx context.Context, userID, id string) (TaskView, error)
 	view := TaskToView(*t)
 	s.cancelTaskNotifications(ctx, userID, id)
 	s.emit(userID, Event{Type: EventStatusChanged, Payload: view})
+	// Spawn the successor synchronously so the series continues without waiting
+	// for the hourly sweep — same best-effort semantics as completion (NIC-2000).
+	s.materializeSuccessor(ctx, userID, view)
 	return view, nil
 }
 
 // requireSkippable reports the specific reason a task cannot be skipped, or nil
-// if it can. Checked in this order so the message names the first thing wrong.
+// if it can. Each rejection reason has its own error code so clients can render
+// precise messages rather than a generic conflict (NIC-2000).
 func requireSkippable(t *Task) error {
 	if t.RecurrenceRuleID == nil {
-		return apperror.New(http.StatusConflict, apperror.ErrTaskNotSkippable,
+		return apperror.New(http.StatusConflict, apperror.ErrTaskNotRecurring,
 			"this task is not a recurring occurrence")
 	}
 	if t.OccurrenceStatus != nil {
-		return apperror.New(http.StatusConflict, apperror.ErrTaskNotSkippable,
-			"this occurrence has already been "+*t.OccurrenceStatus)
+		switch *t.OccurrenceStatus {
+		case "skipped":
+			return apperror.New(http.StatusConflict, apperror.ErrTaskAlreadySkipped,
+				"this occurrence has already been skipped")
+		case "missed":
+			return apperror.New(http.StatusConflict, apperror.ErrTaskAlreadyMissed,
+				"this occurrence has already been marked missed")
+		case "paused":
+			return apperror.New(http.StatusConflict, apperror.ErrTaskAlreadyPaused,
+				"this occurrence belongs to a paused series")
+		case "cancelled":
+			return apperror.New(http.StatusConflict, apperror.ErrTaskAlreadyCancelled,
+				"this occurrence has already been cancelled")
+		default:
+			return apperror.New(http.StatusConflict, apperror.ErrTaskNotSkippable,
+				"this occurrence has already been "+*t.OccurrenceStatus)
+		}
 	}
 	if t.Status != statusActive {
-		return apperror.New(http.StatusConflict, apperror.ErrTaskNotSkippable,
-			"this occurrence is no longer active")
+		return apperror.New(http.StatusConflict, apperror.ErrTaskNotActive,
+			"this occurrence is no longer active (status: "+t.Status+")")
 	}
 	return nil
 }
@@ -560,6 +589,19 @@ func (s *service) Schedule(ctx context.Context, userID, id, plan string, req Sch
 	if req.ScheduledFor == nil && req.ScheduledTime != nil {
 		return TaskView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput,
 			"scheduledTime requires a scheduledFor date")
+	}
+
+	// Guard: manually rescheduling a live recurring occurrence desyncs
+	// scheduled_for from occurrence_date and causes the sweep to wrongly reap
+	// the row as missed on the next tick (NIC-2000). Historical rows
+	// (done/cancelled/skipped/missed/paused) and non-recurring tasks are fine.
+	current, err := s.repo.GetByID(ctx, userID, id)
+	if err != nil {
+		return TaskView{}, err
+	}
+	if current.RecurrenceRuleID != nil && current.OccurrenceStatus == nil && current.Status == statusActive {
+		return TaskView{}, apperror.New(http.StatusConflict, apperror.ErrTaskRecurringNotReschedulable,
+			"cannot manually reschedule a live recurring occurrence — skip it or edit the series schedule instead")
 	}
 
 	t, err := s.repo.UpdateSchedule(ctx, userID, id, req.ScheduledFor, req.ScheduledTime, req.RollsOver)

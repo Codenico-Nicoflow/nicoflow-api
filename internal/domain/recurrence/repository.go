@@ -329,6 +329,29 @@ func (r *pgRepo) SetPaused(ctx context.Context, userID, id string, paused bool) 
 	return out, nil
 }
 
+// RetireLiveInstance cancels the one still-active, un-reaped occurrence for the
+// given rule, marking it (status='cancelled', occurrence_status='paused') so it
+// disappears from Today/TimeSpread. Called when the series is paused. A no-op
+// when no live instance exists (e.g. the series was already skipped/missed).
+// Returns the retired task's ID, empty string when nothing was retired.
+func (r *pgRepo) RetireLiveInstance(ctx context.Context, userID, ruleID string) (string, error) {
+	var retiredID string
+	err := r.db.QueryRow(ctx, `
+		UPDATE tasks SET status = 'cancelled', occurrence_status = 'paused', updated_at = NOW()
+		WHERE recurrence_rule_id = $1 AND user_id = $2
+		  AND status = 'active' AND occurrence_status IS NULL
+		RETURNING id`,
+		ruleID, userID,
+	).Scan(&retiredID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("recurrence.RetireLiveInstance: %w", err)
+	}
+	return retiredID, nil
+}
+
 // Delete ends the series. EVERY task the rule ever touched — including the
 // live, still-pending occurrence — is detached, never destroyed: the FK's
 // ON DELETE SET NULL already did this for done/cancelled occurrences, but the

@@ -70,8 +70,24 @@ const (
 	ErrTaskAlreadyRecurring = "TASK_ALREADY_RECURRING"
 	// TASK_NOT_SKIPPABLE (409) — Skip rejected: not a recurring occurrence, not
 	// the live instance (already reaped missed/skipped), or not active
-	// (NIC-1997).
+	// (NIC-1997). Preserved for backward compat; callers now get one of the
+	// fine-grained codes below instead.
 	ErrTaskNotSkippable = "TASK_NOT_SKIPPABLE"
+	// Fine-grained Skip rejection codes (NIC-2000 hardening pass). All 409.
+	ErrTaskNotRecurring     = "TASK_NOT_RECURRING"     // task has no recurrence rule
+	ErrTaskAlreadySkipped   = "TASK_ALREADY_SKIPPED"   // occurrence_status = 'skipped'
+	ErrTaskAlreadyMissed    = "TASK_ALREADY_MISSED"    // occurrence_status = 'missed'
+	ErrTaskAlreadyPaused    = "TASK_ALREADY_PAUSED"    // occurrence_status = 'paused'
+	ErrTaskAlreadyCancelled = "TASK_ALREADY_CANCELLED" // occurrence_status = 'cancelled' (legacy)
+	ErrTaskNotActive        = "TASK_NOT_ACTIVE"        // status != 'active'
+	// TASK_RECURRING_NOT_RESCHEDULABLE (409) — Schedule rejected: cannot manually
+	// reschedule a live recurring occurrence (desyncs scheduled_for from
+	// occurrence_date and causes the sweep to unjustly reap it as missed).
+	ErrTaskRecurringNotReschedulable = "TASK_RECURRING_NOT_RESCHEDULABLE"
+	// TASK_RECURRING_NOT_REVERSIBLE (409) — un-complete rejected: a completed
+	// recurring occurrence cannot be reopened because its successor was already
+	// created when it was completed.
+	ErrTaskRecurringNotReversible = "TASK_RECURRING_NOT_REVERSIBLE"
 	// RECURRING_LIVE_INSTANCE (409) — Delete rejected: the task is the still-live
 	// instance of a recurring series. Skip the occurrence or end the series
 	// instead of hard-deleting it out from under the recurrence engine

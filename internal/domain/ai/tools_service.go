@@ -37,6 +37,7 @@ type ToolExecutor interface {
 	ExecAdjustRecurring(ctx context.Context, userID, plan string, input json.RawMessage) (json.RawMessage, error)
 	ExecPauseRecurring(ctx context.Context, userID, plan string, input json.RawMessage) (json.RawMessage, error)
 	ExecEndRecurringSeries(ctx context.Context, userID string, input json.RawMessage) (json.RawMessage, error)
+	ExecSkipRecurringOccurrence(ctx context.Context, userID string, input json.RawMessage) (json.RawMessage, error)
 	ExecCreateNote(ctx context.Context, userID string, input json.RawMessage) (json.RawMessage, error)
 	ExecCreateArea(ctx context.Context, userID, plan string, input json.RawMessage) (json.RawMessage, error)
 	ExecCreateProject(ctx context.Context, userID, plan string, input json.RawMessage) (json.RawMessage, error)
@@ -72,6 +73,9 @@ type TaskCommands interface {
 	SetStatus(ctx context.Context, userID, id, plan, status string) (TaskViewJSON, error)
 	Schedule(ctx context.Context, userID, id, plan string, req ScheduleInput) (TaskViewJSON, error)
 	ListForUser(ctx context.Context, userID string, f UserListInput) (TaskListJSON, error)
+	// Skip marks the live recurring occurrence as skipped without breaking the
+	// user's streak (NIC-2000). Returns the updated task view.
+	Skip(ctx context.Context, userID, id string) (TaskViewJSON, error)
 }
 
 // ProjectCommands is the narrow slice of the project service the executor uses.
@@ -221,7 +225,8 @@ func (e *toolExecutor) AvailableTools() map[string]bool {
 		// process_bucket_item's note path also needs notes wired; gated by
 		// buckets alone here, ExecProcessBucketItem returns AI_UNAVAILABLE for
 		// the note branch specifically if notes is nil despite buckets being set.
-		ToolProcessBucketItem: e.buckets != nil,
+		ToolProcessBucketItem:       e.buckets != nil,
+		ToolSkipRecurringOccurrence: true, // always available — uses the tasks seam already wired
 	}
 }
 
