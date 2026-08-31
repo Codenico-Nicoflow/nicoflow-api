@@ -865,13 +865,14 @@ func TestService_Skip_HappyPath(t *testing.T) {
 
 func TestService_Skip_ConflictBranches(t *testing.T) {
 	tests := []struct {
-		name   string
-		stored *Task
+		name     string
+		stored   *Task
+		wantCode string
 	}{
-		{"not recurring", &Task{ID: "t1", UserID: "u1", Status: statusActive}},
-		{"already skipped", &Task{ID: "t1", UserID: "u1", Status: statusActive, RecurrenceRuleID: ptr("r1"), OccurrenceStatus: ptr("skipped")}},
-		{"already missed", &Task{ID: "t1", UserID: "u1", Status: statusActive, RecurrenceRuleID: ptr("r1"), OccurrenceStatus: ptr("missed")}},
-		{"not active", &Task{ID: "t1", UserID: "u1", Status: statusDone, RecurrenceRuleID: ptr("r1")}},
+		{"not recurring", &Task{ID: "t1", UserID: "u1", Status: statusActive}, apperror.ErrTaskNotRecurring},
+		{"already skipped", &Task{ID: "t1", UserID: "u1", Status: statusActive, RecurrenceRuleID: ptr("r1"), OccurrenceStatus: ptr("skipped")}, apperror.ErrTaskAlreadySkipped},
+		{"already missed", &Task{ID: "t1", UserID: "u1", Status: statusActive, RecurrenceRuleID: ptr("r1"), OccurrenceStatus: ptr("missed")}, apperror.ErrTaskAlreadyMissed},
+		{"not active", &Task{ID: "t1", UserID: "u1", Status: statusDone, RecurrenceRuleID: ptr("r1")}, apperror.ErrTaskNotActive},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -886,8 +887,8 @@ func TestService_Skip_ConflictBranches(t *testing.T) {
 
 			_, err := svc.Skip(context.Background(), "u1", "t1")
 			ae := appErr(err)
-			if ae == nil || ae.Code != apperror.ErrTaskNotSkippable {
-				t.Fatalf("err = %v, want TASK_NOT_SKIPPABLE", err)
+			if ae == nil || ae.Code != tt.wantCode {
+				t.Fatalf("err = %v, want %s", err, tt.wantCode)
 			}
 		})
 	}
@@ -928,8 +929,8 @@ func TestService_Skip_RaceLostReDerivesReason(t *testing.T) {
 
 	_, err := svc.Skip(context.Background(), "u1", "t1")
 	ae := appErr(err)
-	if ae == nil || ae.Code != apperror.ErrTaskNotSkippable {
-		t.Fatalf("err = %v, want TASK_NOT_SKIPPABLE", err)
+	if ae == nil || ae.Code != apperror.ErrTaskAlreadyMissed {
+		t.Fatalf("err = %v, want TASK_ALREADY_MISSED", err)
 	}
 	if calls != 2 {
 		t.Errorf("GetByID calls = %d, want 2 (guard + re-derive)", calls)
@@ -998,5 +999,163 @@ func TestService_Delete_AllowsHistoricalRecurringRows(t *testing.T) {
 				t.Error("expected repo.Delete to be called for a historical/non-recurring row")
 			}
 		})
+	}
+}
+
+// requireSkippable exposes paused/cancelled codes not in the shared ConflictBranches table.
+func TestRequireSkippable_PausedAndCancelled(t *testing.T) {
+	tests := []struct {
+		name     string
+		task     *Task
+		wantCode string
+	}{
+		{
+			"paused occurrence",
+			&Task{ID: "t1", UserID: "u1", Status: statusActive, RecurrenceRuleID: ptr("r1"), OccurrenceStatus: ptr("paused")},
+			apperror.ErrTaskAlreadyPaused,
+		},
+		{
+			"cancelled occurrence",
+			&Task{ID: "t1", UserID: "u1", Status: "cancelled", RecurrenceRuleID: ptr("r1"), OccurrenceStatus: ptr("cancelled")},
+			apperror.ErrTaskAlreadyCancelled,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := requireSkippable(tt.task)
+			ae := appErr(err)
+			if ae == nil || ae.Code != tt.wantCode {
+				t.Fatalf("requireSkippable = %v, want %s", err, tt.wantCode)
+			}
+		})
+	}
+}
+
+// MarkMissed must call materializeSuccessor on a successful miss so the series
+// continues without waiting for the hourly sweep.
+func TestMarkMissed_MaterializesSuccessor(t *testing.T) {
+	ruleID := "rule-1"
+	missed := &Task{
+		ID: "t1", UserID: "u1", ProjectID: "p1", Title: "Daily walk", Status: "cancelled",
+		RecurrenceRuleID: &ruleID, OccurrenceStatus: ptr("missed"),
+	}
+	repo := &mockRepo{
+		markMissed: func(_ context.Context, _, _ string) (*Task, error) { return missed, nil },
+	}
+	m := &fakeMaterializer{}
+	svc := NewService(repo, nil, nil).WithMaterializer(m)
+
+	if _, err := svc.MarkMissed(context.Background(), "u1", "t1"); err != nil {
+		t.Fatalf("MarkMissed: %v", err)
+	}
+	if len(m.calls) != 1 || m.calls[0] != ruleID {
+		t.Errorf("materializer calls = %v, want [%s]", m.calls, ruleID)
+	}
+}
+
+// MarkMissed with no successor materializer wired must not panic.
+func TestMarkMissed_NilMaterializerIsSafe(t *testing.T) {
+	ruleID := "rule-1"
+	missed := &Task{
+		ID: "t1", UserID: "u1", ProjectID: "p1", Status: "cancelled",
+		RecurrenceRuleID: &ruleID, OccurrenceStatus: ptr("missed"),
+	}
+	repo := &mockRepo{
+		markMissed: func(_ context.Context, _, _ string) (*Task, error) { return missed, nil },
+	}
+	svc := NewService(repo, nil, nil)
+
+	if _, err := svc.MarkMissed(context.Background(), "u1", "t1"); err != nil {
+		t.Fatalf("MarkMissed: %v", err)
+	}
+}
+
+// Schedule must reject a live recurring instance with TASK_RECURRING_NOT_RESCHEDULABLE.
+func TestSchedule_RejectsLiveRecurringInstance(t *testing.T) {
+	ruleID := "rule-1"
+	live := &Task{
+		ID: "t1", UserID: "u1", Status: statusActive,
+		RecurrenceRuleID: &ruleID,
+	}
+	repo := &mockRepo{
+		getByID: func(_ context.Context, _, _ string) (*Task, error) { return live, nil },
+	}
+	svc := NewService(repo, nil, nil)
+
+	_, err := svc.Schedule(context.Background(), "u1", "t1", "free", ScheduleRequest{ScheduledFor: ptr("2026-10-01")})
+	ae := appErr(err)
+	if ae == nil || ae.Code != apperror.ErrTaskRecurringNotReschedulable {
+		t.Fatalf("err = %v, want TASK_RECURRING_NOT_RESCHEDULABLE", err)
+	}
+}
+
+// Schedule must allow non-recurring tasks and historical recurring rows.
+func TestSchedule_AllowsNonLiveRows(t *testing.T) {
+	ruleID := "rule-1"
+	tests := []struct {
+		name string
+		task *Task
+	}{
+		{"non-recurring", &Task{ID: "t1", UserID: "u1", Status: statusActive}},
+		{"done recurring", &Task{ID: "t1", UserID: "u1", Status: statusDone, RecurrenceRuleID: &ruleID}},
+		{"skipped occurrence", &Task{ID: "t1", UserID: "u1", Status: statusActive, RecurrenceRuleID: &ruleID, OccurrenceStatus: ptr("skipped")}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &mockRepo{
+				getByID: func(_ context.Context, _, _ string) (*Task, error) { return tt.task, nil },
+				updateSchedule: func(_ context.Context, _, _ string, sf, st *string, _ *bool) (Task, error) {
+					return Task{ID: "t1", ScheduledFor: sf, ScheduledTime: st}, nil
+				},
+			}
+			if _, err := NewService(repo, nil, nil).Schedule(context.Background(), "u1", "t1", "free", ScheduleRequest{ScheduledFor: ptr("2026-10-01")}); err != nil {
+				t.Fatalf("%s: unexpected error: %v", tt.name, err)
+			}
+		})
+	}
+}
+
+// update() must block done→active on a recurring occurrence.
+func TestUpdate_RejectsReopenOfRecurringOccurrence(t *testing.T) {
+	ruleID := "rule-1"
+	stored := Task{
+		ID: "t1", UserID: "u1", ProjectID: "p1", Status: statusDone,
+		RecurrenceRuleID: &ruleID,
+	}
+	repo := &mockRepo{
+		getByID:     func(_ context.Context, _, _ string) (*Task, error) { return &stored, nil },
+		countActive: func(_ context.Context, _, _ string) (int, error) { return 0, nil },
+	}
+	svc := NewService(repo, nil, nil)
+
+	_, err := svc.Update(context.Background(), "u1", "t1", "free", UpdateTaskRequest{Status: ptr(statusActive)})
+	ae := appErr(err)
+	if ae == nil || ae.Code != apperror.ErrTaskRecurringNotReversible {
+		t.Fatalf("err = %v, want TASK_RECURRING_NOT_REVERSIBLE", err)
+	}
+}
+
+// update() must allow done→active on a non-recurring task.
+func TestUpdate_AllowsReopenOfNonRecurringTask(t *testing.T) {
+	stored := Task{ID: "t1", UserID: "u1", ProjectID: "p1", Status: statusDone}
+	repo := &mockRepo{
+		getByID: func(_ context.Context, _, _ string) (*Task, error) { return &stored, nil },
+		update: func(_ context.Context, _, _ string, req UpdateTaskRequest, _ completedAtChange) (Task, error) {
+			out := stored
+			if req.Status != nil {
+				out.Status = *req.Status
+			}
+			return out, nil
+		},
+		countActive: func(_ context.Context, _, _ string) (int, error) { return 0, nil },
+	}
+	svc := NewService(repo, nil, nil)
+
+	view, err := svc.Update(context.Background(), "u1", "t1", "free", UpdateTaskRequest{Status: ptr(statusActive)})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if view.Status != statusActive {
+		t.Errorf("status = %q, want active", view.Status)
 	}
 }

@@ -22,6 +22,9 @@ type service struct {
 	now         func() time.Time // injectable clock — the cursor is the only time read
 	broadcaster Broadcaster      // nil disables emission
 	taskReader  TaskTemplateReader
+	// taskBroadcaster fires task.status_changed when SetPaused retires the live
+	// occurrence. Reuses the same interface as Materializer. Nil disables emission.
+	taskBroadcaster TaskEventBroadcaster
 }
 
 // NewService creates a recurrence Service with a real clock. broadcaster may be
@@ -36,6 +39,14 @@ func NewServiceWithClock(
 	repo Repository, broadcaster Broadcaster, taskReader TaskTemplateReader, now func() time.Time,
 ) Service {
 	return &service{repo: repo, now: now, broadcaster: broadcaster, taskReader: taskReader}
+}
+
+// WithTaskBroadcaster injects the task-level WS emitter used when SetPaused
+// retires the series' live occurrence. Nil is valid (emission disabled). Same
+// post-construction pattern as task.Service's WithMaterializer.
+func (s *service) WithTaskBroadcaster(tb TaskEventBroadcaster) Service {
+	s.taskBroadcaster = tb
+	return s
 }
 
 // emit fans a domain event out best-effort. A nil broadcaster is a valid no-op.
@@ -168,6 +179,13 @@ func (s *service) ConvertToRecurring(
 		return RuleView{}, apperror.New(http.StatusConflict, apperror.ErrTaskAlreadyRecurring,
 			"this task is already recurring — edit its existing rule instead")
 	}
+	// Only an active task can be promoted to a recurring instance. A done or
+	// cancelled task would be silently resurrected by the ConvertTask SQL
+	// (status='active' is forced unconditionally there), which is wrong (NIC-2000).
+	if tmpl.Status != "active" {
+		return RuleView{}, apperror.New(http.StatusConflict, apperror.ErrTaskNotActive,
+			"only an active task can be converted to a recurring series (task status: "+tmpl.Status+")")
+	}
 
 	req.Title = tmpl.Title
 	req.Notes = tmpl.Notes
@@ -277,17 +295,9 @@ func (s *service) Update(ctx context.Context, userID, id, plan string, req Updat
 		return RuleView{}, err
 	}
 
-	// A schedule change invalidates the stored cursor — recompute it from the
-	// same anchor the sweep will use, so the next fire lands on the new schedule.
+	// A schedule change invalidates the stored cursor — recompute from today.
 	if scheduleChanged {
-		anchor := dayOf(s.now().UTC()).AddDate(0, 0, -1)
-		if updated.StartDate.After(anchor) {
-			anchor = updated.StartDate.AddDate(0, 0, -1)
-		}
-		updated.NextOccurrence = nil
-		if next, ok := NextOccurrence(updated, anchor); ok {
-			updated.NextOccurrence = &next
-		}
+		updated.NextOccurrence = recomputeNextOccurrence(updated, s.now)
 	}
 
 	saved, err := s.repo.Update(ctx, updated)
@@ -398,13 +408,55 @@ func (s *service) SetPaused(ctx context.Context, userID, id, plan string, paused
 			return RuleView{}, err
 		}
 	}
+	if paused {
+		// Retire the live occurrence so it disappears from Today/TimeSpread the
+		// moment the series is paused (NIC-2000). Best-effort: a failure is logged
+		// but must not block the pause itself — the sweep won't produce a new
+		// instance while the rule is paused, so the orphaned occurrence will be
+		// reaped as missed on the next overdue pass if this ever fails.
+		retiredID, retireErr := s.repo.RetireLiveInstance(ctx, userID, id)
+		if retireErr != nil {
+			log.Warn().Err(retireErr).Str("rule_id", id).Str("user_id", userID).
+				Msg("recurrence: retire live instance on pause failed (best-effort)")
+		} else if retiredID != "" && s.taskBroadcaster != nil {
+			s.taskBroadcaster.BroadcastTaskStatusChanged(userID, retiredID)
+		}
+	}
+
 	r, err := s.repo.SetPaused(ctx, userID, id, paused)
 	if err != nil {
 		return RuleView{}, err
 	}
+
+	if !paused {
+		// Resume: the stored cursor may be stale (computed at pause time, against
+		// an old "today"). Recompute from today so the first fire after resuming
+		// lands on the correct next date (NIC-2000).
+		r.NextOccurrence = recomputeNextOccurrence(r, s.now)
+		saved, err := s.repo.Update(ctx, r)
+		if err != nil {
+			return RuleView{}, err
+		}
+		r = saved
+	}
+
 	view := ToView(r)
 	s.emit(userID, Event{Type: EventUpdated, Payload: view})
 	return view, nil
+}
+
+// recomputeNextOccurrence derives the next fire date from today's anchor using
+// the same logic Update applies on a schedule change. Shared by Update and
+// SetPaused's resume branch so the two can't drift apart (NIC-2000).
+func recomputeNextOccurrence(r Rule, now func() time.Time) *time.Time {
+	anchor := dayOf(now().UTC()).AddDate(0, 0, -1)
+	if r.StartDate.After(anchor) {
+		anchor = r.StartDate.AddDate(0, 0, -1)
+	}
+	if next, ok := NextOccurrence(r, anchor); ok {
+		return &next
+	}
+	return nil
 }
 
 // enforceEditableOnFreePlan is the graceful-downgrade gate: a free-plan user

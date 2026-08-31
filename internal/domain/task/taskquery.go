@@ -56,12 +56,15 @@ func buildListQuery(userID, projectID string, f ListTasksFilter) (whereSuffix st
 		clauses = append(clauses, "status = @status")
 		args["status"] = *f.Status
 	} else {
-		// No explicit status filter → hide done and reaped/missed recurring
-		// occurrences. Years of occurrence history would otherwise bury the
-		// working view. A user-cancelled occurrence (occurrence_status NULL)
-		// still lists, same as a one-off `done` task lists as it always has —
-		// this changes nothing for non-recurring projects.
-		clauses = append(clauses, "(recurrence_rule_id IS NULL OR (status != 'done' AND occurrence_status IS DISTINCT FROM 'missed'))")
+		// No explicit status filter → hide done and terminal recurring
+		// occurrences (missed/skipped/paused). Years of occurrence history would
+		// otherwise bury the working view. NULL occurrence_status (the live
+		// instance) always passes. A user-cancelled occurrence (status='cancelled',
+		// occurrence_status=NULL) is intentionally kept visible — it was a
+		// non-recurring cancellation, not a reaped/retired one. IS NULL guard is
+		// required because NULL NOT IN (...) evaluates to NULL in SQL (not true),
+		// which would wrongly exclude live instances.
+		clauses = append(clauses, "(recurrence_rule_id IS NULL OR (status != 'done' AND (occurrence_status IS NULL OR occurrence_status NOT IN ('missed', 'skipped', 'paused'))))")
 	}
 	if f.Priority != nil {
 		clauses = append(clauses, "priority = @priority")

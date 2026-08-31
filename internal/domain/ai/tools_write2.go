@@ -202,6 +202,24 @@ func (e *toolExecutor) ExecEndRecurringSeries(ctx context.Context, userID string
 	return json.Marshal(map[string]string{"id": args.RuleID, "outcome": "series_ended"})
 }
 
+// ── skip_recurring_occurrence ────────────────────────────────────────────
+
+type skipRecurringOccurrenceArgs struct {
+	TaskID string `json:"taskId"`
+}
+
+func (e *toolExecutor) ExecSkipRecurringOccurrence(ctx context.Context, userID string, input json.RawMessage) (json.RawMessage, error) {
+	var args skipRecurringOccurrenceArgs
+	if err := json.Unmarshal(input, &args); err != nil || args.TaskID == "" {
+		return nil, invalidArgs("taskId is required")
+	}
+	v, err := e.tasks.Skip(ctx, userID, args.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(v.Value)
+}
+
 // ── create_note ──────────────────────────────────────────────────────────
 
 type createNoteArgs struct {

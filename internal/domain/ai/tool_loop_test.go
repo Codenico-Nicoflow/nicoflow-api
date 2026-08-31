@@ -211,6 +211,9 @@ func (e *noopExecutor) ExecCompleteSubtask(context.Context, string, json.RawMess
 func (e *noopExecutor) ExecProcessBucketItem(context.Context, string, string, json.RawMessage) (json.RawMessage, error) {
 	return nil, errAIUnavailable()
 }
+func (e *noopExecutor) ExecSkipRecurringOccurrence(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+	return nil, errAIUnavailable()
+}
 func (e *noopExecutor) AvailableTools() map[string]bool                { return nil }
 func (e *noopExecutor) WithRecurrence(RecurrenceCommands) ToolExecutor { return e }
 func (e *noopExecutor) WithNotes(NoteService) ToolExecutor             { return e }

@@ -13,36 +13,38 @@ const (
 	ToolCreateTask     = "create_task"
 
 	// NIC-1997: 11 additional write tools, all propose→confirm.
-	ToolSetupRecurringTask  = "setup_recurring_task"
-	ToolAdjustRecurringTask = "adjust_recurring_task"
-	ToolPauseRecurringTask  = "pause_recurring_task"
-	ToolEndRecurringSeries  = "end_recurring_series"
-	ToolCreateNote          = "create_note"
-	ToolCreateArea          = "create_area"
-	ToolCreateProject       = "create_project"
-	ToolUpdateProject       = "update_project"
-	ToolAddSubtask          = "add_subtask"
-	ToolCompleteSubtask     = "complete_subtask"
-	ToolProcessBucketItem   = "process_bucket_item"
+	ToolSetupRecurringTask      = "setup_recurring_task"
+	ToolAdjustRecurringTask     = "adjust_recurring_task"
+	ToolPauseRecurringTask      = "pause_recurring_task"
+	ToolEndRecurringSeries      = "end_recurring_series"
+	ToolCreateNote              = "create_note"
+	ToolCreateArea              = "create_area"
+	ToolCreateProject           = "create_project"
+	ToolUpdateProject           = "update_project"
+	ToolAddSubtask              = "add_subtask"
+	ToolCompleteSubtask         = "complete_subtask"
+	ToolProcessBucketItem       = "process_bucket_item"
+	ToolSkipRecurringOccurrence = "skip_recurring_occurrence"
 )
 
 // writeTools is the set of tools that require explicit user confirmation
 // (proposal → confirm/reject) and never auto-execute.
 var writeTools = map[string]bool{
-	ToolCompleteTask:        true,
-	ToolRescheduleTask:      true,
-	ToolCreateTask:          true,
-	ToolSetupRecurringTask:  true,
-	ToolAdjustRecurringTask: true,
-	ToolPauseRecurringTask:  true,
-	ToolEndRecurringSeries:  true,
-	ToolCreateNote:          true,
-	ToolCreateArea:          true,
-	ToolCreateProject:       true,
-	ToolUpdateProject:       true,
-	ToolAddSubtask:          true,
-	ToolCompleteSubtask:     true,
-	ToolProcessBucketItem:   true,
+	ToolCompleteTask:            true,
+	ToolRescheduleTask:          true,
+	ToolCreateTask:              true,
+	ToolSetupRecurringTask:      true,
+	ToolAdjustRecurringTask:     true,
+	ToolPauseRecurringTask:      true,
+	ToolEndRecurringSeries:      true,
+	ToolCreateNote:              true,
+	ToolCreateArea:              true,
+	ToolCreateProject:           true,
+	ToolUpdateProject:           true,
+	ToolAddSubtask:              true,
+	ToolCompleteSubtask:         true,
+	ToolProcessBucketItem:       true,
+	ToolSkipRecurringOccurrence: true,
 }
 
 // IsWriteTool reports whether the named tool is a write tool.
@@ -372,6 +374,18 @@ func DefaultTools() []ToolDefinition {
 							}
 						}
 					},
+					"reason": {"type": "string", "description": "Short natural-language rationale shown on the confirm card."}
+				}
+			}`),
+		},
+		{
+			Name:        ToolSkipRecurringOccurrence,
+			Description: "Propose skipping the current live occurrence of a recurring task without breaking the user's streak. The next occurrence will be materialized immediately. This does NOT execute — the user must confirm.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"required": ["taskId"],
+				"properties": {
+					"taskId": {"type": "string", "description": "The id of the live recurring task occurrence to skip."},
 					"reason": {"type": "string", "description": "Short natural-language rationale shown on the confirm card."}
 				}
 			}`),

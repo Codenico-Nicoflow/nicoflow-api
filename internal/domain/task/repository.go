@@ -295,14 +295,16 @@ func (r *pgRepo) MarkMissed(ctx context.Context, userID, id string) (*Task, erro
 // same terminal write shape and eligibility guard (recurring, still active, not
 // already reaped), but with no date-passed clause — skipping a future
 // occurrence ahead of its due date is legitimate, unlike marking it missed.
-// Status stays 'active': a skipped occurrence still shows a live instance to
-// the user (unlike missed, which also cancels it) — Skip only marks intent, it
-// never removes the task itself. Same nil-on-no-match convention as MarkMissed.
+// Sets status='cancelled' (matching MarkMissed) so Today/TimeSpread filters on
+// status='active' automatically hide the occurrence (NIC-2000).
+// scheduled_for/occurrence_date are intentionally not touched — the engine
+// uses occurrence_date to determine which instance this was; clearing it here
+// would confuse the sweep's reap query.
 func (r *pgRepo) MarkSkipped(ctx context.Context, userID, id string) (*Task, error) {
 	var t Task
 	err := scanTask(
 		r.db.QueryRow(ctx, `
-			UPDATE tasks SET occurrence_status = 'skipped', updated_at = NOW()
+			UPDATE tasks SET status = 'cancelled', occurrence_status = 'skipped', updated_at = NOW()
 			WHERE tasks.id = @id AND tasks.user_id = @userID
 			  AND tasks.recurrence_rule_id IS NOT NULL
 			  AND tasks.status = 'active'
