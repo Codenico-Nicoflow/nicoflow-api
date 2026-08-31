@@ -271,12 +271,14 @@ func (r *pgRepo) MarkMissed(ctx context.Context, userID, id string) (*Task, erro
 	err := scanTask(
 		r.db.QueryRow(ctx, `
 			UPDATE tasks SET status = 'cancelled', occurrence_status = 'missed', updated_at = NOW()
-			FROM users u
-			WHERE tasks.id = @id AND tasks.user_id = @userID AND u.id = tasks.user_id
+			WHERE tasks.id = @id AND tasks.user_id = @userID
 			  AND tasks.recurrence_rule_id IS NOT NULL
 			  AND tasks.status = 'active'
 			  AND tasks.occurrence_status IS NULL
-			  AND tasks.occurrence_date <= ((NOW() AT TIME ZONE COALESCE(u.timezone, 'UTC'))::date)
+			  AND tasks.occurrence_date <= (
+			      SELECT (NOW() AT TIME ZONE COALESCE(u.timezone, 'UTC'))::date
+			      FROM users u WHERE u.id = tasks.user_id
+			  )
 			RETURNING`+taskSelectCols,
 			pgx.NamedArgs{"id": id, "userID": userID},
 		),
