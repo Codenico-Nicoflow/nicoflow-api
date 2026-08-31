@@ -40,43 +40,42 @@ func TestRepo_GetPreferences_DefaultsWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetPreferences: %v", err)
 	}
-	if !p.EmailDigest || p.PushEnabled || p.SMSEnabled ||
-		p.BeforeDueMinutes != 1440 || p.AfterDueMinutes != 0 {
-		t.Fatalf("defaults = %+v, want emailDigest=true push=false sms=false before=1440 after=0", p)
+	if !p.EmailDigest || p.PushEnabled || p.SMSEnabled {
+		t.Fatalf("defaults = %+v, want emailDigest=true push=false sms=false", p)
 	}
-	// Per-family toggles (NIC-1591) default on.
-	if !p.OverdueEnabled || !p.DailySummaryEnabled || !p.InboxNudgesEnabled || !p.StreaksEnabled {
-		t.Fatalf("family defaults = %+v, want all four enabled", p)
+	// Digest toggles + streaks default on.
+	if !p.MorningDigestEnabled || !p.EveningDigestEnabled || !p.StreaksEnabled {
+		t.Fatalf("digest defaults = %+v, want all three enabled", p)
 	}
 }
 
-// NIC-1591: per-family toggles persist and untouched families keep their value.
-func TestRepo_UpsertPreferences_FamilyToggles(t *testing.T) {
+// Digest toggles persist and an untouched toggle keeps its value.
+func TestRepo_UpsertPreferences_DigestToggles(t *testing.T) {
 	r, pool := newPrefsRepo(t)
 	userID := seedUser(t, pool)
 
 	off := false
 	p, err := r.UpsertPreferences(context.Background(), userID, notification.UpdatePreferences{
-		OverdueEnabled: &off,
-		StreaksEnabled: &off,
+		MorningDigestEnabled: &off,
+		StreaksEnabled:       &off,
 	})
 	if err != nil {
 		t.Fatalf("UpsertPreferences: %v", err)
 	}
-	if p.OverdueEnabled || p.StreaksEnabled {
-		t.Fatalf("toggled = %+v, want overdue=false streaks=false", p)
+	if p.MorningDigestEnabled || p.StreaksEnabled {
+		t.Fatalf("toggled = %+v, want morningDigest=false streaks=false", p)
 	}
-	// Untouched families stay on.
-	if !p.DailySummaryEnabled || !p.InboxNudgesEnabled {
-		t.Fatalf("untouched = %+v, want dailySummary=true inbox=true", p)
+	// Untouched toggle stays on.
+	if !p.EveningDigestEnabled {
+		t.Fatalf("untouched = %+v, want eveningDigest=true", p)
 	}
 
 	got, err := r.GetPreferences(context.Background(), userID)
 	if err != nil {
 		t.Fatalf("GetPreferences after upsert: %v", err)
 	}
-	if got.OverdueEnabled || got.StreaksEnabled || !got.DailySummaryEnabled || !got.InboxNudgesEnabled {
-		t.Fatalf("stored = %+v, want overdue=false streaks=false dailySummary=true inbox=true", got)
+	if got.MorningDigestEnabled || got.StreaksEnabled || !got.EveningDigestEnabled {
+		t.Fatalf("stored = %+v, want morningDigest=false streaks=false eveningDigest=true", got)
 	}
 }
 
@@ -84,21 +83,21 @@ func TestRepo_UpsertPreferences_CreatesWithDefaultsForAbsentFields(t *testing.T)
 	r, pool := newPrefsRepo(t)
 	userID := seedUser(t, pool)
 
-	// Partial create: only emailDigest + beforeDueMinutes; others take defaults.
+	// Partial create: only emailDigest + eveningDigestEnabled; others take defaults.
 	digest := false
-	before := 60
+	evening := false
 	p, err := r.UpsertPreferences(context.Background(), userID, notification.UpdatePreferences{
-		EmailDigest:      &digest,
-		BeforeDueMinutes: &before,
+		EmailDigest:          &digest,
+		EveningDigestEnabled: &evening,
 	})
 	if err != nil {
 		t.Fatalf("UpsertPreferences create: %v", err)
 	}
-	if p.EmailDigest || p.BeforeDueMinutes != 60 {
-		t.Fatalf("create = %+v, want emailDigest=false before=60", p)
+	if p.EmailDigest || p.EveningDigestEnabled {
+		t.Fatalf("create = %+v, want emailDigest=false eveningDigest=false", p)
 	}
-	if p.PushEnabled || p.SMSEnabled || p.AfterDueMinutes != 0 {
-		t.Fatalf("create absent fields = %+v, want push=false sms=false after=0 (defaults)", p)
+	if p.PushEnabled || p.SMSEnabled || !p.MorningDigestEnabled {
+		t.Fatalf("create absent fields = %+v, want push=false sms=false morningDigest=true (defaults)", p)
 	}
 
 	// Confirm it persisted (read path returns the stored row, not defaults).
@@ -106,8 +105,8 @@ func TestRepo_UpsertPreferences_CreatesWithDefaultsForAbsentFields(t *testing.T)
 	if err != nil {
 		t.Fatalf("GetPreferences after create: %v", err)
 	}
-	if got.EmailDigest || got.BeforeDueMinutes != 60 {
-		t.Fatalf("stored = %+v, want emailDigest=false before=60", got)
+	if got.EmailDigest || got.EveningDigestEnabled {
+		t.Fatalf("stored = %+v, want emailDigest=false eveningDigest=false", got)
 	}
 }
 
@@ -115,14 +114,14 @@ func TestRepo_UpsertPreferences_UpdatesPreservingUntouchedFields(t *testing.T) {
 	r, pool := newPrefsRepo(t)
 	userID := seedUser(t, pool)
 
-	// Create with a non-default beforeDueMinutes.
-	before := 120
+	// Create with a non-default eveningDigestEnabled.
+	evening := false
 	if _, err := r.UpsertPreferences(context.Background(), userID,
-		notification.UpdatePreferences{BeforeDueMinutes: &before}); err != nil {
+		notification.UpdatePreferences{EveningDigestEnabled: &evening}); err != nil {
 		t.Fatalf("UpsertPreferences seed: %v", err)
 	}
 
-	// Update only pushEnabled — beforeDueMinutes must survive.
+	// Update only pushEnabled — eveningDigestEnabled must survive.
 	push := true
 	p, err := r.UpsertPreferences(context.Background(), userID,
 		notification.UpdatePreferences{PushEnabled: &push})
@@ -132,8 +131,8 @@ func TestRepo_UpsertPreferences_UpdatesPreservingUntouchedFields(t *testing.T) {
 	if !p.PushEnabled {
 		t.Fatalf("pushEnabled = false, want true")
 	}
-	if p.BeforeDueMinutes != 120 {
-		t.Fatalf("beforeDueMinutes = %d, want 120 (preserved)", p.BeforeDueMinutes)
+	if p.EveningDigestEnabled {
+		t.Fatalf("eveningDigestEnabled = true, want false (preserved)")
 	}
 }
 

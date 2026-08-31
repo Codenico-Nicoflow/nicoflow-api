@@ -9,13 +9,8 @@ func TestCategoryForType(t *testing.T) {
 		notifType string
 		want      string
 	}{
-		{TypeTaskDueSoon, CategoryReminder},
-		{TypeTaskOverdue, CategoryReminder},
-		{TypeTaskScheduledToday, CategoryReminder},
-		{TypeNothingScheduled, CategoryReminder},
-		{TypeInboxUnprocessed, CategoryReminder},
-		{TypeInboxStale, CategoryReminder},
-		{TypeDailySummary, CategorySummary},
+		{TypeMorningDigest, CategoryReminder},
+		{TypeEveningDigest, CategorySummary},
 		{TypeTaskCompleted, CategoryCelebration},
 		{TypeProjectCompleted, CategoryCelebration},
 		{TypeInboxZero, CategoryCelebration},

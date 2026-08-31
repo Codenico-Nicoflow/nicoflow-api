@@ -1596,24 +1596,26 @@ In-app notifications are created through a single idempotent funnel (dedupe by
 is closed). WS delivery is free for every plan; the email + Web Push channels are
 Pro-only.
 
+> **Notification rework (2026-08-31):** `task_due_soon`, `task_overdue`,
+> `day_plan_nudge`, `inbox_unprocessed`, `inbox_stale`, `task_scheduled_today`, and
+> `daily_summary` were retired in favor of two unified, all-plan digests —
+> `morning_digest` (scheduled + overdue + unprocessed-inbox counts) and
+> `evening_digest` (completed + remaining counts) — cutting per-task notification
+> spam down to two daily touchpoints. Both stay silent on a genuinely empty day.
+
 #### Notification types
 
 Every notification carries a `type`. FREE types reach all plans; Pro types are
 only ever produced for Pro users.
 
-| `type`                 | Plan | Producer                    |
+| `type`                | Plan | Producer                    |
 | ---------------------- | ---- | --------------------------- |
-| `task_due_soon`        | FREE | due-date cron sweep         |
-| `task_overdue`         | FREE | overdue cron sweep          |
-| `task_scheduled_today` | FREE | start-of-day sweep          |
+| `morning_digest`       | FREE | start-of-day sweep          |
+| `evening_digest`       | FREE | end-of-day sweep            |
 | `task_completed`       | FREE | real-time (task mutation)   |
-| `project_completed`    | FREE | real-time (task mutation)   |
+| `project_completed`    | FREE | real-time (explicit project status → completed) |
 | `system_announcement`  | FREE | (no producer yet)           |
-| `day_plan_nudge`       | PRO  | start-of-day sweep          |
-| `inbox_unprocessed`    | PRO  | inbox nudge sweep           |
-| `inbox_stale`          | PRO  | inbox nudge sweep           |
 | `inbox_zero`           | PRO  | real-time (bucket cleared)  |
-| `daily_summary`        | PRO  | end-of-day sweep            |
 | `streak_milestone`     | PRO  | end-of-day sweep            |
 
 The client must render an unknown `type` gracefully (icon/label fallback) — the
@@ -1633,10 +1635,10 @@ List the authenticated user's notifications, newest first. Cursor-paginated.
   "items": [
     {
       "id": "01J...",
-      "type": "task_due_soon",
-      "title": "Task due soon",
-      "body": "\"Ship the release\" is due in 24h.",
-      "metadata": { "taskId": "01K...", "count": 3 },
+      "type": "morning_digest",
+      "title": "Plan your day",
+      "body": "3 tasks scheduled today, 1 overdue, 2 unprocessed in your inbox.",
+      "metadata": { "scheduled": 3, "overdue": 1, "unprocessed": 2 },
       "isRead": false,
       "readAt": null,
       "createdAt": "2026-07-16T08:00:00Z"
@@ -1706,11 +1708,8 @@ Get the user's notification preferences (defaults when no row exists).
   "emailDigest": true,
   "pushEnabled": false,
   "smsEnabled": false,
-  "beforeDueMinutes": 1440,
-  "afterDueMinutes": 0,
-  "overdueEnabled": true,
-  "dailySummaryEnabled": true,
-  "inboxNudgesEnabled": true,
+  "morningDigestEnabled": true,
+  "eveningDigestEnabled": true,
   "streaksEnabled": true,
   "morningHour": 8,
   "eveningHour": 20
@@ -1718,18 +1717,19 @@ Get the user's notification preferences (defaults when no row exists).
 ```
 
 - `emailDigest` gates the Pro due-digest email. `pushEnabled` is the browser Web
-  Push toggle (Pro-only — see §3.12-push below). `beforeDueMinutes` / `afterDueMinutes`
-  are the due-reminder lead times (capped at 10080 = 7 days).
-- The four `*Enabled` toggles silence individual proactive families independently:
-  `overdueEnabled` → overdue sweep · `dailySummaryEnabled` → end-of-day summary ·
-  `inboxNudgesEnabled` → inbox nudges · `streaksEnabled` → streak milestone. All
-  default `true`; an absent preferences row means "all on".
-- `morningHour` (5–11, default 8) is the local hour the morning sweeps fire at
-  (day-start, inbox, overdue, due-notify); `eveningHour` (18–22, default 20) drives
-  the end-of-day summary sweep. Both are validated server-side (out of range →
-  `INVALID_INPUT`) and backed by a DB CHECK. Each sweep fires within a 3-hour
-  catch-up window from its hour (insures against a missed hourly tick — DST, a
-  failed cron run, a cold start), clamped so it never wraps past midnight.
+  Push toggle (Pro-only — see §3.12-push below).
+- Three toggles silence the two unified digests and the streak celebration
+  independently: `morningDigestEnabled` → morning digest (scheduled + overdue +
+  unprocessed-inbox counts) · `eveningDigestEnabled` → evening digest (completed +
+  remaining counts) · `streaksEnabled` → streak milestone (Pro-only). Both digests
+  are FREE — on every plan — unlike streaks. All default `true`; an absent
+  preferences row means "all on".
+- `morningHour` (5–11, default 8) is the local hour the morning digest fires at;
+  `eveningHour` (18–22, default 20) drives the evening digest (and the streak
+  check). Both are validated server-side (out of range → `INVALID_INPUT`) and
+  backed by a DB CHECK. Each sweep fires within a 3-hour catch-up window from its
+  hour (insures against a missed hourly tick — DST, a failed cron run, a cold
+  start), clamped so it never wraps past midnight.
 
 ---
 

@@ -80,7 +80,7 @@ func TestWSRoundTrip_NotificationCreatedDelivered(t *testing.T) {
 	if _, _, err := svc.Create(context.Background(), notification.Notification{
 		ID:     uuid.New().String(),
 		UserID: userID,
-		Type:   notification.TypeTaskDueSoon,
+		Type:   notification.TypeMorningDigest,
 		Title:  "Task due",
 	}); err != nil {
 		t.Fatalf("create notification: %v", err)
@@ -129,7 +129,7 @@ func TestWSRoundTrip_DomainEventsDelivered(t *testing.T) {
 
 	hub := ws.NewHub()
 	areaSvc := area.NewService(area.NewRepository(pool), ws.NewAreaBroadcaster(hub))
-	projectSvc := project.NewService(project.NewRepository(pool), ws.NewProjectBroadcaster(hub))
+	projectSvc := project.NewService(project.NewRepository(pool), ws.NewProjectBroadcaster(hub), nil)
 	taskSvc := task.NewService(task.NewRepository(pool), nil, ws.NewTaskBroadcaster(hub))
 	bucketSvc := bucket.NewService(bucket.NewRepository(pool), taskSvc, nil, ws.NewBucketBroadcaster(hub))
 

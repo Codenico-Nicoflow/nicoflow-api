@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -11,29 +12,36 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
 )
 
-// DayStartNotifier gives each user a start-of-day cue at their local 08:00:
-//   - task_scheduled_today (FREE, all plans): one summary "N tasks scheduled today"
-//     when N > 0 — a single notification, never one per task, to avoid a flood.
-//   - day_plan_nudge (Pro only): when nothing is scheduled today but the user still
-//     has open work, nudge them to plan their day.
-//
-// Both outputs are idempotent per user per local day (dedupe_key), so the hourly
-// sweep is safe to re-run.
+// creator is the notification funnel (notification.Service). Narrowed to just the
+// method the sweeps use so tests can fake it.
+type creator interface {
+	Create(ctx context.Context, n notification.Notification) (notification.NotificationView, bool, error)
+}
+
+// planPro is the plan value that unlocks Pro-only notification types.
+const planPro = "pro"
+
+// DayStartNotifier gives every user (all plans, unified — NIC notification
+// rework) a single morning_digest at their local morning hour, rolling together
+// what used to be three separate reminder streams (task_due_soon, task_overdue,
+// inbox_unprocessed): how many tasks are scheduled today, how many are overdue,
+// and how many inbox items are unprocessed. Silent when all three are zero — a
+// genuinely empty day gets no ping. Idempotent per user per local day.
 type DayStartNotifier struct {
 	repo    Repository
 	creator creator
 	now     func() time.Time // injectable clock for tests
 }
 
-// NewDayStartNotifier builds the start-of-day sweep. Pass notification.Service as
-// the creator (the same funnel the other sweeps use).
+// NewDayStartNotifier builds the morning-digest sweep. Pass notification.Service
+// as the creator (the same funnel the other sweep uses).
 func NewDayStartNotifier(repo Repository, c creator) *DayStartNotifier {
 	return &DayStartNotifier{repo: repo, creator: c, now: time.Now}
 }
 
 // Run executes one sweep and returns a breakdown of what happened. Safe to re-run
-// within the same local day: idempotency is guaranteed by each output's
-// dedupe_key. When dryRun is true it computes the breakdown but inserts nothing.
+// within the same local day: idempotency is guaranteed by the digest's dedupe_key.
+// When dryRun is true it computes the breakdown but inserts nothing.
 func (n *DayStartNotifier) Run(ctx context.Context, dryRun bool) (*SweepBreakdown, error) {
 	const sweep = "day-start"
 	users, err := n.repo.ListRemindableUsers(ctx)
@@ -56,85 +64,101 @@ func (n *DayStartNotifier) Run(ctx context.Context, dryRun bool) (*SweepBreakdow
 			b.skip(sweep, skipOutsideWindow, u.UserID, u.Timezone)
 			continue
 		}
-
-		localToday := local.Format(scheduledForLayout)
-		tasks, err := n.repo.ListTasksScheduledOn(ctx, u.UserID, localToday)
-		if err != nil {
-			// One user's failure must not abort the whole sweep; log and continue.
-			log.Error().Err(err).Str("user_id", u.UserID).Msg("day-start sweep: list tasks failed")
+		if !u.MorningDigestEnabled {
+			b.skip(sweep, skipToggleOff, u.UserID, u.Timezone)
 			continue
 		}
 
-		if len(tasks) > 0 {
-			if !dryRun && n.emitScheduledSummary(ctx, u, localToday, len(tasks)) {
-				b.Fired++
-			}
-			continue // has work scheduled → no nudge
+		localToday := local.Format(scheduledForLayout)
+		counts, err := n.gatherCounts(ctx, u.UserID, localToday)
+		if err != nil {
+			// One user's failure must not abort the whole sweep; log and continue.
+			log.Error().Err(err).Str("user_id", u.UserID).Msg("day-start sweep: gather counts failed")
+			continue
 		}
-
-		if !dryRun && n.emitPlanNudge(ctx, u, localToday) {
+		if counts.isEmpty() {
+			continue // nothing to report → stay silent
+		}
+		if dryRun {
+			continue
+		}
+		if n.emitDigest(ctx, u, localToday, counts) {
 			b.Fired++
 		}
 	}
 	return b, nil
 }
 
-// emitScheduledSummary creates the FREE one-line "N tasks scheduled today" summary
-// (all plans). Returns whether a new notification row was inserted.
-func (n *DayStartNotifier) emitScheduledSummary(ctx context.Context, u RemindableUser, localToday string, count int) bool {
-	_, inserted, err := n.creator.Create(ctx, notification.Notification{
-		UserID:    u.UserID,
-		Type:      notification.TypeTaskScheduledToday,
-		Title:     "Your day ahead",
-		Body:      fmt.Sprintf("You have %d %s scheduled today.", count, plural(count, "task", "tasks")),
-		Metadata:  scheduledCountMeta(count),
-		DedupeKey: notification.DedupeTaskScheduledToday(u.UserID, localToday),
-	})
-	if err != nil {
-		log.Error().Err(err).Str("user_id", u.UserID).Msg("day-start sweep: summary create failed")
-		return false
-	}
-	return inserted
+// morningCounts is the digest's three rolled-up figures.
+type morningCounts struct {
+	Scheduled   int
+	Overdue     int
+	Unprocessed int
 }
 
-// emitPlanNudge creates the Pro day_plan_nudge — only for Pro users who have open
-// work but nothing scheduled today. Free users (and Pro users with no work) get
-// nothing. Returns whether a new notification row was inserted.
-func (n *DayStartNotifier) emitPlanNudge(ctx context.Context, u RemindableUser, localToday string) bool {
-	if !notification.IsProType(notification.TypeNothingScheduled) || u.Plan != planPro {
-		return false // Pro-only; free users get no nudge
-	}
+func (c morningCounts) isEmpty() bool {
+	return c.Scheduled == 0 && c.Overdue == 0 && c.Unprocessed == 0
+}
 
-	hasWork, err := n.repo.HasActiveWork(ctx, u.UserID)
+// gatherCounts fetches the three counts a morning digest folds together.
+func (n *DayStartNotifier) gatherCounts(ctx context.Context, userID, localToday string) (morningCounts, error) {
+	scheduled, err := n.repo.CountScheduledOn(ctx, userID, localToday)
 	if err != nil {
-		log.Error().Err(err).Str("user_id", u.UserID).Msg("day-start sweep: active-work check failed")
-		return false
+		return morningCounts{}, fmt.Errorf("scheduled: %w", err)
 	}
-	if !hasWork {
-		return false // nothing to plan → stay silent
+	overdue, err := n.repo.CountOverdue(ctx, userID, localToday)
+	if err != nil {
+		return morningCounts{}, fmt.Errorf("overdue: %w", err)
 	}
+	unprocessed, err := n.repo.CountUnprocessedInbox(ctx, userID)
+	if err != nil {
+		return morningCounts{}, fmt.Errorf("unprocessed: %w", err)
+	}
+	return morningCounts{Scheduled: scheduled, Overdue: overdue, Unprocessed: unprocessed}, nil
+}
 
+// emitDigest creates the morning_digest notification. Returns whether a new
+// notification row was inserted.
+func (n *DayStartNotifier) emitDigest(ctx context.Context, u RemindableUser, localToday string, c morningCounts) bool {
 	_, inserted, err := n.creator.Create(ctx, notification.Notification{
 		UserID:    u.UserID,
-		Type:      notification.TypeNothingScheduled,
+		Type:      notification.TypeMorningDigest,
 		Title:     "Plan your day",
-		Body:      "Nothing is scheduled for today — take a moment to plan.",
-		DedupeKey: notification.DedupeDayPlanNudge(u.UserID, localToday),
+		Body:      morningDigestBody(c),
+		Metadata:  morningDigestMeta(c),
+		DedupeKey: notification.DedupeMorningDigest(u.UserID, localToday),
 	})
 	if err != nil {
-		log.Error().Err(err).Str("user_id", u.UserID).Msg("day-start sweep: nudge create failed")
+		log.Error().Err(err).Str("user_id", u.UserID).Msg("day-start sweep: digest create failed")
 		return false
 	}
 	return inserted
 }
 
-// scheduledCountMeta encodes the summary count so the client can render it without
-// parsing the body. Marshalling a fixed-shape struct never fails, so the error is
-// dropped deliberately.
-func scheduledCountMeta(count int) json.RawMessage {
+// morningDigestBody composes the human-readable summary line, e.g.
+// "3 tasks scheduled today, 1 overdue, 2 unprocessed in your inbox."
+func morningDigestBody(c morningCounts) string {
+	var parts []string
+	if c.Scheduled > 0 {
+		parts = append(parts, fmt.Sprintf("%d %s scheduled today", c.Scheduled, plural(c.Scheduled, "task", "tasks")))
+	}
+	if c.Overdue > 0 {
+		parts = append(parts, fmt.Sprintf("%d overdue", c.Overdue))
+	}
+	if c.Unprocessed > 0 {
+		parts = append(parts, fmt.Sprintf("%d unprocessed in your inbox", c.Unprocessed))
+	}
+	return strings.Join(parts, ", ") + "."
+}
+
+// morningDigestMeta encodes the three counts so the client can render them
+// without parsing the body.
+func morningDigestMeta(c morningCounts) json.RawMessage {
 	b, _ := json.Marshal(struct {
-		Count int `json:"count"`
-	}{Count: count})
+		Scheduled   int `json:"scheduled"`
+		Overdue     int `json:"overdue"`
+		Unprocessed int `json:"unprocessed"`
+	}{Scheduled: c.Scheduled, Overdue: c.Overdue, Unprocessed: c.Unprocessed})
 	return b
 }
 

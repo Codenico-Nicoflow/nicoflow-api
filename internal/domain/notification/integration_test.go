@@ -56,7 +56,7 @@ func insert(t *testing.T, r notification.Repository, userID string, dedupe *stri
 	n, inserted, err := r.InsertIfAbsent(context.Background(), notification.Notification{
 		ID:        uuid.New().String(),
 		UserID:    userID,
-		Type:      notification.TypeTaskDueSoon,
+		Type:      notification.TypeMorningDigest,
 		Title:     "Task due",
 		DedupeKey: dedupe,
 	})
@@ -149,7 +149,7 @@ func TestRepo_InsertIfAbsent_Idempotent(t *testing.T) {
 	_, inserted, err := r.InsertIfAbsent(context.Background(), notification.Notification{
 		ID:        uuid.New().String(),
 		UserID:    userID,
-		Type:      notification.TypeTaskDueSoon,
+		Type:      notification.TypeMorningDigest,
 		Title:     "Task due (dup)",
 		DedupeKey: &key,
 	})

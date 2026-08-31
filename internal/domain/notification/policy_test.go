@@ -8,17 +8,12 @@ func TestIsProType(t *testing.T) {
 		isPro bool
 	}{
 		// Free types.
-		{TypeTaskDueSoon, false},
-		{TypeTaskOverdue, false},
-		{TypeTaskScheduledToday, false},
 		{TypeTaskCompleted, false},
 		{TypeProjectCompleted, false},
 		{TypeSystemAnnouncement, false},
+		{TypeMorningDigest, false},
+		{TypeEveningDigest, false},
 		// Pro types.
-		{TypeNothingScheduled, true},
-		{TypeInboxUnprocessed, true},
-		{TypeInboxStale, true},
-		{TypeDailySummary, true},
 		{TypeInboxZero, true},
 		{TypeStreakMilestone, true},
 		// Unknown → treated as free (not Pro).
@@ -37,16 +32,12 @@ func TestDedupeBuilders(t *testing.T) {
 		got  *string
 		want string
 	}{
-		{"overdue", DedupeTaskOverdue("tsk1", "2026-07-15"), "task_overdue:tsk1:2026-07-15"},
-		{"scheduled today", DedupeTaskScheduledToday("u1", "2026-07-15"), "task_scheduled_today:u1:2026-07-15"},
-		{"day plan nudge", DedupeDayPlanNudge("u1", "2026-07-15"), "day_plan_nudge:u1:2026-07-15"},
-		{"inbox unprocessed", DedupeInboxUnprocessed("u1", "2026-07-15"), "inbox_unprocessed:u1:2026-07-15"},
-		{"inbox stale", DedupeInboxStale("u1", "2026-W29"), "inbox_stale:u1:2026-W29"},
 		{"task completed", DedupeTaskCompleted("tsk1"), "task_completed:tsk1"},
-		{"project completed", DedupeProjectCompleted("prj1", "2026-07-15"), "project_completed:prj1:2026-07-15"},
-		{"daily summary", DedupeDailySummary("u1", "2026-07-15"), "daily_summary:u1:2026-07-15"},
+		{"project completed", DedupeProjectCompleted("prj1", "2026-07-15T08:00:00Z"), "project_completed:prj1:2026-07-15T08:00:00Z"},
 		{"inbox zero", DedupeInboxZero("u1", "2026-07-15"), "inbox_zero:u1:2026-07-15"},
 		{"streak milestone", DedupeStreakMilestone("u1", 7), "streak_milestone:u1:7"},
+		{"morning digest", DedupeMorningDigest("u1", "2026-07-15"), "morning_digest:u1:2026-07-15"},
+		{"evening digest", DedupeEveningDigest("u1", "2026-07-15"), "evening_digest:u1:2026-07-15"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -63,8 +54,8 @@ func TestDedupeBuilders(t *testing.T) {
 // TestDedupeStable: the same logical event within its window yields the same key,
 // so ON CONFLICT DO NOTHING suppresses the duplicate.
 func TestDedupeStable(t *testing.T) {
-	a := DedupeTaskOverdue("tsk1", "2026-07-15")
-	b := DedupeTaskOverdue("tsk1", "2026-07-15")
+	a := DedupeMorningDigest("u1", "2026-07-15")
+	b := DedupeMorningDigest("u1", "2026-07-15")
 	if *a != *b {
 		t.Errorf("same inputs produced different keys: %q vs %q", *a, *b)
 	}

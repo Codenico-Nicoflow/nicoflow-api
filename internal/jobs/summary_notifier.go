@@ -22,20 +22,22 @@ var streakMilestones = []int{7, 30, 100, 365}
 // resolves, without scanning a user's whole history.
 const streakHistoryWindow = 400
 
-// SummaryNotifier gives Pro users an end-of-day wrap at their local summaryLocalHour:
-//   - daily_summary (Pro): count of tasks completed today. Dedupe per local day.
-//   - streak_milestone (Pro): when the consecutive-day completion streak reaches a
-//     milestone. Dedupe per milestone (once ever).
+// SummaryNotifier gives every user (all plans, unified — NIC notification rework)
+// an end-of-day evening_digest at their local evening hour: how many tasks they
+// completed today and how many remain open. Fires whenever either is non-zero —
+// even a 0-completed day still reports "N left" — and stays silent only when both
+// are zero. streak_milestone remains a separate Pro-only celebration layered on
+// top when the streak crosses a milestone.
 //
 // Streaks live here (not on the mutation path) because they depend on local day
-// boundaries. Both types are Pro-only; free users are skipped.
+// boundaries.
 type SummaryNotifier struct {
 	repo    Repository
 	creator creator
 	now     func() time.Time // injectable clock for tests
 }
 
-// NewSummaryNotifier builds the end-of-day sweep. Pass notification.Service as the creator.
+// NewSummaryNotifier builds the evening-digest sweep. Pass notification.Service as the creator.
 func NewSummaryNotifier(repo Repository, c creator) *SummaryNotifier {
 	return &SummaryNotifier{repo: repo, creator: c, now: time.Now}
 }
@@ -66,13 +68,10 @@ func (n *SummaryNotifier) Run(ctx context.Context, dryRun bool) (*SweepBreakdown
 			b.skip(sweep, skipOutsideWindow, u.UserID, u.Timezone)
 			continue
 		}
-		if !notification.IsProType(notification.TypeDailySummary) || u.Plan != planPro {
-			b.skip(sweep, skipPlanGate, u.UserID, u.Timezone)
-			continue // both outputs are Pro-only
-		}
-		if !u.DailySummaryEnabled && !u.StreaksEnabled {
+		streaksActive := u.StreaksEnabled && u.Plan == planPro
+		if !u.EveningDigestEnabled && !streaksActive {
 			b.skip(sweep, skipToggleOff, u.UserID, u.Timezone)
-			continue // user opted out of both this sweep's families
+			continue // user opted out of both this sweep's outputs
 		}
 
 		localToday := local.Format(scheduledForLayout)
@@ -85,32 +84,39 @@ func (n *SummaryNotifier) Run(ctx context.Context, dryRun bool) (*SweepBreakdown
 			continue
 		}
 
-		if u.DailySummaryEnabled && n.emitSummary(ctx, u, localToday, completed) {
+		if u.EveningDigestEnabled && n.emitDigest(ctx, u, localToday, completed) {
 			b.Fired++
 		}
-		if u.StreaksEnabled && n.emitStreak(ctx, u, localToday, completed) {
+		if streaksActive && n.emitStreak(ctx, u, localToday, completed) {
 			b.Fired++
 		}
 	}
 	return b, nil
 }
 
-// emitSummary creates the daily_summary when the user completed at least one task
-// today. Returns whether a row was inserted.
-func (n *SummaryNotifier) emitSummary(ctx context.Context, u RemindableUser, localToday string, completed int) bool {
-	if completed == 0 {
-		return false // nothing done → no wrap
+// emitDigest creates the evening_digest when the user completed at least one task
+// today, OR still has open tasks remaining — a 0-completed day with open work
+// still gets "0 done today, N left". Silent only when both are zero. Returns
+// whether a row was inserted.
+func (n *SummaryNotifier) emitDigest(ctx context.Context, u RemindableUser, localToday string, completed int) bool {
+	remaining, err := n.repo.CountOpenTasks(ctx, u.UserID)
+	if err != nil {
+		log.Error().Err(err).Str("user_id", u.UserID).Msg("summary sweep: count open tasks failed")
+		return false
+	}
+	if completed == 0 && remaining == 0 {
+		return false // nothing to report → stay silent
 	}
 	_, inserted, err := n.creator.Create(ctx, notification.Notification{
 		UserID:    u.UserID,
-		Type:      notification.TypeDailySummary,
+		Type:      notification.TypeEveningDigest,
 		Title:     "Your day, wrapped",
-		Body:      fmt.Sprintf("You completed %d %s today.", completed, plural(completed, "task", "tasks")),
-		Metadata:  completedCountMeta(completed),
-		DedupeKey: notification.DedupeDailySummary(u.UserID, localToday),
+		Body:      eveningDigestBody(completed, remaining),
+		Metadata:  eveningDigestMeta(completed, remaining),
+		DedupeKey: notification.DedupeEveningDigest(u.UserID, localToday),
 	})
 	if err != nil {
-		log.Error().Err(err).Str("user_id", u.UserID).Msg("summary sweep: summary create failed")
+		log.Error().Err(err).Str("user_id", u.UserID).Msg("summary sweep: digest create failed")
 		return false
 	}
 	return inserted
@@ -176,11 +182,22 @@ func isMilestone(streak int) bool {
 	return slices.Contains(streakMilestones, streak)
 }
 
-// completedCountMeta encodes the completed-today count for the client.
-func completedCountMeta(count int) json.RawMessage {
+// eveningDigestBody composes the human-readable wrap-up line, e.g.
+// "You completed 3 tasks today. 4 tasks left."
+func eveningDigestBody(completed, remaining int) string {
+	body := fmt.Sprintf("You completed %d %s today.", completed, plural(completed, "task", "tasks"))
+	if remaining > 0 {
+		body += fmt.Sprintf(" %d %s left.", remaining, plural(remaining, "task", "tasks"))
+	}
+	return body
+}
+
+// eveningDigestMeta encodes the completed + remaining counts for the client.
+func eveningDigestMeta(completed, remaining int) json.RawMessage {
 	b, _ := json.Marshal(struct {
-		Count int `json:"count"`
-	}{Count: count})
+		Completed int `json:"completed"`
+		Remaining int `json:"remaining"`
+	}{Completed: completed, Remaining: remaining})
 	return b
 }
 

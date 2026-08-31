@@ -103,10 +103,7 @@ func New(cfg config.Config, pool *pgxpool.Pool, h Handlers) http.Handler {
 
 	// Internal jobs — machine-to-machine, guarded solely by the shared CRON_SECRET
 	// (X-Internal-Token), outside the JWT /v1 group. Hit by the Render Cron Job.
-	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/due-notify", h.Jobs.DueNotify)
-	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/overdue", h.Jobs.OverdueNotify)
 	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/day-start", h.Jobs.DayStart)
-	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/inbox", h.Jobs.Inbox)
 	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/summary", h.Jobs.Summary)
 	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/attachment-gc", h.Jobs.AttachmentGC)
 	r.With(mw.InternalToken(cfg.CronSecret)).Post("/internal/jobs/recurrence", h.Jobs.Recurrence)

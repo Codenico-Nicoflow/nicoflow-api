@@ -4,14 +4,12 @@ import "fmt"
 
 // proTypes is the single source of truth for which notification types are Pro-only.
 // Producers gate on IsProType — none classify a type themselves. Everything not
-// listed here is a free type delivered to all plans.
+// listed here is a free type delivered to all plans. MorningDigest/EveningDigest
+// are deliberately absent — the notification rework unified both daily
+// touchpoints across plans.
 var proTypes = map[string]struct{}{
-	TypeNothingScheduled: {},
-	TypeInboxUnprocessed: {},
-	TypeInboxStale:       {},
-	TypeDailySummary:     {},
-	TypeInboxZero:        {},
-	TypeStreakMilestone:  {},
+	TypeInboxZero:       {},
+	TypeStreakMilestone: {},
 }
 
 // IsProType reports whether a notification type is Pro-only. Free users never
@@ -28,44 +26,17 @@ func IsProType(t string) bool {
 
 func ptr(s string) *string { return &s }
 
-// DedupeTaskOverdue: one nag per task per local day.
-func DedupeTaskOverdue(taskID, localDate string) *string {
-	return ptr(fmt.Sprintf("%s:%s:%s", TypeTaskOverdue, taskID, localDate))
-}
-
-// DedupeTaskScheduledToday: one summary per user per local day.
-func DedupeTaskScheduledToday(userID, localDate string) *string {
-	return ptr(fmt.Sprintf("%s:%s:%s", TypeTaskScheduledToday, userID, localDate))
-}
-
-// DedupeDayPlanNudge: one nudge per user per local day.
-func DedupeDayPlanNudge(userID, localDate string) *string {
-	return ptr(fmt.Sprintf("%s:%s:%s", TypeNothingScheduled, userID, localDate))
-}
-
-// DedupeInboxUnprocessed: one reminder per user per local day.
-func DedupeInboxUnprocessed(userID, localDate string) *string {
-	return ptr(fmt.Sprintf("%s:%s:%s", TypeInboxUnprocessed, userID, localDate))
-}
-
-// DedupeInboxStale: one warning per user per ISO week (don't nag daily).
-func DedupeInboxStale(userID, isoWeek string) *string {
-	return ptr(fmt.Sprintf("%s:%s:%s", TypeInboxStale, userID, isoWeek))
-}
-
 // DedupeTaskCompleted: once per task (re-completing after reopen is suppressed).
 func DedupeTaskCompleted(taskID string) *string {
 	return ptr(fmt.Sprintf("%s:%s", TypeTaskCompleted, taskID))
 }
 
-// DedupeProjectCompleted: once per project per local day.
-func DedupeProjectCompleted(projectID, localDate string) *string {
-	return ptr(fmt.Sprintf("%s:%s:%s", TypeProjectCompleted, projectID, localDate))
-}
-
-// DedupeDailySummary: one summary per user per local day.
-func DedupeDailySummary(userID, localDate string) *string {
-	return ptr(fmt.Sprintf("%s:%s:%s", TypeDailySummary, userID, localDate))
+// DedupeProjectCompleted: scoped to one explicit status→completed transition
+// (the caller passes a value unique to that transition, e.g. an update
+// timestamp) — reopening and re-completing later gets its own key and fires
+// again.
+func DedupeProjectCompleted(projectID, transitionKey string) *string {
+	return ptr(fmt.Sprintf("%s:%s:%s", TypeProjectCompleted, projectID, transitionKey))
 }
 
 // DedupeInboxZero: once per user per local day (reaching zero repeatedly won't spam).
@@ -76,4 +47,14 @@ func DedupeInboxZero(userID, localDate string) *string {
 // DedupeStreakMilestone: once per user per milestone value, ever.
 func DedupeStreakMilestone(userID string, milestone int) *string {
 	return ptr(fmt.Sprintf("%s:%s:%d", TypeStreakMilestone, userID, milestone))
+}
+
+// DedupeMorningDigest: one digest per user per local day.
+func DedupeMorningDigest(userID, localDate string) *string {
+	return ptr(fmt.Sprintf("%s:%s:%s", TypeMorningDigest, userID, localDate))
+}
+
+// DedupeEveningDigest: one digest per user per local day.
+func DedupeEveningDigest(userID, localDate string) *string {
+	return ptr(fmt.Sprintf("%s:%s:%s", TypeEveningDigest, userID, localDate))
 }

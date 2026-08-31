@@ -17,12 +17,6 @@ func (s *service) GetPreferences(ctx context.Context, userID string) (Preference
 }
 
 func (s *service) UpdatePreferences(ctx context.Context, userID string, u UpdatePreferences) (PreferencesView, error) {
-	if err := validateLeadTime("beforeDueMinutes", u.BeforeDueMinutes); err != nil {
-		return PreferencesView{}, err
-	}
-	if err := validateLeadTime("afterDueMinutes", u.AfterDueMinutes); err != nil {
-		return PreferencesView{}, err
-	}
 	if err := validateHour("morningHour", u.MorningHour, MorningHourMin, MorningHourMax); err != nil {
 		return PreferencesView{}, err
 	}
@@ -34,18 +28,6 @@ func (s *service) UpdatePreferences(ctx context.Context, userID string, u Update
 		return PreferencesView{}, err
 	}
 	return preferencesToView(p), nil
-}
-
-// validateLeadTime enforces 0 ≤ minutes ≤ LeadTimeMax when the field is present.
-func validateLeadTime(field string, minutes *int) error {
-	if minutes == nil {
-		return nil
-	}
-	if *minutes < 0 || *minutes > LeadTimeMax {
-		return apperror.New(http.StatusBadRequest, apperror.ErrInvalidInput,
-			field+" must be between 0 and "+strconv.Itoa(LeadTimeMax)+" minutes")
-	}
-	return nil
 }
 
 // validateHour enforces min ≤ hour ≤ max when the field is present. Mirrors the

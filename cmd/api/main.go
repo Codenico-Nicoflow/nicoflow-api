@@ -112,18 +112,14 @@ func main() {
 	areaRepo := area.NewRepository(pool)
 	areaSvc := area.NewService(areaRepo, ws.NewAreaBroadcaster(wsHub))
 
-	// Project domain.
-	projectRepo := project.NewRepository(pool)
-	projectSvc := project.NewService(projectRepo, ws.NewProjectBroadcaster(wsHub))
-
 	// Search — full-text across tasks, projects and areas.
 	searchSvc := search.NewService(search.NewRepository(pool))
 
 	// Notification domain. The ws adapter is the real-time Broadcaster: every
 	// created notification fans out over WS (fire-and-forget). Built before
-	// task/bucket so it can be injected as their real-time notifier. Web push
-	// (NIC-1580): the sender is a no-op when VAPID is unconfigured, so this is safe
-	// with empty keys locally.
+	// project/task/bucket so it can be injected as their real-time notifier. Web
+	// push (NIC-1580): the sender is a no-op when VAPID is unconfigured, so this
+	// is safe with empty keys locally.
 	notificationRepo := notification.NewRepository(pool)
 	pushSender, err := pushutil.New(cfg.VAPIDPublicKey, cfg.VAPIDPrivateKey, cfg.VAPIDSubject)
 	if err != nil {
@@ -131,6 +127,11 @@ func main() {
 	}
 	notificationSvc := notification.NewService(notificationRepo, ws.NewNotificationBroadcaster(wsHub)).
 		WithPushSender(notification.NewPushSender(notificationRepo, pushSender))
+
+	// Project domain. notificationSvc drives the explicit project_completed
+	// notification (fires on the status PATCH transition into "completed").
+	projectRepo := project.NewRepository(pool)
+	projectSvc := project.NewService(projectRepo, ws.NewProjectBroadcaster(wsHub), notificationSvc)
 
 	// Task domain (incl. subtasks). notificationSvc drives task_completed +
 	// project_completed real-time notifications (best-effort).
@@ -271,10 +272,7 @@ func main() {
 
 	// Sweep jobs — hourly, invoked by Render Cron Jobs via /internal/jobs/*.
 	jobsRepo := jobs.NewRepository(pool)
-	dueDateNotifier := jobs.NewDueDateNotifier(jobsRepo, notificationSvc, cfg.SMTPDsn)
-	overdueNotifier := jobs.NewOverdueNotifier(jobsRepo, notificationSvc)
 	dayStartNotifier := jobs.NewDayStartNotifier(jobsRepo, notificationSvc)
-	inboxNotifier := jobs.NewInboxNotifier(jobsRepo, notificationSvc)
 	summaryNotifier := jobs.NewSummaryNotifier(jobsRepo, notificationSvc)
 
 	handlers := handler.Handlers{
@@ -296,7 +294,7 @@ func main() {
 		GoogleCal:       googlecal.NewHandler(googleCalSvc, cfg.AppBaseURL),
 		GoogleEvents:    googlecal.NewEventsHandler(googleEventsSvc),
 		GoogleCalendars: googlecal.NewCalendarsHandler(googleCalendarsSvc),
-		Jobs: jobs.NewHandler(dueDateNotifier, overdueNotifier, dayStartNotifier, inboxNotifier, summaryNotifier, attachmentGCAdapter{svc: attachmentSvc}).
+		Jobs: jobs.NewHandler(dayStartNotifier, summaryNotifier, attachmentGCAdapter{svc: attachmentSvc}).
 			WithRecurrence(recurrenceSweepAdapter{m: recurrenceMaterializer}).
 			WithFocusStale(focusStaleAdapter{svc: focusSvc}).
 			WithAIToolExpiry(aiToolExpiryAdapter{repo: aiRepo, ttl: 7 * 24 * time.Hour}),

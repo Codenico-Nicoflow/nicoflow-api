@@ -106,7 +106,7 @@ func TestService_List(t *testing.T) {
 	svc := notification.NewService(&mockRepo{
 		list: func(_ context.Context, _ string, _ notification.ListNotificationsFilter) ([]notification.Notification, string, error) {
 			return []notification.Notification{
-				{ID: "n1", UserID: "u1", Type: notification.TypeTaskDueSoon, Title: "Due", CreatedAt: now},
+				{ID: "n1", UserID: "u1", Type: notification.TypeMorningDigest, Title: "Due", CreatedAt: now},
 			}, "next-cursor", nil
 		},
 	}, nil)
@@ -210,7 +210,7 @@ func TestService_Create(t *testing.T) {
 		}, spy)
 
 		view, inserted, err := svc.Create(context.Background(), notification.Notification{
-			UserID: "u1", Type: notification.TypeTaskDueSoon, Title: "Due",
+			UserID: "u1", Type: notification.TypeMorningDigest, Title: "Due",
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)

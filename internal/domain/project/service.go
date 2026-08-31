@@ -36,12 +36,14 @@ type Service interface {
 type service struct {
 	repo        Repository
 	broadcaster Broadcaster // nil disables emission
+	notif       notifier    // nil disables notification emission
 }
 
-// NewService creates a new project Service. broadcaster may be nil (real-time
-// emission disabled); pass the ws adapter to light up live updates.
-func NewService(repo Repository, broadcaster Broadcaster) Service {
-	return &service{repo: repo, broadcaster: broadcaster}
+// NewService creates a new project Service. broadcaster and notif may be nil
+// (real-time / notification emission disabled respectively); pass the ws
+// adapter and notification.Service to light both up.
+func NewService(repo Repository, broadcaster Broadcaster, notif notifier) Service {
+	return &service{repo: repo, broadcaster: broadcaster, notif: notif}
 }
 
 func (s *service) List(ctx context.Context, userID string, f ListProjectsFilter) (ListProjectsResponse, error) {
@@ -126,27 +128,48 @@ func (s *service) Create(ctx context.Context, userID, areaID, plan string, req C
 	return view, nil
 }
 
-func (s *service) Update(ctx context.Context, userID, id string, req UpdateProjectRequest) (ProjectView, error) {
+// validateUpdateRequest checks field-level constraints on an update request,
+// normalising Name in place (trim). Split out of Update to keep that
+// function's cyclomatic complexity down.
+func validateUpdateRequest(req UpdateProjectRequest) error {
 	if req.Name != nil {
 		*req.Name = strings.TrimSpace(*req.Name)
 		if *req.Name == "" {
-			return ProjectView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "name cannot be empty")
+			return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "name cannot be empty")
 		}
 		if len(*req.Name) > 255 {
-			return ProjectView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "name must be 255 characters or fewer")
+			return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "name must be 255 characters or fewer")
 		}
 	}
 	if req.AreaID != nil && strings.TrimSpace(*req.AreaID) == "" {
-		return ProjectView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "areaId cannot be empty")
+		return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "areaId cannot be empty")
 	}
 	if req.Status != nil && !allowedStatuses[*req.Status] {
-		return ProjectView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidStatus, "status must be one of: active, completed, archived")
+		return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidStatus, "status must be one of: active, completed, archived")
 	}
 	if req.FolderIcon != nil && !AllowedIcons[*req.FolderIcon] {
-		return ProjectView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "folderIcon is not valid")
+		return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "folderIcon is not valid")
 	}
 	if desc, ok := req.Description.Get(); ok && len(desc) > 2000 {
-		return ProjectView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "description must be 2000 characters or fewer")
+		return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "description must be 2000 characters or fewer")
+	}
+	return nil
+}
+
+func (s *service) Update(ctx context.Context, userID, id string, req UpdateProjectRequest) (ProjectView, error) {
+	if err := validateUpdateRequest(req); err != nil {
+		return ProjectView{}, err
+	}
+
+	// Status transitions need the prior value to detect the edge into
+	// "completed" — fetched only when the request actually touches status.
+	var prevStatus string
+	if req.Status != nil {
+		current, err := s.repo.GetByID(ctx, userID, id)
+		if err != nil {
+			return ProjectView{}, err
+		}
+		prevStatus = current.Status
 	}
 
 	p, err := s.repo.Update(ctx, userID, id, req)
@@ -155,6 +178,9 @@ func (s *service) Update(ctx context.Context, userID, id string, req UpdateProje
 	}
 	view := ProjectToView(p)
 	s.emit(userID, Event{Type: EventUpdated, Payload: view})
+	if req.Status != nil {
+		s.emitProjectCompletedIfTransitioned(ctx, prevStatus, p)
+	}
 	return view, nil
 }
 

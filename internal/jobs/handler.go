@@ -76,10 +76,7 @@ type FocusSweepResult struct {
 // Handler exposes the internal job endpoints. These sit outside the public /v1
 // contract and are guarded by the InternalToken middleware, not JWT.
 type Handler struct {
-	dueNotifier      *DueDateNotifier
-	overdueNotifier  *OverdueNotifier
 	dayStartNotifier *DayStartNotifier
-	inboxNotifier    *InboxNotifier
 	summaryNotifier  *SummaryNotifier
 	attachmentGC     AttachmentGC
 	recurrence       RecurrenceSweep
@@ -89,12 +86,9 @@ type Handler struct {
 
 // NewHandler builds the jobs Handler. attachmentGC may be nil (attachment
 // feature disabled) — the GC endpoint and run-all step then no-op.
-func NewHandler(dueNotifier *DueDateNotifier, overdueNotifier *OverdueNotifier, dayStartNotifier *DayStartNotifier, inboxNotifier *InboxNotifier, summaryNotifier *SummaryNotifier, attachmentGC AttachmentGC) *Handler {
+func NewHandler(dayStartNotifier *DayStartNotifier, summaryNotifier *SummaryNotifier, attachmentGC AttachmentGC) *Handler {
 	return &Handler{
-		dueNotifier:      dueNotifier,
-		overdueNotifier:  overdueNotifier,
 		dayStartNotifier: dayStartNotifier,
-		inboxNotifier:    inboxNotifier,
 		summaryNotifier:  summaryNotifier,
 		attachmentGC:     attachmentGC,
 	}
@@ -190,36 +184,16 @@ func runSweep(w http.ResponseWriter, r *http.Request, name string, run runFunc) 
 	respond.JSON(w, http.StatusOK, breakdown)
 }
 
-// DueNotify runs one due-date sweep. Invoked hourly by the Render Cron Job; safe
-// to call repeatedly within an hour (idempotent via dedupe_key). ?dryRun=true
-// computes the breakdown without inserting.
-func (h *Handler) DueNotify(w http.ResponseWriter, r *http.Request) {
-	runSweep(w, r, "due-date", h.dueNotifier.Run)
-}
-
-// OverdueNotify runs one overdue sweep. Invoked hourly by the Render Cron Job;
-// safe to call repeatedly within a local day (idempotent via dedupe_key).
-func (h *Handler) OverdueNotify(w http.ResponseWriter, r *http.Request) {
-	runSweep(w, r, "overdue", h.overdueNotifier.Run)
-}
-
-// DayStart runs one start-of-day sweep (scheduled-today summary + plan-your-day
-// nudge). Invoked hourly by the Render Cron Job; safe to re-run within a local day
-// (idempotent via dedupe_key).
+// DayStart runs one morning-digest sweep (scheduled-today + overdue +
+// unprocessed-inbox counts, all plans). Invoked hourly by the Render Cron Job;
+// safe to re-run within a local day (idempotent via dedupe_key).
 func (h *Handler) DayStart(w http.ResponseWriter, r *http.Request) {
 	runSweep(w, r, "day-start", h.dayStartNotifier.Run)
 }
 
-// Inbox runs one inbox nudge sweep (unprocessed-count reminder + stale-capture
-// warning, both Pro). Invoked hourly by the Render Cron Job; safe to re-run within
-// the window (idempotent via dedupe_key).
-func (h *Handler) Inbox(w http.ResponseWriter, r *http.Request) {
-	runSweep(w, r, "inbox", h.inboxNotifier.Run)
-}
-
-// Summary runs one end-of-day sweep (daily completion summary + streak milestone,
-// both Pro). Invoked hourly by the Render Cron Job; safe to re-run within a local
-// day (idempotent via dedupe_key).
+// Summary runs one evening-digest sweep (completed + remaining task counts, all
+// plans, plus a Pro-only streak milestone). Invoked hourly by the Render Cron Job;
+// safe to re-run within a local day (idempotent via dedupe_key).
 func (h *Handler) Summary(w http.ResponseWriter, r *http.Request) {
 	runSweep(w, r, "summary", h.summaryNotifier.Run)
 }
@@ -266,10 +240,7 @@ func (h *Handler) RunAll(w http.ResponseWriter, r *http.Request) {
 		name string
 		run  runFunc
 	}{
-		{"due-date", h.dueNotifier.Run},
-		{"overdue", h.overdueNotifier.Run},
 		{"day-start", h.dayStartNotifier.Run},
-		{"inbox", h.inboxNotifier.Run},
 		{"summary", h.summaryNotifier.Run},
 	}
 

@@ -7,19 +7,19 @@ import (
 
 // Type values for a notification. Free types deliver to every plan; Pro types are
 // suppressed for free users (see policy.go). Producers land in later E-025 stories.
+//
+// task_due_soon, task_overdue, day_plan_nudge, inbox_unprocessed, inbox_stale,
+// task_scheduled_today, and daily_summary were retired in the notification rework
+// (2026-08-31): their counts folded into MorningDigest/EveningDigest, both unified
+// across plans, to cut per-task notification spam down to two daily touchpoints.
 const (
-	TypeTaskDueSoon        = "task_due_soon"        // FREE — existing (cron)
-	TypeSystemAnnouncement = "system_announcement"  // no producer yet
-	TypeTaskOverdue        = "task_overdue"         // FREE — overdue sweep
-	TypeTaskScheduledToday = "task_scheduled_today" // FREE — start-of-day sweep
-	TypeNothingScheduled   = "day_plan_nudge"       // PRO  — start-of-day sweep
-	TypeInboxUnprocessed   = "inbox_unprocessed"    // PRO  — inbox sweep
-	TypeInboxStale         = "inbox_stale"          // PRO  — inbox sweep
-	TypeTaskCompleted      = "task_completed"       // FREE — real-time
-	TypeProjectCompleted   = "project_completed"    // FREE — real-time
-	TypeDailySummary       = "daily_summary"        // PRO  — end-of-day sweep
-	TypeInboxZero          = "inbox_zero"           // PRO  — real-time
-	TypeStreakMilestone    = "streak_milestone"     // PRO  — end-of-day sweep
+	TypeSystemAnnouncement = "system_announcement" // no producer yet
+	TypeTaskCompleted      = "task_completed"      // FREE — real-time
+	TypeProjectCompleted   = "project_completed"   // FREE — real-time
+	TypeInboxZero          = "inbox_zero"          // PRO  — real-time
+	TypeStreakMilestone    = "streak_milestone"    // PRO  — end-of-day sweep
+	TypeMorningDigest      = "morning_digest"      // FREE — start-of-day sweep (all plans)
+	TypeEveningDigest      = "evening_digest"      // FREE — end-of-day sweep (all plans)
 )
 
 // Category values — derived from type, never stored in the DB.
@@ -32,16 +32,15 @@ const (
 )
 
 // categoryForType derives the notification category from its type string.
-// The switch is exhaustive over the 12 known types; unknown types return
+// The switch is exhaustive over the 7 known types; unknown types return
 // CategorySystem so forward-compat new types never surface a blank field.
 // Adding a new type REQUIRES a matching entry here AND in the TS counterpart.
 func categoryForType(notifType string) string {
 	switch notifType {
-	case TypeTaskDueSoon, TypeTaskOverdue, TypeTaskScheduledToday,
-		TypeNothingScheduled, TypeInboxUnprocessed, TypeInboxStale:
+	case TypeMorningDigest:
 		return CategoryReminder
 
-	case TypeDailySummary:
+	case TypeEveningDigest:
 		return CategorySummary
 
 	case TypeTaskCompleted, TypeProjectCompleted, TypeInboxZero, TypeStreakMilestone:
