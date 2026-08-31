@@ -306,7 +306,6 @@ func (s *service) update(ctx context.Context, userID, id, plan string, req Updat
 	// commits. Best-effort — see notify.go.
 	if transition == completedAtSetNow {
 		s.emitTaskCompleted(ctx, updated)
-		s.emitProjectCompletedIfLast(ctx, updated)
 		// Here rather than in SetStatus: the edit dialog completes a task through
 		// the plain PATCH, which would otherwise leave the series with no successor
 		// until the hourly sweep.

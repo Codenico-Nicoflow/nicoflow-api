@@ -44,11 +44,16 @@ func consecutiveDates(end string, n int) []string {
 
 func at2000UTC() time.Time { return time.Date(2026, 7, 14, 20, 0, 0, 0, time.UTC) }
 
-// AC1: Pro user completed N>0 today → one daily_summary with count N.
-func TestSummaryRun_DailySummary(t *testing.T) {
+func eveningUser(userID, plan string) RemindableUser {
+	return RemindableUser{UserID: userID, Timezone: "UTC", Plan: plan, EveningDigestEnabled: true, EveningHour: 20}
+}
+
+// completed>0 → one evening_digest with completed+remaining counts (all plans).
+func TestSummaryRun_DigestFiresOnCompletion(t *testing.T) {
 	repo := &fakeRepo{
-		users:     []RemindableUser{{UserID: "u1", Timezone: "UTC", Plan: planPro}},
+		users:     []RemindableUser{eveningUser("u1", "free")},
 		completed: map[string]int{"u1": 4},
+		openTasks: map[string]int{"u1": 2},
 	}
 	creator := &fakeCreator{inserted: true}
 	n := NewSummaryNotifier(repo, creator)
@@ -62,81 +67,61 @@ func TestSummaryRun_DailySummary(t *testing.T) {
 		t.Fatalf("generated=%d calls=%d, want 1/1", generated.Fired, len(creator.calls))
 	}
 	got := creator.calls[0]
-	if got.Type != notification.TypeDailySummary ||
-		got.DedupeKey == nil || *got.DedupeKey != "daily_summary:u1:2026-07-14" {
-		t.Fatalf("notification = %+v, want daily_summary + dedupe daily_summary:u1:2026-07-14", got)
+	if got.Type != notification.TypeEveningDigest ||
+		got.DedupeKey == nil || *got.DedupeKey != "evening_digest:u1:2026-07-14" {
+		t.Fatalf("notification = %+v, want evening_digest + dedupe evening_digest:u1:2026-07-14", got)
 	}
 	var meta struct {
-		Count int `json:"count"`
+		Completed int `json:"completed"`
+		Remaining int `json:"remaining"`
 	}
 	if err := json.Unmarshal(got.Metadata, &meta); err != nil {
 		t.Fatalf("metadata: %v", err)
 	}
-	if meta.Count != 4 {
-		t.Fatalf("count = %d, want 4", meta.Count)
+	if meta.Completed != 4 || meta.Remaining != 2 {
+		t.Fatalf("meta = %+v, want completed=4 remaining=2", meta)
 	}
 }
 
-// No completions today → no summary, no streak.
-func TestSummaryRun_NoCompletionsSilent(t *testing.T) {
+// Zero completions but tasks remain → still fires ("0 done today, N left").
+func TestSummaryRun_FiresOnZeroCompletionsWithRemaining(t *testing.T) {
 	repo := &fakeRepo{
-		users:     []RemindableUser{{UserID: "u1", Timezone: "UTC", Plan: planPro}},
+		users:     []RemindableUser{eveningUser("u1", "free")},
 		completed: map[string]int{"u1": 0},
+		openTasks: map[string]int{"u1": 3},
+	}
+	creator := &fakeCreator{inserted: true}
+	n := NewSummaryNotifier(repo, creator)
+	n.now = at2000UTC
+
+	generated, _ := n.Run(context.Background(), false)
+	if generated.Fired != 1 || len(creator.calls) != 1 {
+		t.Fatalf("generated=%d calls=%d, want 1/1 (0 completed, work remains)", generated.Fired, len(creator.calls))
+	}
+}
+
+// True-empty state: zero completed AND zero remaining → silent.
+func TestSummaryRun_SilentOnTrueEmpty(t *testing.T) {
+	repo := &fakeRepo{
+		users:     []RemindableUser{eveningUser("u1", "free")},
+		completed: map[string]int{"u1": 0},
+		openTasks: map[string]int{"u1": 0},
 	}
 	creator := &fakeCreator{inserted: true}
 	n := NewSummaryNotifier(repo, creator)
 	n.now = at2000UTC
 
 	if generated, _ := n.Run(context.Background(), false); generated.Fired != 0 || len(creator.calls) != 0 {
-		t.Fatalf("no completions → silent, got generated=%d calls=%d", generated.Fired, len(creator.calls))
+		t.Fatalf("true-empty must stay silent, got generated=%d calls=%d", generated.Fired, len(creator.calls))
 	}
 }
 
-// AC2 (NIC-1591): daily_summary disabled but streaks on → only the streak fires.
-// Setting one toggle explicitly leaves the other at its zero value (off) in the fake.
-func TestSummaryRun_DailySummaryDisabledStreakOn(t *testing.T) {
+// A user with the evening digest toggled off (and no active streak) gets nothing.
+func TestSummaryRun_ToggleOffSkips(t *testing.T) {
+	u := eveningUser("u1", "free")
+	u.EveningDigestEnabled = false
 	repo := &fakeRepo{
-		users:       []RemindableUser{{UserID: "u1", Timezone: "UTC", Plan: planPro, StreaksEnabled: true}},
-		completed:   map[string]int{"u1": 3},
-		streakDates: map[string][]string{"u1": consecutiveDates("2026-07-14", streakMilestones[0])},
-	}
-	creator := &fakeCreator{inserted: true}
-	n := NewSummaryNotifier(repo, creator)
-	n.now = at2000UTC
-
-	generated, _ := n.Run(context.Background(), false)
-	if generated.Fired != 1 || len(creator.calls) != 1 {
-		t.Fatalf("generated=%d calls=%d, want 1/1 (streak only)", generated.Fired, len(creator.calls))
-	}
-	if creator.calls[0].Type != notification.TypeStreakMilestone {
-		t.Fatalf("type = %q, want streak_milestone (daily_summary was disabled)", creator.calls[0].Type)
-	}
-}
-
-// AC2 (NIC-1591): streaks disabled but daily on → only the summary fires.
-func TestSummaryRun_StreakDisabledSummaryOn(t *testing.T) {
-	repo := &fakeRepo{
-		users:       []RemindableUser{{UserID: "u1", Timezone: "UTC", Plan: planPro, DailySummaryEnabled: true}},
-		completed:   map[string]int{"u1": 3},
-		streakDates: map[string][]string{"u1": consecutiveDates("2026-07-14", streakMilestones[0])},
-	}
-	creator := &fakeCreator{inserted: true}
-	n := NewSummaryNotifier(repo, creator)
-	n.now = at2000UTC
-
-	generated, _ := n.Run(context.Background(), false)
-	if generated.Fired != 1 || len(creator.calls) != 1 {
-		t.Fatalf("generated=%d calls=%d, want 1/1 (summary only)", generated.Fired, len(creator.calls))
-	}
-	if creator.calls[0].Type != notification.TypeDailySummary {
-		t.Fatalf("type = %q, want daily_summary (streaks was disabled)", creator.calls[0].Type)
-	}
-}
-
-// Free user is skipped (both types Pro).
-func TestSummaryRun_FreeUserSkipped(t *testing.T) {
-	repo := &fakeRepo{
-		users:     []RemindableUser{{UserID: "u1", Timezone: "UTC", Plan: "free"}},
+		users:     []RemindableUser{u},
 		completed: map[string]int{"u1": 5},
 	}
 	creator := &fakeCreator{inserted: true}
@@ -144,14 +129,16 @@ func TestSummaryRun_FreeUserSkipped(t *testing.T) {
 	n.now = at2000UTC
 
 	if generated, _ := n.Run(context.Background(), false); generated.Fired != 0 || len(creator.calls) != 0 {
-		t.Fatalf("free user must be skipped, got generated=%d calls=%d", generated.Fired, len(creator.calls))
+		t.Fatalf("toggled-off user must get nothing, got generated=%d calls=%d", generated.Fired, len(creator.calls))
 	}
 }
 
-// AC2: streak crossing a milestone (7) → summary + streak_milestone, deduped per milestone.
+// AC2: streak crossing a milestone (7) → digest + streak_milestone, Pro only.
 func TestSummaryRun_StreakMilestone(t *testing.T) {
+	u := eveningUser("u1", "pro")
+	u.StreaksEnabled = true
 	repo := &fakeRepo{
-		users:       []RemindableUser{{UserID: "u1", Timezone: "UTC", Plan: planPro}},
+		users:       []RemindableUser{u},
 		completed:   map[string]int{"u1": 1},
 		streakDates: map[string][]string{"u1": consecutiveDates("2026-07-14", 7)},
 	}
@@ -164,7 +151,7 @@ func TestSummaryRun_StreakMilestone(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	if generated.Fired != 2 || len(creator.calls) != 2 {
-		t.Fatalf("want summary + streak, got generated=%d calls=%d", generated.Fired, len(creator.calls))
+		t.Fatalf("want digest + streak, got generated=%d calls=%d", generated.Fired, len(creator.calls))
 	}
 	streak := creator.calls[1]
 	if streak.Type != notification.TypeStreakMilestone ||
@@ -173,10 +160,31 @@ func TestSummaryRun_StreakMilestone(t *testing.T) {
 	}
 }
 
-// AC2: a non-milestone streak (5 days) → summary only, no streak notification.
-func TestSummaryRun_NonMilestoneStreakNoFire(t *testing.T) {
+// Free user never gets a streak, even with a milestone streak — Pro-only perk.
+func TestSummaryRun_FreeUserNoStreak(t *testing.T) {
+	u := eveningUser("u1", "free")
+	u.StreaksEnabled = true
 	repo := &fakeRepo{
-		users:       []RemindableUser{{UserID: "u1", Timezone: "UTC", Plan: planPro}},
+		users:       []RemindableUser{u},
+		completed:   map[string]int{"u1": 1},
+		streakDates: map[string][]string{"u1": consecutiveDates("2026-07-14", 7)},
+	}
+	creator := &fakeCreator{inserted: true}
+	n := NewSummaryNotifier(repo, creator)
+	n.now = at2000UTC
+
+	generated, _ := n.Run(context.Background(), false)
+	if generated.Fired != 1 || len(creator.calls) != 1 || creator.calls[0].Type != notification.TypeEveningDigest {
+		t.Fatalf("free user must get digest only, got generated=%d calls=%+v", generated.Fired, creator.calls)
+	}
+}
+
+// A non-milestone streak (5 days) → digest only, no streak notification.
+func TestSummaryRun_NonMilestoneStreakNoFire(t *testing.T) {
+	u := eveningUser("u1", "pro")
+	u.StreaksEnabled = true
+	repo := &fakeRepo{
+		users:       []RemindableUser{u},
 		completed:   map[string]int{"u1": 1},
 		streakDates: map[string][]string{"u1": consecutiveDates("2026-07-14", 5)},
 	}
@@ -187,15 +195,17 @@ func TestSummaryRun_NonMilestoneStreakNoFire(t *testing.T) {
 	if _, err := n.Run(context.Background(), false); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if len(creator.calls) != 1 || creator.calls[0].Type != notification.TypeDailySummary {
-		t.Fatalf("want only daily_summary at streak 5, got %+v", creator.calls)
+	if len(creator.calls) != 1 || creator.calls[0].Type != notification.TypeEveningDigest {
+		t.Fatalf("want only evening_digest at streak 5, got %+v", creator.calls)
 	}
 }
 
 // AC3: idempotent — dedupe-held rows attempted but not counted.
 func TestSummaryRun_Idempotent(t *testing.T) {
+	u := eveningUser("u1", "pro")
+	u.StreaksEnabled = true
 	repo := &fakeRepo{
-		users:       []RemindableUser{{UserID: "u1", Timezone: "UTC", Plan: planPro}},
+		users:       []RemindableUser{u},
 		completed:   map[string]int{"u1": 3},
 		streakDates: map[string][]string{"u1": consecutiveDates("2026-07-14", 30)},
 	}
@@ -210,7 +220,7 @@ func TestSummaryRun_Idempotent(t *testing.T) {
 
 func TestSummaryRun_SkipsUsersNotAtHour(t *testing.T) {
 	repo := &fakeRepo{
-		users:     []RemindableUser{{UserID: "u1", Timezone: "UTC", Plan: planPro}},
+		users:     []RemindableUser{eveningUser("u1", "free")},
 		completed: map[string]int{"u1": 5},
 	}
 	creator := &fakeCreator{inserted: true}
@@ -225,12 +235,9 @@ func TestSummaryRun_SkipsUsersNotAtHour(t *testing.T) {
 // Per-user isolation: one user's count error must not abort the batch.
 func TestSummaryRun_PerUserIsolation(t *testing.T) {
 	repo := &fakeRepo{
-		users: []RemindableUser{
-			{UserID: "u1", Timezone: "UTC", Plan: planPro},
-			{UserID: "u2", Timezone: "UTC", Plan: planPro},
-		},
-		completeErr: map[string]error{"u1": errors.New("db down for u1")},
-		completed:   map[string]int{"u2": 2},
+		users:        []RemindableUser{eveningUser("u1", "free"), eveningUser("u2", "free")},
+		completedErr: map[string]error{"u1": errors.New("db down for u1")},
+		completed:    map[string]int{"u2": 2},
 	}
 	creator := &fakeCreator{inserted: true}
 	n := NewSummaryNotifier(repo, creator)
@@ -241,6 +248,6 @@ func TestSummaryRun_PerUserIsolation(t *testing.T) {
 		t.Fatalf("Run must not return a per-user error: %v", err)
 	}
 	if generated.Fired != 1 || len(creator.calls) != 1 || creator.calls[0].UserID != "u2" {
-		t.Fatalf("want u2's summary despite u1 failing, got generated=%d calls=%d", generated.Fired, len(creator.calls))
+		t.Fatalf("want u2's digest despite u1 failing, got generated=%d calls=%d", generated.Fired, len(creator.calls))
 	}
 }

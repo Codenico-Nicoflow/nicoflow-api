@@ -112,7 +112,7 @@ func newTaskServer(t *testing.T, plan string) taskEnv {
 	h := handler.Handlers{
 		Auth:    auth.NewHandler(auth.NewService(auth.NewRepository(pool), cfg), auth.HandlerConfig{}),
 		Area:    area.NewHandler(area.NewService(area.NewRepository(pool), nil)),
-		Project: project.NewHandler(project.NewService(project.NewRepository(pool), nil)),
+		Project: project.NewHandler(project.NewService(project.NewRepository(pool), nil, nil)),
 		Task:    task.NewHandler(taskSvc, task.NewSubtaskService(task.NewSubtaskRepository(pool), nil)),
 		Bucket:  bucket.NewHandler(bucket.NewService(bucket.NewRepository(pool), taskSvc, nil, nil)),
 		AI:      ai.NewHandler(ai.NewService(ai.NewRepository(pool), nil, "", nil)),

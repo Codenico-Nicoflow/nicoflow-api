@@ -104,7 +104,7 @@ func newBucketServer(t *testing.T, plan string) bucketEnv {
 	notifSvc := notification.NewService(notification.NewRepository(pool), nil)
 	taskSvc := task.NewService(task.NewRepository(pool), notifSvc, nil)
 	// Real note service so the bucket→note path runs end-to-end (E-053).
-	projectSvc := project.NewService(project.NewRepository(pool), nil)
+	projectSvc := project.NewService(project.NewRepository(pool), nil, nil)
 	noteSvc := note.NewService(note.NewRepository(pool), noteProjectVerifier{projects: projectSvc}, notelink.NewRepository(pool), nil)
 	// Real recurrence service so the bucket→recurrence path runs end-to-end.
 	// taskReader nil is safe: this test never exercises ConvertToRecurring, the

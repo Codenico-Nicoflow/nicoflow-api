@@ -65,11 +65,11 @@ func TestSweep_WindowCatchUp(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := &fakeRepo{
-				users:       []RemindableUser{{UserID: "u1", Timezone: "UTC", MorningHour: 8}},
-				overdueByID: map[string][]DueTask{"u1": {{ID: "t1", Title: "Late"}}},
+				users:     []RemindableUser{{UserID: "u1", Timezone: "UTC", MorningDigestEnabled: true, MorningHour: 8}},
+				scheduled: map[string]int{"u1": 1},
 			}
 			creator := &fakeCreator{inserted: true}
-			n := NewOverdueNotifier(repo, creator)
+			n := NewDayStartNotifier(repo, creator)
 			n.now = func() time.Time { return time.Date(2026, 7, 14, tt.utcHour, 0, 0, 0, time.UTC) }
 
 			b, err := n.Run(context.Background(), false)
@@ -107,7 +107,7 @@ func TestSweep_EveningWindowClamp(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := &fakeRepo{
-				users:     []RemindableUser{{UserID: "u1", Timezone: "UTC", Plan: planPro, EveningHour: 22}},
+				users:     []RemindableUser{{UserID: "u1", Timezone: "UTC", Plan: planPro, EveningDigestEnabled: true, EveningHour: 22}},
 				completed: map[string]int{"u1": 3},
 			}
 			creator := &fakeCreator{inserted: true}
@@ -133,11 +133,11 @@ func TestSweep_EveningWindowClamp(t *testing.T) {
 // the window still matches. Here 12:00 UTC = 08:00 EDT (post-jump), morning_hour 8.
 func TestSweep_DSTSpringForward(t *testing.T) {
 	repo := &fakeRepo{
-		users:       []RemindableUser{{UserID: "u1", Timezone: "America/New_York", MorningHour: 8}},
-		overdueByID: map[string][]DueTask{"u1": {{ID: "t1", Title: "Late"}}},
+		users:     []RemindableUser{{UserID: "u1", Timezone: "America/New_York", MorningDigestEnabled: true, MorningHour: 8}},
+		scheduled: map[string]int{"u1": 1},
 	}
 	creator := &fakeCreator{inserted: true}
-	n := NewOverdueNotifier(repo, creator)
+	n := NewDayStartNotifier(repo, creator)
 	// 2026-03-08 12:00 UTC: after the spring-forward, New York is UTC-4 (EDT) → 08:00.
 	n.now = func() time.Time { return time.Date(2026, 3, 8, 12, 0, 0, 0, time.UTC) }
 
@@ -154,11 +154,11 @@ func TestSweep_DSTSpringForward(t *testing.T) {
 // fires, and never crashes the sweep. This is the fault that hid the original bug.
 func TestSweep_BadTimezoneBreakdown(t *testing.T) {
 	repo := &fakeRepo{
-		users:       []RemindableUser{{UserID: "u1", Timezone: "Mars/Olympus", MorningHour: 8}},
-		overdueByID: map[string][]DueTask{"u1": {{ID: "t1", Title: "Late"}}},
+		users:     []RemindableUser{{UserID: "u1", Timezone: "Mars/Olympus", MorningDigestEnabled: true, MorningHour: 8}},
+		scheduled: map[string]int{"u1": 1},
 	}
 	creator := &fakeCreator{inserted: true}
-	n := NewOverdueNotifier(repo, creator)
+	n := NewDayStartNotifier(repo, creator)
 	n.now = func() time.Time { return time.Date(2026, 7, 14, 8, 0, 0, 0, time.UTC) }
 
 	b, err := n.Run(context.Background(), false)
@@ -183,10 +183,10 @@ func TestSweep_DedupeSuppressesCatchUp(t *testing.T) {
 	fired := 0
 	for _, utcHour := range []int{8, 9, 10} {
 		repo := &fakeRepo{
-			users:       []RemindableUser{{UserID: "u1", Timezone: "UTC", MorningHour: 8}},
-			overdueByID: map[string][]DueTask{"u1": {{ID: "t1", Title: "Late"}}},
+			users:     []RemindableUser{{UserID: "u1", Timezone: "UTC", MorningDigestEnabled: true, MorningHour: 8}},
+			scheduled: map[string]int{"u1": 1},
 		}
-		n := NewOverdueNotifier(repo, creator)
+		n := NewDayStartNotifier(repo, creator)
 		n.now = func() time.Time { return time.Date(2026, 7, 14, utcHour, 0, 0, 0, time.UTC) }
 		b, err := n.Run(context.Background(), false)
 		if err != nil {
@@ -206,11 +206,11 @@ func TestSweep_DedupeSuppressesCatchUp(t *testing.T) {
 // window and would fire) but performs no Create.
 func TestSweep_DryRunInsertsNothing(t *testing.T) {
 	repo := &fakeRepo{
-		users:       []RemindableUser{{UserID: "u1", Timezone: "UTC", MorningHour: 8}},
-		overdueByID: map[string][]DueTask{"u1": {{ID: "t1", Title: "Late"}}},
+		users:     []RemindableUser{{UserID: "u1", Timezone: "UTC", MorningDigestEnabled: true, MorningHour: 8}},
+		scheduled: map[string]int{"u1": 1},
 	}
 	creator := &fakeCreator{inserted: true}
-	n := NewOverdueNotifier(repo, creator)
+	n := NewDayStartNotifier(repo, creator)
 	n.now = func() time.Time { return time.Date(2026, 7, 14, 8, 0, 0, 0, time.UTC) }
 
 	b, err := n.Run(context.Background(), true) // dryRun

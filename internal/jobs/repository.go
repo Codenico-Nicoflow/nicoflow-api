@@ -1,3 +1,6 @@
+// Package jobs holds scheduled background jobs invoked by an external scheduler
+// (a Render Cron Job) through protected internal endpoints — not in-process
+// tickers, so they survive restarts and don't double-fire across instances.
 package jobs
 
 import (
@@ -9,28 +12,68 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// scheduledForLayout is the date format stored in tasks.scheduled_for (ISO date),
+// matching the task domain's own layout.
+const scheduledForLayout = "2006-01-02"
+
+// RemindableUser is a user eligible for a digest sweep: their timezone and the
+// fields the two daily digests gate on (plan, reminder hours, per-digest toggle).
+type RemindableUser struct {
+	UserID   string
+	Plan     string
+	Timezone string
+	// Per-digest toggles. An absent preferences row COALESCEs both to TRUE.
+	MorningDigestEnabled bool
+	EveningDigestEnabled bool
+	StreaksEnabled       bool
+	MorningHour          int
+	EveningHour          int
+}
+
+// Repository is the data access the digest sweeps need. Defined here (the
+// consumer) per the project's interface-ownership rule.
+type Repository interface {
+	// ListRemindableUsers returns every non-deleted user with their timezone and
+	// effective preferences (LEFT JOIN prefs, COALESCE to defaults).
+	ListRemindableUsers(ctx context.Context) ([]RemindableUser, error)
+	// CountScheduledOn returns how many of a user's non-terminal tasks are
+	// scheduled for the given ISO date.
+	CountScheduledOn(ctx context.Context, userID, isoDate string) (int, error)
+	// CountOverdue returns how many of a user's non-terminal tasks have
+	// scheduled_for strictly before the given local ISO date.
+	CountOverdue(ctx context.Context, userID, localDate string) (int, error)
+	// CountUnprocessedInbox returns how many unprocessed items sit in a user's
+	// inbox (bucket rows with processed_at IS NULL).
+	CountUnprocessedInbox(ctx context.Context, userID string) (int, error)
+	// CountOpenTasks returns how many of a user's tasks are still non-terminal
+	// (status not in done/cancelled), regardless of schedule.
+	CountOpenTasks(ctx context.Context, userID string) (int, error)
+	// CountCompletedOn returns how many of the user's tasks were completed on the
+	// given local ISO date (completed_at bucketed into the user's timezone).
+	CountCompletedOn(ctx context.Context, userID, tz, localDate string) (int, error)
+	// RecentCompletionDates returns the distinct local ISO dates (user's timezone,
+	// descending) on which the user completed at least one task, on or before
+	// localDate, limited to a recent window — enough to compute the current streak.
+	RecentCompletionDates(ctx context.Context, userID, tz, localDate string, limit int) ([]string, error)
+}
+
 type pgRepository struct {
 	db *pgxpool.Pool
 }
 
-// NewRepository returns a PostgreSQL-backed Repository for the sweep jobs.
+// NewRepository returns a PostgreSQL-backed Repository for the digest sweeps.
 func NewRepository(db *pgxpool.Pool) Repository {
 	return &pgRepository{db: db}
 }
 
 // ListRemindableUsers returns every active (non-deleted) user with their timezone,
-// effective before_due_minutes, plan, email, email_digest, and the four per-family
-// sweep toggles (overdue / daily_summary / inbox / streaks). Users with no
-// preferences row fall back to the defaults (lead 1440, all toggles on) via
-// LEFT JOIN + COALESCE.
+// plan, and digest preferences. Users with no preferences row fall back to the
+// defaults (both digests on, morning 08:00, evening 20:00) via LEFT JOIN + COALESCE.
 func (r *pgRepository) ListRemindableUsers(ctx context.Context) ([]RemindableUser, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT u.id, u.email, u.plan, u.timezone,
-		       COALESCE(p.before_due_minutes, 1440),
-		       COALESCE(p.email_digest, TRUE),
-		       COALESCE(p.overdue_enabled, TRUE),
-		       COALESCE(p.daily_summary_enabled, TRUE),
-		       COALESCE(p.inbox_nudges_enabled, TRUE),
+		SELECT u.id, u.plan, u.timezone,
+		       COALESCE(p.morning_digest_enabled, TRUE),
+		       COALESCE(p.evening_digest_enabled, TRUE),
 		       COALESCE(p.streaks_enabled, TRUE),
 		       COALESCE(p.morning_hour, 8),
 		       COALESCE(p.evening_hour, 20)
@@ -45,8 +88,8 @@ func (r *pgRepository) ListRemindableUsers(ctx context.Context) ([]RemindableUse
 	var out []RemindableUser
 	for rows.Next() {
 		var u RemindableUser
-		if err := rows.Scan(&u.UserID, &u.Email, &u.Plan, &u.Timezone, &u.BeforeDueMinutes, &u.EmailDigest,
-			&u.OverdueEnabled, &u.DailySummaryEnabled, &u.InboxNudgesEnabled, &u.StreaksEnabled,
+		if err := rows.Scan(&u.UserID, &u.Plan, &u.Timezone,
+			&u.MorningDigestEnabled, &u.EveningDigestEnabled, &u.StreaksEnabled,
 			&u.MorningHour, &u.EveningHour); err != nil {
 			return nil, fmt.Errorf("jobs.ListRemindableUsers scan: %w", err)
 		}
@@ -55,55 +98,39 @@ func (r *pgRepository) ListRemindableUsers(ctx context.Context) ([]RemindableUse
 	return out, rows.Err()
 }
 
-// HasActiveWork reports whether the user has anything to plan: at least one
-// non-terminal task, or at least one unprocessed inbox item. Used as the
-// day-plan nudge precondition (only nudge users who actually have open work).
-func (r *pgRepository) HasActiveWork(ctx context.Context, userID string) (bool, error) {
-	var has bool
+// CountScheduledOn returns how many of a user's non-terminal tasks are scheduled
+// for isoDate.
+func (r *pgRepository) CountScheduledOn(ctx context.Context, userID, isoDate string) (int, error) {
+	var n int
 	err := r.db.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM tasks
-			WHERE user_id = @userID AND status NOT IN ('done', 'cancelled')
-			UNION ALL
-			SELECT 1 FROM bucket
-			WHERE user_id = @userID AND processed_at IS NULL
-		)`,
-		pgx.NamedArgs{"userID": userID},
-	).Scan(&has)
+		SELECT COUNT(*) FROM tasks
+		WHERE user_id = @userID
+		  AND scheduled_for = @isoDate
+		  AND status NOT IN ('done', 'cancelled')`,
+		pgx.NamedArgs{"userID": userID, "isoDate": isoDate},
+	).Scan(&n)
 	if err != nil {
-		return false, fmt.Errorf("jobs.HasActiveWork: %w", err)
+		return 0, fmt.Errorf("jobs.CountScheduledOn: %w", err)
 	}
-	return has, nil
+	return n, nil
 }
 
-// ListOverdueTasks returns a user's non-terminal tasks whose scheduled_for is
-// strictly before localDate — scheduled in the past and still open. Terminal
-// statuses (done, cancelled) and unscheduled tasks (NULL scheduled_for) are
-// excluded.
-func (r *pgRepository) ListOverdueTasks(ctx context.Context, userID, localDate string) ([]DueTask, error) {
-	rows, err := r.db.Query(ctx, `
-		SELECT id, title, project_id
-		FROM tasks
+// CountOverdue returns how many of a user's non-terminal tasks have scheduled_for
+// strictly before localDate — scheduled in the past and still open.
+func (r *pgRepository) CountOverdue(ctx context.Context, userID, localDate string) (int, error) {
+	var n int
+	err := r.db.QueryRow(ctx, `
+		SELECT COUNT(*) FROM tasks
 		WHERE user_id = @userID
 		  AND scheduled_for IS NOT NULL
 		  AND scheduled_for < @localDate
 		  AND status NOT IN ('done', 'cancelled')`,
 		pgx.NamedArgs{"userID": userID, "localDate": localDate},
-	)
+	).Scan(&n)
 	if err != nil {
-		return nil, fmt.Errorf("jobs.ListOverdueTasks: %w", err)
+		return 0, fmt.Errorf("jobs.CountOverdue: %w", err)
 	}
-	defer rows.Close()
-
-	var out []DueTask
-	for rows.Next() {
-		var t DueTask
-		if err := rows.Scan(&t.ID, &t.Title, &t.ProjectID); err != nil {
-			return nil, fmt.Errorf("jobs.ListOverdueTasks scan: %w", err)
-		}
-		out = append(out, t)
-	}
-	return out, rows.Err()
+	return n, nil
 }
 
 // CountUnprocessedInbox returns how many unprocessed items sit in a user's inbox
@@ -121,21 +148,19 @@ func (r *pgRepository) CountUnprocessedInbox(ctx context.Context, userID string)
 	return n, nil
 }
 
-// HasStaleInbox reports whether the user has any unprocessed inbox item captured
-// strictly before cutoff — a capture that has gone stale.
-func (r *pgRepository) HasStaleInbox(ctx context.Context, userID string, cutoff time.Time) (bool, error) {
-	var has bool
+// CountOpenTasks returns how many of a user's tasks are still non-terminal,
+// regardless of schedule — the evening digest's "N tasks left" figure.
+func (r *pgRepository) CountOpenTasks(ctx context.Context, userID string) (int, error) {
+	var n int
 	err := r.db.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM bucket
-			WHERE user_id = @userID AND processed_at IS NULL AND created_at < @cutoff
-		)`,
-		pgx.NamedArgs{"userID": userID, "cutoff": cutoff},
-	).Scan(&has)
+		SELECT COUNT(*) FROM tasks
+		WHERE user_id = @userID AND status NOT IN ('done', 'cancelled')`,
+		pgx.NamedArgs{"userID": userID},
+	).Scan(&n)
 	if err != nil {
-		return false, fmt.Errorf("jobs.HasStaleInbox: %w", err)
+		return 0, fmt.Errorf("jobs.CountOpenTasks: %w", err)
 	}
-	return has, nil
+	return n, nil
 }
 
 // CountCompletedOn returns how many of the user's tasks were completed on the given
@@ -182,34 +207,6 @@ func (r *pgRepository) RecentCompletionDates(ctx context.Context, userID, tz, lo
 			return nil, fmt.Errorf("jobs.RecentCompletionDates scan: %w", err)
 		}
 		out = append(out, d.Format(scheduledForLayout))
-	}
-	return out, rows.Err()
-}
-
-// ListTasksScheduledOn returns a user's non-terminal tasks scheduled for the given
-// ISO date. Terminal statuses (done, cancelled) are excluded — no reminder for work
-// already closed out.
-func (r *pgRepository) ListTasksScheduledOn(ctx context.Context, userID, isoDate string) ([]DueTask, error) {
-	rows, err := r.db.Query(ctx, `
-		SELECT id, title, project_id
-		FROM tasks
-		WHERE user_id = @userID
-		  AND scheduled_for = @isoDate
-		  AND status NOT IN ('done', 'cancelled')`,
-		pgx.NamedArgs{"userID": userID, "isoDate": isoDate},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("jobs.ListTasksScheduledOn: %w", err)
-	}
-	defer rows.Close()
-
-	var out []DueTask
-	for rows.Next() {
-		var t DueTask
-		if err := rows.Scan(&t.ID, &t.Title, &t.ProjectID); err != nil {
-			return nil, fmt.Errorf("jobs.ListTasksScheduledOn scan: %w", err)
-		}
-		out = append(out, t)
 	}
 	return out, rows.Err()
 }

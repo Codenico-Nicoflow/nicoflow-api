@@ -36,12 +36,14 @@ type Service interface {
 type service struct {
 	repo        Repository
 	broadcaster Broadcaster // nil disables emission
+	notif       notifier    // nil disables notification emission
 }
 
-// NewService creates a new project Service. broadcaster may be nil (real-time
-// emission disabled); pass the ws adapter to light up live updates.
-func NewService(repo Repository, broadcaster Broadcaster) Service {
-	return &service{repo: repo, broadcaster: broadcaster}
+// NewService creates a new project Service. broadcaster and notif may be nil
+// (real-time / notification emission disabled respectively); pass the ws
+// adapter and notification.Service to light both up.
+func NewService(repo Repository, broadcaster Broadcaster, notif notifier) Service {
+	return &service{repo: repo, broadcaster: broadcaster, notif: notif}
 }
 
 func (s *service) List(ctx context.Context, userID string, f ListProjectsFilter) (ListProjectsResponse, error) {
@@ -149,12 +151,24 @@ func (s *service) Update(ctx context.Context, userID, id string, req UpdateProje
 		return ProjectView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "description must be 2000 characters or fewer")
 	}
 
+	var prevStatus string
+	if req.Status != nil {
+		current, err := s.repo.GetByID(ctx, userID, id)
+		if err != nil {
+			return ProjectView{}, err
+		}
+		prevStatus = current.Status
+	}
+
 	p, err := s.repo.Update(ctx, userID, id, req)
 	if err != nil {
 		return ProjectView{}, err
 	}
 	view := ProjectToView(p)
 	s.emit(userID, Event{Type: EventUpdated, Payload: view})
+	if req.Status != nil {
+		s.emitProjectCompletedIfTransitioned(ctx, prevStatus, p)
+	}
 	return view, nil
 }
 

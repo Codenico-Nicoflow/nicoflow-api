@@ -23,7 +23,7 @@ func TestBroadcast_EmitsCreateUpdateDelete(t *testing.T) {
 		delete: func(context.Context, string, string) error { return nil },
 	}
 	fb := &fakeBroadcaster{}
-	svc := project.NewService(repo, fb)
+	svc := project.NewService(repo, fb, nil)
 
 	if _, err := svc.Create(context.Background(), "u1", "a1", "pro", project.CreateProjectRequest{Name: "Site"}); err != nil {
 		t.Fatalf("create: %v", err)
@@ -57,7 +57,7 @@ func TestBroadcast_NoEventOnFailedMutation(t *testing.T) {
 		delete:      func(context.Context, string, string) error { return boom },
 	}
 	fb := &fakeBroadcaster{}
-	svc := project.NewService(repo, fb)
+	svc := project.NewService(repo, fb, nil)
 
 	if _, err := svc.Create(context.Background(), "u1", "a1", "pro", project.CreateProjectRequest{Name: "Site"}); err == nil {
 		t.Fatal("expected create error")

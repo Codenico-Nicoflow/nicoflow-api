@@ -21,7 +21,6 @@ type mockRepo struct {
 	deleteFn         func(ctx context.Context, userID, id string) error
 	projectOwned     func(ctx context.Context, userID, projectID string) (bool, error)
 	countActive      func(ctx context.Context, userID, projectID string) (int, error)
-	countNonTerminal func(ctx context.Context, userID, projectID string) (int, error)
 	nextDisplayOrder func(ctx context.Context, userID, projectID string) (int, error)
 	updateSchedule   func(ctx context.Context, userID, id string, scheduledFor, scheduledTime *string, rollsOver *bool) (Task, error)
 	repack           func(ctx context.Context, userID, id string, targetOrder int) (Task, error)
@@ -57,12 +56,6 @@ func (m *mockRepo) ProjectOwned(ctx context.Context, userID, projectID string) (
 }
 func (m *mockRepo) CountActive(ctx context.Context, userID, projectID string) (int, error) {
 	return m.countActive(ctx, userID, projectID)
-}
-func (m *mockRepo) CountNonTerminalByProject(ctx context.Context, userID, projectID string) (int, error) {
-	if m.countNonTerminal == nil {
-		return 0, nil
-	}
-	return m.countNonTerminal(ctx, userID, projectID)
 }
 func (m *mockRepo) NextDisplayOrder(ctx context.Context, userID, projectID string) (int, error) {
 	return m.nextDisplayOrder(ctx, userID, projectID)

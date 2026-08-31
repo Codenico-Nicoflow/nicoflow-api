@@ -24,7 +24,7 @@ const cronSecret = "test-cron-secret"
 
 // stubGC is a no-op AttachmentGC — the reconcile logic is covered by the
 // attachment package's own tests; here we only assert the endpoint is wired and
-// token-guarded like the notification sweeps.
+// token-guarded like the digest sweeps.
 type stubGC struct{}
 
 func (stubGC) RunGC(context.Context) (jobs.GCSummary, error) {
@@ -75,9 +75,9 @@ func seedProject(t *testing.T, pool *pgxpool.Pool, userID string) string {
 	return projectID
 }
 
-// seedUserWithDueTask creates a user in the given timezone with one task scheduled
-// for isoDate, and returns the user ID.
-func seedUserWithDueTask(t *testing.T, pool *pgxpool.Pool, tz, isoDate string) string {
+// seedUserWithScheduledTask creates a user in the given timezone with one task
+// scheduled for isoDate, and returns the user ID.
+func seedUserWithScheduledTask(t *testing.T, pool *pgxpool.Pool, tz, isoDate string) string {
 	t.Helper()
 	uid := uuid.New().String()
 	_, err := pool.Exec(context.Background(),
@@ -90,7 +90,7 @@ func seedUserWithDueTask(t *testing.T, pool *pgxpool.Pool, tz, isoDate string) s
 	projectID := seedProject(t, pool, uid)
 	_, err = pool.Exec(context.Background(),
 		`INSERT INTO tasks (id, user_id, project_id, title, status, scheduled_for)
-		 VALUES ($1, $2, $3, 'Due task', 'active', $4)`,
+		 VALUES ($1, $2, $3, 'Scheduled task', 'active', $4)`,
 		uuid.New().String(), uid, projectID, isoDate)
 	if err != nil {
 		t.Fatalf("seed task: %v", err)
@@ -115,20 +115,14 @@ func newServer(t *testing.T, pool *pgxpool.Pool) *httptest.Server {
 	notifSvc := notification.NewService(notification.NewRepository(pool), nil)
 	repo := jobs.NewRepository(pool)
 	h := jobs.NewHandler(
-		jobs.NewDueDateNotifier(repo, notifSvc, ""),
-		jobs.NewOverdueNotifier(repo, notifSvc),
 		jobs.NewDayStartNotifier(repo, notifSvc),
-		jobs.NewInboxNotifier(repo, notifSvc),
 		jobs.NewSummaryNotifier(repo, notifSvc),
 		stubGC{},
 	).WithFocusStale(stubFocusSweeper{})
 
 	r := chi.NewRouter()
 	r.Use(mw.RequestID)
-	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/due-notify", h.DueNotify)
-	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/overdue", h.OverdueNotify)
 	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/day-start", h.DayStart)
-	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/inbox", h.Inbox)
 	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/summary", h.Summary)
 	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/attachment-gc", h.AttachmentGC)
 	r.With(mw.InternalToken(cronSecret)).Post("/internal/jobs/focus-stale", h.FocusStale)
@@ -162,15 +156,15 @@ func TestEndpoint_Auth(t *testing.T) {
 	srv := newServer(t, pool)
 
 	// Missing token → 401.
-	if resp := post(t, srv.URL+"/internal/jobs/due-notify", ""); resp.StatusCode != http.StatusUnauthorized {
+	if resp := post(t, srv.URL+"/internal/jobs/day-start", ""); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("missing token → %d, want 401", resp.StatusCode)
 	}
 	// Wrong token → 401.
-	if resp := post(t, srv.URL+"/internal/jobs/due-notify", "nope"); resp.StatusCode != http.StatusUnauthorized {
+	if resp := post(t, srv.URL+"/internal/jobs/day-start", "nope"); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("wrong token → %d, want 401", resp.StatusCode)
 	}
 	// Correct token → 200.
-	if resp := post(t, srv.URL+"/internal/jobs/due-notify", cronSecret); resp.StatusCode != http.StatusOK {
+	if resp := post(t, srv.URL+"/internal/jobs/day-start", cronSecret); resp.StatusCode != http.StatusOK {
 		t.Fatalf("valid token → %d, want 200", resp.StatusCode)
 	}
 
@@ -189,39 +183,37 @@ func TestEndpoint_DisabledWhenSecretUnset(t *testing.T) {
 	notifSvc := notification.NewService(notification.NewRepository(pool), nil)
 	repo := jobs.NewRepository(pool)
 	h := jobs.NewHandler(
-		jobs.NewDueDateNotifier(repo, notifSvc, ""),
-		jobs.NewOverdueNotifier(repo, notifSvc),
 		jobs.NewDayStartNotifier(repo, notifSvc),
-		jobs.NewInboxNotifier(repo, notifSvc),
 		jobs.NewSummaryNotifier(repo, notifSvc),
 		stubGC{},
 	)
 	r := chi.NewRouter()
-	r.With(mw.InternalToken("")).Post("/internal/jobs/due-notify", h.DueNotify)
+	r.With(mw.InternalToken("")).Post("/internal/jobs/day-start", h.DayStart)
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
 
-	if resp := post(t, srv.URL+"/internal/jobs/due-notify", "anything"); resp.StatusCode != http.StatusServiceUnavailable {
+	if resp := post(t, srv.URL+"/internal/jobs/day-start", "anything"); resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("unset secret → %d, want 503", resp.StatusCode)
 	}
 }
 
-// TestSweep_GeneratesAndIsIdempotent drives the sweep against a real DB with a
-// clock pinned to 08:00 UTC (so it always fires, no wall-clock flakiness). A UTC
-// user with a task due local-tomorrow gets exactly one notification, and a re-run
-// the same hour produces no duplicate (dedupe_key + ON CONFLICT DO NOTHING).
-func TestSweep_GeneratesAndIsIdempotent(t *testing.T) {
+// TestDayStartSweep_GeneratesAndIsIdempotent drives the morning-digest sweep
+// against a real DB with a clock pinned to 08:00 UTC (so it always fires, no
+// wall-clock flakiness). A UTC user with a task scheduled today gets exactly one
+// morning_digest, and a re-run the same hour produces no duplicate (dedupe_key +
+// ON CONFLICT DO NOTHING).
+func TestDayStartSweep_GeneratesAndIsIdempotent(t *testing.T) {
 	pool := testutil.NewTestDB(t)
 	clean(t, pool)
 	t.Cleanup(func() { clean(t, pool) })
 
 	pinned := time.Date(2026, 7, 14, 8, 0, 0, 0, time.UTC) // local 08:00 for UTC users
-	target := pinned.AddDate(0, 0, 1).Format("2006-01-02") // 1440-min lead → tomorrow
-	uid := seedUserWithDueTask(t, pool, "UTC", target)
+	today := pinned.Format("2006-01-02")
+	uid := seedUserWithScheduledTask(t, pool, "UTC", today)
 
 	notifSvc := notification.NewService(notification.NewRepository(pool), nil)
-	notifier := jobs.NewDueDateNotifier(jobs.NewRepository(pool), notifSvc, "")
-	jobs.SetClock(notifier, func() time.Time { return pinned })
+	notifier := jobs.NewDayStartNotifier(jobs.NewRepository(pool), notifSvc)
+	jobs.SetDayStartClock(notifier, func() time.Time { return pinned })
 
 	// Run 1 → one notification created.
 	n, err := notifier.Run(context.Background(), false)
@@ -248,15 +240,15 @@ func TestSweep_GeneratesAndIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestSweep_SkipsTerminalAndUnscheduled confirms only non-terminal tasks scheduled
-// on the target date generate a reminder.
-func TestSweep_SkipsTerminalTasks(t *testing.T) {
+// TestDayStartSweep_SkipsTerminalTasks confirms a done task doesn't count toward
+// the scheduled figure, and a user with genuinely nothing due stays silent.
+func TestDayStartSweep_SkipsTerminalTasks(t *testing.T) {
 	pool := testutil.NewTestDB(t)
 	clean(t, pool)
 	t.Cleanup(func() { clean(t, pool) })
 
 	pinned := time.Date(2026, 7, 14, 8, 0, 0, 0, time.UTC)
-	target := pinned.AddDate(0, 0, 1).Format("2006-01-02")
+	today := pinned.Format("2006-01-02")
 
 	uid := uuid.New().String()
 	if _, err := pool.Exec(context.Background(),
@@ -265,43 +257,42 @@ func TestSweep_SkipsTerminalTasks(t *testing.T) {
 		uid, uid+"@jobs.integration.test", "u_"+uid[:8]); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
-	// A done task on the target date — must be skipped.
+	// A done task scheduled today — must be skipped.
 	projectID := seedProject(t, pool, uid)
 	if _, err := pool.Exec(context.Background(),
 		`INSERT INTO tasks (id, user_id, project_id, title, status, scheduled_for)
 		 VALUES ($1, $2, $3, 'Done task', 'done', $4)`,
-		uuid.New().String(), uid, projectID, target); err != nil {
+		uuid.New().String(), uid, projectID, today); err != nil {
 		t.Fatalf("seed done task: %v", err)
 	}
 
 	notifSvc := notification.NewService(notification.NewRepository(pool), nil)
-	notifier := jobs.NewDueDateNotifier(jobs.NewRepository(pool), notifSvc, "")
-	jobs.SetClock(notifier, func() time.Time { return pinned })
+	notifier := jobs.NewDayStartNotifier(jobs.NewRepository(pool), notifSvc)
+	jobs.SetDayStartClock(notifier, func() time.Time { return pinned })
 
 	n, err := notifier.Run(context.Background(), false)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if n.Fired != 0 || countNotifications(t, pool, uid) != 0 {
-		t.Fatalf("terminal task generated a reminder; generated=%d", n.Fired)
+		t.Fatalf("done task counted toward digest; generated=%d", n.Fired)
 	}
 }
 
-// TestOverdueSweep_GeneratesAndIsIdempotent drives the overdue sweep against a
-// real DB with the clock pinned to local 08:00. A UTC user with a task scheduled
-// in the past gets exactly one task_overdue, and a re-run the same day adds none.
-func TestOverdueSweep_GeneratesAndIsIdempotent(t *testing.T) {
+// TestDayStartSweep_OverdueCounts confirms a task scheduled in the past folds
+// into the same digest as an overdue count, without a separate notification.
+func TestDayStartSweep_OverdueCounts(t *testing.T) {
 	pool := testutil.NewTestDB(t)
 	clean(t, pool)
 	t.Cleanup(func() { clean(t, pool) })
 
 	pinned := time.Date(2026, 7, 14, 8, 0, 0, 0, time.UTC) // local 08:00 for UTC users
 	past := pinned.AddDate(0, 0, -3).Format("2006-01-02")  // scheduled 3 days ago → overdue
-	uid := seedUserWithDueTask(t, pool, "UTC", past)
+	uid := seedUserWithScheduledTask(t, pool, "UTC", past)
 
 	notifSvc := notification.NewService(notification.NewRepository(pool), nil)
-	notifier := jobs.NewOverdueNotifier(jobs.NewRepository(pool), notifSvc)
-	jobs.SetOverdueClock(notifier, func() time.Time { return pinned })
+	notifier := jobs.NewDayStartNotifier(jobs.NewRepository(pool), notifSvc)
+	jobs.SetDayStartClock(notifier, func() time.Time { return pinned })
 
 	n, err := notifier.Run(context.Background(), false)
 	if err != nil {

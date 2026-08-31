@@ -24,9 +24,6 @@ type Repository interface {
 	ProjectOwned(ctx context.Context, userID, projectID string) (bool, error)
 	// CountActive counts only active tasks in a project (the calm plan limit).
 	CountActive(ctx context.Context, userID, projectID string) (int, error)
-	// CountNonTerminalByProject counts a project's active tasks. Zero means the
-	// project is fully complete — the signal for the project_completed notification.
-	CountNonTerminalByProject(ctx context.Context, userID, projectID string) (int, error)
 	// NextDisplayOrder returns the order to append a new task at the end of a project.
 	NextDisplayOrder(ctx context.Context, userID, projectID string) (int, error)
 	// UpdateSchedule sets (nil clears) the soft schedule + time-of-day + optional rollsOver.
@@ -481,20 +478,6 @@ func (r *pgRepo) CountActive(ctx context.Context, userID, projectID string) (int
 	).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("task.CountActive: %w", err)
-	}
-	return count, nil
-}
-
-func (r *pgRepo) CountNonTerminalByProject(ctx context.Context, userID, projectID string) (int, error) {
-	var count int
-	err := r.db.QueryRow(ctx,
-		`SELECT COUNT(*) FROM tasks
-		 WHERE user_id = @userID AND project_id = @projectID
-		   AND status NOT IN ('done', 'cancelled')`,
-		pgx.NamedArgs{"userID": userID, "projectID": projectID},
-	).Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("task.CountNonTerminalByProject: %w", err)
 	}
 	return count, nil
 }
