@@ -52,6 +52,12 @@ type Repository interface {
 	// owner's local timezone. Returns nil (no error) when the WHERE clause
 	// matched nothing — the service disambiguates not-found from not-eligible.
 	MarkMissed(ctx context.Context, userID, id string) (*Task, error)
+	// MarkSkipped marks one live recurring occurrence skipped — the user
+	// deliberately opting out, unlike MarkMissed's "the window lapsed" (NIC-1997).
+	// Unlike MarkMissed there is no date-passed clause: skipping a future
+	// occurrence is legitimate. Returns nil (no error) when the WHERE clause
+	// matched nothing — the service disambiguates not-found from not-eligible.
+	MarkSkipped(ctx context.Context, userID, id string) (*Task, error)
 }
 
 type pgRepo struct{ db *pgxpool.Pool }
@@ -262,12 +268,14 @@ func (r *pgRepo) MarkMissed(ctx context.Context, userID, id string) (*Task, erro
 	err := scanTask(
 		r.db.QueryRow(ctx, `
 			UPDATE tasks SET status = 'cancelled', occurrence_status = 'missed', updated_at = NOW()
-			FROM users u
-			WHERE tasks.id = @id AND tasks.user_id = @userID AND u.id = tasks.user_id
+			WHERE tasks.id = @id AND tasks.user_id = @userID
 			  AND tasks.recurrence_rule_id IS NOT NULL
 			  AND tasks.status = 'active'
 			  AND tasks.occurrence_status IS NULL
-			  AND tasks.occurrence_date <= ((NOW() AT TIME ZONE COALESCE(u.timezone, 'UTC'))::date)
+			  AND tasks.occurrence_date <= (
+			      SELECT (NOW() AT TIME ZONE COALESCE(u.timezone, 'UTC'))::date
+			      FROM users u WHERE u.id = tasks.user_id
+			  )
 			RETURNING`+taskSelectCols,
 			pgx.NamedArgs{"id": id, "userID": userID},
 		),
@@ -278,6 +286,38 @@ func (r *pgRepo) MarkMissed(ctx context.Context, userID, id string) (*Task, erro
 	}
 	if err != nil {
 		return nil, fmt.Errorf("task.MarkMissed: %w", err)
+	}
+	return &t, nil
+}
+
+// MarkSkipped is MarkMissed's sibling for a deliberate user opt-out (NIC-1997):
+// same terminal write shape and eligibility guard (recurring, still active, not
+// already reaped), but with no date-passed clause — skipping a future
+// occurrence ahead of its due date is legitimate, unlike marking it missed.
+// Sets status='cancelled' (matching MarkMissed) so Today/TimeSpread filters on
+// status='active' automatically hide the occurrence (NIC-2000).
+// scheduled_for/occurrence_date are intentionally not touched — the engine
+// uses occurrence_date to determine which instance this was; clearing it here
+// would confuse the sweep's reap query.
+func (r *pgRepo) MarkSkipped(ctx context.Context, userID, id string) (*Task, error) {
+	var t Task
+	err := scanTask(
+		r.db.QueryRow(ctx, `
+			UPDATE tasks SET status = 'cancelled', occurrence_status = 'skipped', updated_at = NOW()
+			WHERE tasks.id = @id AND tasks.user_id = @userID
+			  AND tasks.recurrence_rule_id IS NOT NULL
+			  AND tasks.status = 'active'
+			  AND tasks.occurrence_status IS NULL
+			RETURNING`+taskSelectCols,
+			pgx.NamedArgs{"id": id, "userID": userID},
+		),
+		&t,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("task.MarkSkipped: %w", err)
 	}
 	return &t, nil
 }

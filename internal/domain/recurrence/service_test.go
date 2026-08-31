@@ -31,6 +31,9 @@ type fakeRepo struct {
 	alreadyRecurring map[string]bool
 	convertedTaskID  string
 	convertOccDate   time.Time
+
+	// RetireLiveInstance scripting: the task id to return when called.
+	retireReturnID string
 }
 
 func newFakeRepo() *fakeRepo {
@@ -131,6 +134,10 @@ func (f *fakeRepo) SetPaused(_ context.Context, userID, id string, paused bool) 
 	r.Paused = paused
 	f.rules[id] = r
 	return r, nil
+}
+
+func (f *fakeRepo) RetireLiveInstance(_ context.Context, _, _ string) (string, error) {
+	return f.retireReturnID, nil
 }
 
 func (f *fakeRepo) Delete(_ context.Context, userID, id string) error {
@@ -738,6 +745,7 @@ func plainTaskTemplate() TaskTemplate {
 		Title:     "Wash the floors",
 		Priority:  "high",
 		Energy:    "low",
+		Status:    "active",
 	}
 }
 
@@ -907,6 +915,114 @@ func TestList_FiltersByProject(t *testing.T) {
 }
 
 // The wire shape carries dates as YYYY-MM-DD and never a null weekday array.
+// ConvertToRecurring must reject a task that is not in 'active' status before
+// attempting any DB write — a done/cancelled/paused task should not become the
+// seed occurrence of a new series.
+func TestConvertToRecurring_RejectsNonActiveTask(t *testing.T) {
+	tests := []struct {
+		name   string
+		status string
+	}{
+		{"done", "done"},
+		{"cancelled", "cancelled"},
+		{"empty status", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			reader := newFakeTaskReader()
+			tmpl := plainTaskTemplate()
+			tmpl.Status = tt.status
+			reader.templates["t1"] = tmpl
+			svc := NewServiceWithClock(repo, nil, reader, fixedClock("2026-03-01"))
+
+			_, err := svc.ConvertToRecurring(context.Background(), "u1", "t1", "free", validCreate())
+			assertCode(t, err, apperror.ErrTaskNotActive)
+		})
+	}
+}
+
+// SetPaused (pause=true) must retire the live occurrence and broadcast a WS event.
+func TestSetPaused_PauseRetiresBroadcasts(t *testing.T) {
+	repo := newFakeRepo()
+	repo.retireReturnID = "live-task-1"
+
+	var broadcastedTaskID string
+	fakeBroadcaster := &fakeTaskBroadcaster{fn: func(_, taskID string) { broadcastedTaskID = taskID }}
+
+	svc := NewServiceWithClock(repo, nil, newFakeTaskReader(), fixedClock("2026-03-01")).
+		WithTaskBroadcaster(fakeBroadcaster)
+	view := seedRule(t, svc)
+
+	got, err := svc.SetPaused(context.Background(), "u1", view.ID, "free", true)
+	if err != nil {
+		t.Fatalf("SetPaused: %v", err)
+	}
+	if !got.Paused {
+		t.Error("paused = false, want true")
+	}
+	if broadcastedTaskID != "live-task-1" {
+		t.Errorf("broadcast task id = %q, want live-task-1", broadcastedTaskID)
+	}
+}
+
+// SetPaused (pause=true) with no live instance must not broadcast (RetireLiveInstance
+// returns "" when there is nothing to retire).
+func TestSetPaused_PauseNoBroadcastWhenNoLiveInstance(t *testing.T) {
+	repo := newFakeRepo()
+	// retireReturnID defaults to "" — no live instance
+
+	var called bool
+	fakeBroadcaster := &fakeTaskBroadcaster{fn: func(_, _ string) { called = true }}
+	svc := NewServiceWithClock(repo, nil, newFakeTaskReader(), fixedClock("2026-03-01")).
+		WithTaskBroadcaster(fakeBroadcaster)
+	view := seedRule(t, svc)
+
+	if _, err := svc.SetPaused(context.Background(), "u1", view.ID, "free", true); err != nil {
+		t.Fatalf("SetPaused: %v", err)
+	}
+	if called {
+		t.Error("broadcaster must not be called when no live instance was retired")
+	}
+}
+
+// SetPaused (pause=false) must recompute next_occurrence anchored to today and
+// persist the updated cursor so the sweep does not produce a stale date.
+func TestSetPaused_ResumeRecomputesCursor(t *testing.T) {
+	repo := newFakeRepo()
+	// Fix clock to 2026-03-10; the daily rule's start is 2026-03-01. After resume
+	// the next occurrence must be 2026-03-10 (today), not the stale 2026-03-02.
+	svc := NewServiceWithClock(repo, nil, newFakeTaskReader(), fixedClock("2026-03-10"))
+	view := seedRule(t, svc)
+
+	// Pause first, then resume.
+	if _, err := svc.SetPaused(context.Background(), "u1", view.ID, "free", true); err != nil {
+		t.Fatalf("SetPaused pause: %v", err)
+	}
+	resumed, err := svc.SetPaused(context.Background(), "u1", view.ID, "free", false)
+	if err != nil {
+		t.Fatalf("SetPaused resume: %v", err)
+	}
+	if resumed.Paused {
+		t.Error("paused = true after resume")
+	}
+	// NextOccurrence must be >= clock day (recomputed from today).
+	if resumed.NextOccurrence == nil {
+		t.Fatal("nextOccurrence = nil after resume, want a date")
+	}
+	if *resumed.NextOccurrence < "2026-03-10" {
+		t.Errorf("nextOccurrence = %q, want >= 2026-03-10 (recomputed from today)", *resumed.NextOccurrence)
+	}
+}
+
+type fakeTaskBroadcaster struct {
+	fn func(userID, taskID string)
+}
+
+func (f *fakeTaskBroadcaster) BroadcastTaskStatusChanged(userID, taskID string) {
+	f.fn(userID, taskID)
+}
+
 func TestToView_WireShape(t *testing.T) {
 	r := Rule{
 		ID: "r1", ProjectID: "p1", Title: "t", Priority: "medium", Energy: "medium",

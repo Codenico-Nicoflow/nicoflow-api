@@ -175,6 +175,53 @@ func (e *noopExecutor) ExecCreate(context.Context, string, string, json.RawMessa
 	return json.RawMessage(`{"id":"t2"}`), nil
 }
 
+// The 11 NIC-1997 write tools are unwired in this fixture (AvailableTools
+// reports every one of them unavailable), so their Exec methods are never
+// called by the tests here — they exist only to satisfy ToolExecutor.
+func (e *noopExecutor) ExecSetupRecurring(context.Context, string, string, json.RawMessage) (json.RawMessage, error) {
+	return nil, errAIUnavailable()
+}
+func (e *noopExecutor) ExecAdjustRecurring(context.Context, string, string, json.RawMessage) (json.RawMessage, error) {
+	return nil, errAIUnavailable()
+}
+func (e *noopExecutor) ExecPauseRecurring(context.Context, string, string, json.RawMessage) (json.RawMessage, error) {
+	return nil, errAIUnavailable()
+}
+func (e *noopExecutor) ExecEndRecurringSeries(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+	return nil, errAIUnavailable()
+}
+func (e *noopExecutor) ExecCreateNote(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+	return nil, errAIUnavailable()
+}
+func (e *noopExecutor) ExecCreateArea(context.Context, string, string, json.RawMessage) (json.RawMessage, error) {
+	return nil, errAIUnavailable()
+}
+func (e *noopExecutor) ExecCreateProject(context.Context, string, string, json.RawMessage) (json.RawMessage, error) {
+	return nil, errAIUnavailable()
+}
+func (e *noopExecutor) ExecUpdateProject(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+	return nil, errAIUnavailable()
+}
+func (e *noopExecutor) ExecAddSubtask(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+	return nil, errAIUnavailable()
+}
+func (e *noopExecutor) ExecCompleteSubtask(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+	return nil, errAIUnavailable()
+}
+func (e *noopExecutor) ExecProcessBucketItem(context.Context, string, string, json.RawMessage) (json.RawMessage, error) {
+	return nil, errAIUnavailable()
+}
+func (e *noopExecutor) ExecSkipRecurringOccurrence(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+	return nil, errAIUnavailable()
+}
+func (e *noopExecutor) AvailableTools() map[string]bool                { return nil }
+func (e *noopExecutor) WithRecurrence(RecurrenceCommands) ToolExecutor { return e }
+func (e *noopExecutor) WithNotes(NoteService) ToolExecutor             { return e }
+func (e *noopExecutor) WithProjectMgmt(ProjectService) ToolExecutor    { return e }
+func (e *noopExecutor) WithAreas(AreaService) ToolExecutor             { return e }
+func (e *noopExecutor) WithSubtasks(SubtaskService) ToolExecutor       { return e }
+func (e *noopExecutor) WithBuckets(BucketService) ToolExecutor         { return e }
+
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 // SendMessage with a read tool: turn 1 emits list_tasks tool_use, executor runs

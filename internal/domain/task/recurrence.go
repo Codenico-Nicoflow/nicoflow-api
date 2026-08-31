@@ -24,7 +24,11 @@ type RecurrenceMaterializer interface {
 // failure is logged and swallowed rather than failing a request the user
 // considers done.
 func (s *service) materializeSuccessor(ctx context.Context, userID string, view TaskView) {
-	if s.materializer == nil || view.RecurrenceRuleID == nil || view.Status != statusDone {
+	if s.materializer == nil || view.RecurrenceRuleID == nil {
+		return
+	}
+	// Trigger on done (completion) and cancelled (skip/miss — series must continue).
+	if view.Status != statusDone && view.Status != "cancelled" {
 		return
 	}
 	if err := s.materializer.MaterializeAfterCompletion(ctx, userID, *view.RecurrenceRuleID); err != nil {

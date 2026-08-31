@@ -1091,7 +1091,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Converts an unprocessed item into a task (requires projectId + taskDetails), trashes it, or (note — not yet implemented) returns 501. Already-processed items return 409.",
+                "description": "Converts an unprocessed item into a task (requires projectId + taskDetails) or note (requires projectId + noteDetails), or trashes it. taskDetails.scheduledTime and taskDetails.recurrence give the task path full parity with plain task creation — when recurrence is set, a recurrence rule is created (materializing instance #1) instead of a plain task. Already-processed items return 409.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1303,7 +1303,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns a deterministically-ranked short list of the user's active+inbox tasks (across all projects) that fit the given time/energy. Scoring: energy match, time-budget fit (over-budget excluded), due/overdue escalation, scheduled proximity, priority tiebreak.",
+                "description": "Returns a deterministically-ranked short list of the user's active tasks (across all projects) that fit the given time/energy. Scoring: energy match, time-budget fit (over-budget excluded), due/overdue escalation, scheduled proximity, priority tiebreak.",
                 "produces": [
                     "application/json"
                 ],
@@ -1342,6 +1342,393 @@ const docTemplate = `{
                         "description": "INVALID_INPUT (bad available/energy/limit)",
                         "schema": {
                             "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/habits": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the caller's habits, newest first, each with a short heatmap window (14 cells) alongside its derived counters — enough for a board to draw a ribbon per card without a follow-up request. Archived habits are excluded unless includeArchived=true. Free users may hold 3 active habits; a downgraded user keeps every habit visible and checkable, only creation is blocked.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "habits"
+                ],
+                "summary": "List habits",
+                "parameters": [
+                    {
+                        "type": "boolean",
+                        "description": "Include archived habits",
+                        "name": "includeArchived",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Habits",
+                        "schema": {
+                            "$ref": "#/definitions/habit.HabitListEnvelope"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a habit. scheduleKind is one of daily, weekdays (requires byWeekday) or weekly_quota (requires timesPerWeek). polarity is build or quit and is immutable afterwards. Free plan allows 3 active habits.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "habits"
+                ],
+                "summary": "Create a habit",
+                "parameters": [
+                    {
+                        "description": "Habit to create",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/habit.CreateHabitRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/habit.HabitEnvelope"
+                        }
+                    },
+                    "403": {
+                        "description": "PLAN_LIMIT_EXCEEDED",
+                        "schema": {
+                            "$ref": "#/definitions/habit.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT",
+                        "schema": {
+                            "$ref": "#/definitions/habit.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/habits/subjects": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The canonical subject list. Subjects are cosmetic — they drive the card icon and never scheduling or targets. labelKey is an i18n key, not a display string. A client meeting an unknown slug renders a fallback icon rather than failing, so the catalog can gain entries without a client release.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "habits"
+                ],
+                "summary": "Habit subject catalog",
+                "responses": {
+                    "200": {
+                        "description": "Subjects",
+                        "schema": {
+                            "$ref": "#/definitions/habit.SubjectListEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/habits/today": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the habits still owed right now, for the Today-page strip. A weekdays habit appears only on its own days; a weekly-quota habit appears every day until its week's quota is met, then goes quiet. Archived and already-completed habits are excluded.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "habits"
+                ],
+                "summary": "Habits due today",
+                "responses": {
+                    "200": {
+                        "description": "Habits due today",
+                        "schema": {
+                            "$ref": "#/definitions/habit.HabitListEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/habits/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Retrieves a single habit with its derived counters and the heatmap window behind them. Cells are day cells for daily/weekdays habits and week cells (carrying quota progress) for weekly_quota habits — the granularity streakUnit announces. Cross-user access returns 404, never 403.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "habits"
+                ],
+                "summary": "Get a habit",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Habit ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The habit with its history",
+                        "schema": {
+                            "$ref": "#/definitions/habit.HabitDetailEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "HABIT_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/habit.ErrorEnvelope"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Archives a habit by default: the row is retired, the check-in history is retained — it is the user's record of what they did — and a plan slot is freed. Pass permanent=true to delete it outright instead, which cascades to every check-in and cannot be undone. The default is the reversible one on purpose. Cross-user access returns 404, never 403.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "habits"
+                ],
+                "summary": "Archive or delete a habit",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Habit ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Destroy the habit and its history instead of archiving it",
+                        "name": "permanent",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Archived, or deleted when permanent=true"
+                    },
+                    "404": {
+                        "description": "HABIT_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/habit.ErrorEnvelope"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Edits a habit. polarity is immutable — sending it returns 422. Changing the schedule applies forward only; periods already scored keep their shape. Set archived to true to retire a habit (freeing a plan slot) or false to restore it.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "habits"
+                ],
+                "summary": "Update a habit",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Habit ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to change",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/habit.UpdateHabitRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Updated",
+                        "schema": {
+                            "$ref": "#/definitions/habit.HabitEnvelope"
+                        }
+                    },
+                    "403": {
+                        "description": "PLAN_LIMIT_EXCEEDED (restoring over the limit)",
+                        "schema": {
+                            "$ref": "#/definitions/habit.ErrorEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "HABIT_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/habit.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT (includes an attempted polarity change)",
+                        "schema": {
+                            "$ref": "#/definitions/habit.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/habits/{id}/check-in": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Records one dated entry. Omit date to check in for today — the server resolves it from the user's timezone and never accepts a client-supplied \"today\". Omit value to use the habit's target. Idempotent per (habit, date): a repeat call updates the value. A past date is a backfill and must fall inside the window (7 days for daily/weekdays habits, the current and previous week for weekly quota); future dates are refused.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "habits"
+                ],
+                "summary": "Check in to a habit",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Habit ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Optional date and value",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/habit.CheckInRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The habit",
+                        "schema": {
+                            "$ref": "#/definitions/habit.HabitEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "HABIT_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/habit.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT (future date, outside the backfill window, negative value, or archived habit)",
+                        "schema": {
+                            "$ref": "#/definitions/habit.ErrorEnvelope"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Removes one dated entry, reverting the day to not-done. Omit date to undo today. Idempotent: undoing a date with no entry succeeds, because the day is already not done.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "habits"
+                ],
+                "summary": "Undo a habit check-in",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Habit ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Optional date",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/habit.UndoCheckInRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The habit",
+                        "schema": {
+                            "$ref": "#/definitions/habit.HabitEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "HABIT_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/habit.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "INVALID_INPUT (future date, outside the backfill window, or archived habit)",
+                        "schema": {
+                            "$ref": "#/definitions/habit.ErrorEnvelope"
                         }
                     }
                 }
@@ -1437,6 +1824,46 @@ const docTemplate = `{
                         "description": "INVALID_INPUT (bad title/content/projectId, or body over 1 MB)",
                         "schema": {
                             "$ref": "#/definitions/note.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/notes/search": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns up to 10 title matches for the @-mention autocomplete, row-isolated to the requesting user. excludeId omits the note currently being edited (a note cannot usefully mention itself). Notes are Free and unlimited; this endpoint never returns PLAN_LIMIT_EXCEEDED.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notes"
+                ],
+                "summary": "Search-as-you-type for @note mentions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Search term",
+                        "name": "q",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Note id to omit from results (the note being edited)",
+                        "name": "excludeId",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Matching notes",
+                        "schema": {
+                            "$ref": "#/definitions/note.MentionSearchEnvelope"
                         }
                     }
                 }
@@ -1572,6 +1999,46 @@ const docTemplate = `{
                     },
                     "422": {
                         "description": "INVALID_INPUT (missing version, bad title/content, or body over 1 MB)",
+                        "schema": {
+                            "$ref": "#/definitions/note.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/notes/{id}/backlinks": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the list-shape view (no content) of every note that mentions the given note. Empty array, not null, when there are no backlinks. Cross-user access returns 404, never 403.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notes"
+                ],
+                "summary": "List a note's backlinks",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Note ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Notes that link to this one",
+                        "schema": {
+                            "$ref": "#/definitions/note.NoteListEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "RESOURCE_NOT_FOUND",
                         "schema": {
                             "$ref": "#/definitions/note.ErrorEnvelope"
                         }
@@ -2177,7 +2644,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filter by status (inbox|active|someday|done|cancelled)",
+                        "description": "Filter by status (active|done|cancelled)",
                         "name": "status",
                         "in": "query"
                     },
@@ -2239,7 +2706,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Creates a task in a project. Title-only is valid (quick-add); other fields default server-side (status=inbox, priority=medium, energy=medium, rollsOver=true). Free plan allows 50 active+inbox tasks per project.",
+                "description": "Creates a task in a project. Title-only is valid (quick-add); other fields default server-side (status=active, priority=medium, energy=medium, rollsOver=true). Free plan allows 50 active tasks per project.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2478,7 +2945,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Partial update of any mutable field. status→done sets completedAt server-side; moving away from done clears it. A PATCH that moves a task into active/inbox is subject to the plan limit.",
+                "description": "Partial update of any mutable field. status→done sets completedAt server-side; moving away from done clears it. A PATCH that moves a task into active is subject to the plan limit.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2528,6 +2995,52 @@ const docTemplate = `{
                     },
                     "422": {
                         "description": "INVALID_INPUT / INVALID_STATUS / INVALID_PRIORITY",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/tasks/{id}/mark-missed": {
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Reaps one recurring occurrence to (cancelled, missed) — the same terminal state the overdue sweep sets automatically once its due date passes, just triggered now instead of at the next local midnight. Only eligible for a still-active recurring occurrence due today or earlier.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "summary": "Manually mark a recurring occurrence missed",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Task ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The reaped task",
+                        "schema": {
+                            "$ref": "#/definitions/task.TaskEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "TASK_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "TASK_NOT_MISSABLE — not recurring, not active, already reaped, or its occurrence date is still in the future",
                         "schema": {
                             "$ref": "#/definitions/task.ErrorEnvelope"
                         }
@@ -2663,6 +3176,52 @@ const docTemplate = `{
                 }
             }
         },
+        "/tasks/{id}/skip": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Marks the live recurring occurrence skipped — the user deliberately opting out, without breaking their streak. Unlike mark-missed, eligible any time (including ahead of the occurrence's due date). Best-effort cancels any pending notification tied to the task.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "summary": "Skip a recurring occurrence",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Task ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The skipped task",
+                        "schema": {
+                            "$ref": "#/definitions/task.TaskEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "TASK_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    },
+                    "409": {
+                        "description": "TASK_NOT_SKIPPABLE — not recurring, not the live instance, or not active",
+                        "schema": {
+                            "$ref": "#/definitions/task.ErrorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
         "/tasks/{id}/status": {
             "patch": {
                 "security": [
@@ -2670,7 +3229,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Status-only update (checkbox toggle, move to someday). Same completedAt side-effects and plan-limit semantics as the full PATCH.",
+                "description": "Status-only update (checkbox toggle, cancel). Same completedAt side-effects and plan-limit semantics as the full PATCH.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2934,7 +3493,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Buckets the user's active+inbox tasks into today/tomorrow/thisWeek with the no-guilt roll-forward (a past soft-scheduled task with rollsOver=true carries to today instead of going overdue). someday/done/cancelled are excluded.",
+                "description": "Buckets the user's active tasks into today/tomorrow/thisWeek with the no-guilt roll-forward (a past soft-scheduled task with rollsOver=true carries to today instead of going overdue). done/cancelled are excluded.",
                 "produces": [
                     "application/json"
                 ],
@@ -3610,6 +4169,32 @@ const docTemplate = `{
                 }
             }
         },
+        "bucket.ProcessRecurrenceDetails": {
+            "type": "object",
+            "properties": {
+                "byMonthday": {
+                    "type": "integer"
+                },
+                "byWeekday": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "endDate": {
+                    "type": "string"
+                },
+                "freq": {
+                    "type": "string"
+                },
+                "interval": {
+                    "type": "integer"
+                },
+                "startDate": {
+                    "type": "string"
+                }
+            }
+        },
         "bucket.ProcessTaskDetails": {
             "type": "object",
             "properties": {
@@ -3625,10 +4210,16 @@ const docTemplate = `{
                 "priority": {
                     "type": "string"
                 },
+                "recurrence": {
+                    "$ref": "#/definitions/bucket.ProcessRecurrenceDetails"
+                },
                 "rollsOver": {
                     "type": "boolean"
                 },
                 "scheduledFor": {
+                    "type": "string"
+                },
+                "scheduledTime": {
                     "type": "string"
                 },
                 "title": {
@@ -3785,6 +4376,291 @@ const docTemplate = `{
                 }
             }
         },
+        "habit.CellView": {
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string"
+                },
+                "progress": {
+                    "description": "Set only on week cells, where a period accumulates toward a quota.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/habit.PeriodProgress"
+                        }
+                    ]
+                },
+                "satisfied": {
+                    "type": "boolean"
+                },
+                "scheduled": {
+                    "type": "boolean"
+                },
+                "value": {
+                    "type": "integer"
+                }
+            }
+        },
+        "habit.CheckInRequest": {
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "integer"
+                }
+            }
+        },
+        "habit.CreateHabitRequest": {
+            "type": "object",
+            "properties": {
+                "byWeekday": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "color": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "polarity": {
+                    "type": "string"
+                },
+                "scheduleKind": {
+                    "type": "string"
+                },
+                "subject": {
+                    "type": "string"
+                },
+                "targetValue": {
+                    "type": "integer"
+                },
+                "timesPerWeek": {
+                    "type": "integer"
+                },
+                "unit": {
+                    "type": "string"
+                }
+            }
+        },
+        "habit.ErrorEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {},
+                "error": {
+                    "$ref": "#/definitions/habit.SwaggerError"
+                }
+            }
+        },
+        "habit.HabitDetailEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/habit.HabitView"
+                },
+                "error": {}
+            }
+        },
+        "habit.HabitEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/habit.HabitView"
+                },
+                "error": {}
+            }
+        },
+        "habit.HabitListEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/habit.HabitView"
+                    }
+                },
+                "error": {}
+            }
+        },
+        "habit.HabitView": {
+            "type": "object",
+            "properties": {
+                "archivedAt": {
+                    "type": "string"
+                },
+                "byWeekday": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "cells": {
+                    "description": "Cells is the heatmap window. A list read carries ListRibbonDays of it and\na scalar read RibbonDays — same field, different width, so a board and a\ndetail page render the same component against the same shape.\n\nOptional rather than required: it is omitted wherever there is no window\nto show, and a client that predates it simply renders no ribbon instead of\nbreaking. Same contract style as periodProgress.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/habit.CellView"
+                    }
+                },
+                "color": {
+                    "type": "string"
+                },
+                "completedToday": {
+                    "type": "boolean"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "currentStreak": {
+                    "type": "integer"
+                },
+                "dueToday": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "loggedToday": {
+                    "description": "LoggedToday is whether an entry exists for today — NOT whether the period\nis satisfied. The two diverge on a quota habit: at 1 of 3 the week is\nunmet (CompletedToday false) but today is logged, and a control that\nkeys off CompletedToday would check in again rather than undo.",
+                    "type": "boolean"
+                },
+                "longestStreak": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "periodProgress": {
+                    "description": "PeriodProgress is the quota habit's \"2 of 3 this week\". Null for day\nhabits — the client must not read a missing value as 0/0.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/habit.PeriodProgress"
+                        }
+                    ]
+                },
+                "polarity": {
+                    "type": "string"
+                },
+                "scheduleKind": {
+                    "type": "string"
+                },
+                "streakUnit": {
+                    "description": "StreakUnit tells the client which noun to print (\"12 days\" vs \"5 weeks\")\nand which heatmap granularity to draw. Normalising everything to weeks was\nrejected: it would show \"0 weeks\" to someone on a 6-day run, which kills\nthe daily feedback the feature is built on.",
+                    "type": "string"
+                },
+                "subject": {
+                    "type": "string"
+                },
+                "targetValue": {
+                    "type": "integer"
+                },
+                "timesPerWeek": {
+                    "type": "integer"
+                },
+                "todayValue": {
+                    "type": "integer"
+                },
+                "unit": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "habit.PeriodProgress": {
+            "type": "object",
+            "properties": {
+                "current": {
+                    "type": "integer"
+                },
+                "target": {
+                    "type": "integer"
+                }
+            }
+        },
+        "habit.SubjectListEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/habit.SubjectView"
+                    }
+                },
+                "error": {}
+            }
+        },
+        "habit.SubjectView": {
+            "type": "object",
+            "properties": {
+                "labelKey": {
+                    "type": "string"
+                },
+                "slug": {
+                    "type": "string"
+                }
+            }
+        },
+        "habit.SwaggerError": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "example": "HABIT_NOT_FOUND"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "habit not found"
+                }
+            }
+        },
+        "habit.UndoCheckInRequest": {
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string"
+                }
+            }
+        },
+        "habit.UpdateHabitRequest": {
+            "type": "object",
+            "properties": {
+                "archived": {
+                    "type": "boolean"
+                },
+                "byWeekday": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "color": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "scheduleKind": {
+                    "type": "string"
+                },
+                "subject": {
+                    "type": "string"
+                },
+                "targetValue": {
+                    "type": "integer"
+                },
+                "timesPerWeek": {
+                    "type": "integer"
+                },
+                "unit": {
+                    "type": "string"
+                }
+            }
+        },
         "note.CreateNoteRequest": {
             "type": "object",
             "properties": {
@@ -3806,6 +4682,29 @@ const docTemplate = `{
                 "error": {
                     "$ref": "#/definitions/note.SwaggerError"
                 }
+            }
+        },
+        "note.MentionResult": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "note.MentionSearchEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/note.MentionResult"
+                    }
+                },
+                "error": {}
             }
         },
         "note.NoteDetailEnvelope": {
@@ -3970,6 +4869,9 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "body": {
+                    "type": "string"
+                },
+                "category": {
                     "type": "string"
                 },
                 "createdAt": {
@@ -4484,6 +5386,9 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/task.TaskView"
                     }
+                },
+                "nextCursor": {
+                    "type": "string"
                 }
             }
         },
@@ -4617,6 +5522,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "occurrenceDate": {
+                    "type": "string"
+                },
+                "occurrenceStatus": {
                     "type": "string"
                 },
                 "openSubtaskCount": {
