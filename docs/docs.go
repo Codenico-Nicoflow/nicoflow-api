@@ -2104,7 +2104,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the user's notification preferences. An absent row yields the defaults ({ emailDigest:true, pushEnabled:false, smsEnabled:false, beforeDueMinutes:1440, afterDueMinutes:0 }). Push/SMS toggles are stored but inert until E-037.",
+                "description": "Returns the user's notification preferences. An absent row yields the defaults ({ emailDigest:true, pushEnabled:false, smsEnabled:false, morningDigestEnabled:true, eveningDigestEnabled:true, streaksEnabled:true }). Push/SMS toggles are stored but inert until E-037.",
                 "produces": [
                     "application/json"
                 ],
@@ -2127,7 +2127,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Partially or fully updates the user's notification preferences (lazy upsert). Lead-time minutes must be 0–10080. Push/SMS toggles persist but have no delivery path until E-037.",
+                "description": "Partially or fully updates the user's notification preferences (lazy upsert). morningHour must be 5–11, eveningHour 18–22. Push/SMS toggles persist but have no delivery path until E-037.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2157,7 +2157,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "INVALID_INPUT (bad body or lead time out of range)",
+                        "description": "INVALID_INPUT (bad body or hour out of range)",
                         "schema": {
                             "$ref": "#/definitions/notification.ErrorEnvelope"
                         }
@@ -4909,29 +4909,20 @@ const docTemplate = `{
         "notification.PreferencesView": {
             "type": "object",
             "properties": {
-                "afterDueMinutes": {
-                    "type": "integer"
-                },
-                "beforeDueMinutes": {
-                    "type": "integer"
-                },
-                "dailySummaryEnabled": {
+                "emailDigest": {
                     "type": "boolean"
                 },
-                "emailDigest": {
+                "eveningDigestEnabled": {
                     "type": "boolean"
                 },
                 "eveningHour": {
                     "type": "integer"
                 },
-                "inboxNudgesEnabled": {
+                "morningDigestEnabled": {
                     "type": "boolean"
                 },
                 "morningHour": {
                     "type": "integer"
-                },
-                "overdueEnabled": {
-                    "type": "boolean"
                 },
                 "pushEnabled": {
                     "type": "boolean"
@@ -4994,29 +4985,20 @@ const docTemplate = `{
         "notification.UpdatePreferences": {
             "type": "object",
             "properties": {
-                "afterDueMinutes": {
-                    "type": "integer"
-                },
-                "beforeDueMinutes": {
-                    "type": "integer"
-                },
-                "dailySummaryEnabled": {
+                "emailDigest": {
                     "type": "boolean"
                 },
-                "emailDigest": {
+                "eveningDigestEnabled": {
                     "type": "boolean"
                 },
                 "eveningHour": {
                     "type": "integer"
                 },
-                "inboxNudgesEnabled": {
+                "morningDigestEnabled": {
                     "type": "boolean"
                 },
                 "morningHour": {
                     "type": "integer"
-                },
-                "overdueEnabled": {
-                    "type": "boolean"
                 },
                 "pushEnabled": {
                     "type": "boolean"
