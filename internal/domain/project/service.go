@@ -128,29 +128,41 @@ func (s *service) Create(ctx context.Context, userID, areaID, plan string, req C
 	return view, nil
 }
 
-func (s *service) Update(ctx context.Context, userID, id string, req UpdateProjectRequest) (ProjectView, error) {
+// validateUpdateRequest checks field-level constraints on an update request,
+// normalising Name in place (trim). Split out of Update to keep that
+// function's cyclomatic complexity down.
+func validateUpdateRequest(req UpdateProjectRequest) error {
 	if req.Name != nil {
 		*req.Name = strings.TrimSpace(*req.Name)
 		if *req.Name == "" {
-			return ProjectView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "name cannot be empty")
+			return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "name cannot be empty")
 		}
 		if len(*req.Name) > 255 {
-			return ProjectView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "name must be 255 characters or fewer")
+			return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "name must be 255 characters or fewer")
 		}
 	}
 	if req.AreaID != nil && strings.TrimSpace(*req.AreaID) == "" {
-		return ProjectView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "areaId cannot be empty")
+		return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "areaId cannot be empty")
 	}
 	if req.Status != nil && !allowedStatuses[*req.Status] {
-		return ProjectView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidStatus, "status must be one of: active, completed, archived")
+		return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidStatus, "status must be one of: active, completed, archived")
 	}
 	if req.FolderIcon != nil && !AllowedIcons[*req.FolderIcon] {
-		return ProjectView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "folderIcon is not valid")
+		return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "folderIcon is not valid")
 	}
 	if desc, ok := req.Description.Get(); ok && len(desc) > 2000 {
-		return ProjectView{}, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "description must be 2000 characters or fewer")
+		return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "description must be 2000 characters or fewer")
+	}
+	return nil
+}
+
+func (s *service) Update(ctx context.Context, userID, id string, req UpdateProjectRequest) (ProjectView, error) {
+	if err := validateUpdateRequest(req); err != nil {
+		return ProjectView{}, err
 	}
 
+	// Status transitions need the prior value to detect the edge into
+	// "completed" — fetched only when the request actually touches status.
 	var prevStatus string
 	if req.Status != nil {
 		current, err := s.repo.GetByID(ctx, userID, id)
