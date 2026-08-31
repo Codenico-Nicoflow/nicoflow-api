@@ -19,6 +19,7 @@ type mockRepo struct {
 	markRead       func(ctx context.Context, userID, id string) (notification.Notification, error)
 	markAllRead    func(ctx context.Context, userID string) (int, error)
 	del            func(ctx context.Context, userID, id string) error
+	deleteByEntity func(ctx context.Context, userID, entityType, entityID string) (int, error)
 	insertIfAbsent func(ctx context.Context, n notification.Notification) (notification.Notification, bool, error)
 	getRecipient   func(ctx context.Context, userID string) (notification.Recipient, error)
 	getPreferences func(ctx context.Context, userID string) (notification.Preferences, error)
@@ -39,6 +40,12 @@ func (m *mockRepo) MarkAllRead(ctx context.Context, userID string) (int, error) 
 }
 func (m *mockRepo) Delete(ctx context.Context, userID, id string) error {
 	return m.del(ctx, userID, id)
+}
+func (m *mockRepo) DeleteByEntity(ctx context.Context, userID, entityType, entityID string) (int, error) {
+	if m.deleteByEntity == nil {
+		return 0, nil
+	}
+	return m.deleteByEntity(ctx, userID, entityType, entityID)
 }
 func (m *mockRepo) InsertIfAbsent(ctx context.Context, n notification.Notification) (notification.Notification, bool, error) {
 	return m.insertIfAbsent(ctx, n)

@@ -377,7 +377,7 @@ func (s *service) buildChatRequest(ctx context.Context, userID, sessionID string
 		MaxTokens:   maxResponseTokens,
 	}
 	if s.executor != nil {
-		req.Tools = DefaultTools()
+		req.Tools = AvailableTools(DefaultTools(), s.executor.AvailableTools())
 	}
 	return req, nil
 }
@@ -479,6 +479,9 @@ func (s *service) RejectToolCall(ctx context.Context, userID, plan, sessionID, t
 
 // execWriteTool routes a write tool through the executor.
 func (s *service) execWriteTool(ctx context.Context, userID, plan string, tc ToolCall) (json.RawMessage, error) {
+	if r, ok, err := s.execRecurringTool(ctx, userID, plan, tc); ok {
+		return r, err
+	}
 	switch tc.ToolName {
 	case ToolCompleteTask:
 		return s.executor.ExecComplete(ctx, userID, plan, tc.InputJSON)
@@ -486,9 +489,45 @@ func (s *service) execWriteTool(ctx context.Context, userID, plan string, tc Too
 		return s.executor.ExecReschedule(ctx, userID, plan, tc.InputJSON)
 	case ToolCreateTask:
 		return s.executor.ExecCreate(ctx, userID, plan, tc.InputJSON)
+	case ToolCreateNote:
+		return s.executor.ExecCreateNote(ctx, userID, tc.InputJSON)
+	case ToolCreateArea:
+		return s.executor.ExecCreateArea(ctx, userID, plan, tc.InputJSON)
+	case ToolCreateProject:
+		return s.executor.ExecCreateProject(ctx, userID, plan, tc.InputJSON)
+	case ToolUpdateProject:
+		return s.executor.ExecUpdateProject(ctx, userID, tc.InputJSON)
+	case ToolAddSubtask:
+		return s.executor.ExecAddSubtask(ctx, userID, tc.InputJSON)
+	case ToolCompleteSubtask:
+		return s.executor.ExecCompleteSubtask(ctx, userID, tc.InputJSON)
+	case ToolProcessBucketItem:
+		return s.executor.ExecProcessBucketItem(ctx, userID, plan, tc.InputJSON)
 	default:
 		return nil, apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "unknown write tool: "+tc.ToolName)
 	}
+}
+
+// execRecurringTool handles the recurrence-family tools; returns (result, true, err) when handled.
+func (s *service) execRecurringTool(ctx context.Context, userID, plan string, tc ToolCall) (json.RawMessage, bool, error) {
+	switch tc.ToolName {
+	case ToolSetupRecurringTask:
+		r, err := s.executor.ExecSetupRecurring(ctx, userID, plan, tc.InputJSON)
+		return r, true, err
+	case ToolAdjustRecurringTask:
+		r, err := s.executor.ExecAdjustRecurring(ctx, userID, plan, tc.InputJSON)
+		return r, true, err
+	case ToolPauseRecurringTask:
+		r, err := s.executor.ExecPauseRecurring(ctx, userID, plan, tc.InputJSON)
+		return r, true, err
+	case ToolEndRecurringSeries:
+		r, err := s.executor.ExecEndRecurringSeries(ctx, userID, tc.InputJSON)
+		return r, true, err
+	case ToolSkipRecurringOccurrence:
+		r, err := s.executor.ExecSkipRecurringOccurrence(ctx, userID, tc.InputJSON)
+		return r, true, err
+	}
+	return nil, false, nil
 }
 
 // ListPendingToolCalls returns the session's pending proposals.

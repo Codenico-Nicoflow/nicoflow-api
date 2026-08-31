@@ -41,6 +41,10 @@ const (
 	StatusDone      = "done"
 	StatusMissed    = "missed"
 	StatusCancelled = "cancelled"
+	// StatusSkipped mirrors task.OccurrenceStatusSkipped (NIC-1997): the user
+	// deliberately opted out of an occurrence, same streak treatment as
+	// StatusCancelled — it must not break the streak.
+	StatusSkipped = "skipped"
 )
 
 var (
@@ -233,6 +237,10 @@ type Service interface {
 	// template a conversion produces must always match what's actually
 	// stored on the task, never a client-supplied copy that could drift.
 	ConvertToRecurring(ctx context.Context, userID, taskID, plan string, req CreateRuleRequest) (RuleView, error)
+	// WithTaskBroadcaster injects the task-level WS emitter used when SetPaused
+	// retires the live occurrence. Post-construction option, same pattern as
+	// task.Service's WithMaterializer. Nil disables emission.
+	WithTaskBroadcaster(tb TaskEventBroadcaster) Service
 }
 
 // TaskTemplateReader is the narrow seam for reading a task's current template
@@ -257,6 +265,10 @@ type TaskTemplate struct {
 	Energy           string
 	EstimatedMinutes *int
 	RecurrenceRuleID *string
+	// Status is checked by ConvertToRecurring: only an active task can become
+	// instance #1 of a new series (done/cancelled tasks would be silently
+	// resurrected by the ConvertTask SQL otherwise — NIC-2000).
+	Status string
 }
 
 // Repository is the data-access contract. Every method is row-scoped by user_id.
@@ -295,6 +307,13 @@ type Repository interface {
 
 	// SetPaused flips the paused flag, scoped to the user.
 	SetPaused(ctx context.Context, userID, id string, paused bool) (Rule, error)
+
+	// RetireLiveInstance cancels the one still-active, un-reaped occurrence for
+	// the given rule (status='cancelled', occurrence_status='paused') so it
+	// disappears from Today/TimeSpread views when the series is paused. If no
+	// live instance exists this is a no-op (returns empty string). Returns the
+	// retired task's ID, empty string when nothing was retired.
+	RetireLiveInstance(ctx context.Context, userID, ruleID string) (string, error)
 
 	// Delete ends the series: the rule is dropped and every task it ever
 	// touched — including the still-live one — is detached (recurrence_rule_id
