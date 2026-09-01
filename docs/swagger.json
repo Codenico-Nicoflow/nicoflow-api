@@ -5458,6 +5458,19 @@
                 }
             }
         },
+        "task.TaskEnergy": {
+            "type": "string",
+            "enum": [
+                "low",
+                "medium",
+                "deep"
+            ],
+            "x-enum-varnames": [
+                "TaskEnergyLow",
+                "TaskEnergyMedium",
+                "TaskEnergyDeep"
+            ]
+        },
         "task.TaskEnvelope": {
             "type": "object",
             "properties": {
@@ -5476,59 +5489,129 @@
                 "error": {}
             }
         },
+        "task.TaskOccurrenceStatus": {
+            "type": "string",
+            "enum": [
+                "missed",
+                "cancelled",
+                "skipped"
+            ],
+            "x-enum-varnames": [
+                "TaskOccurrenceStatusMissed",
+                "TaskOccurrenceStatusCancelled",
+                "TaskOccurrenceStatusSkipped"
+            ]
+        },
+        "task.TaskPriority": {
+            "type": "string",
+            "enum": [
+                "low",
+                "medium",
+                "high"
+            ],
+            "x-enum-varnames": [
+                "TaskPriorityLow",
+                "TaskPriorityMedium",
+                "TaskPriorityHigh"
+            ]
+        },
+        "task.TaskStatus": {
+            "type": "string",
+            "enum": [
+                "active",
+                "done",
+                "cancelled"
+            ],
+            "x-enum-varnames": [
+                "TaskStatusActive",
+                "TaskStatusDone",
+                "TaskStatusCancelled"
+            ]
+        },
         "task.TaskView": {
             "type": "object",
+            "required": [
+                "createdAt",
+                "displayOrder",
+                "energy",
+                "id",
+                "openSubtaskCount",
+                "priority",
+                "projectId",
+                "rollsOver",
+                "status",
+                "subtaskCount",
+                "title",
+                "totalFocusSeconds",
+                "updatedAt"
+            ],
             "properties": {
                 "completedAt": {
-                    "type": "string"
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
                 },
                 "createdAt": {
-                    "type": "string"
+                    "type": "string",
+                    "format": "date-time"
                 },
                 "displayOrder": {
                     "type": "integer"
                 },
                 "energy": {
-                    "type": "string"
+                    "$ref": "#/definitions/task.TaskEnergy"
                 },
                 "estimatedMinutes": {
-                    "type": "integer"
+                    "type": "integer",
+                    "x-nullable": true
                 },
                 "id": {
                     "type": "string"
                 },
                 "notes": {
-                    "type": "string"
+                    "type": "string",
+                    "x-nullable": true
                 },
                 "occurrenceDate": {
-                    "type": "string"
+                    "type": "string",
+                    "format": "date",
+                    "x-nullable": true
                 },
                 "occurrenceStatus": {
-                    "type": "string"
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/task.TaskOccurrenceStatus"
+                        }
+                    ],
+                    "x-nullable": true
                 },
                 "openSubtaskCount": {
                     "type": "integer"
                 },
                 "priority": {
-                    "type": "string"
+                    "$ref": "#/definitions/task.TaskPriority"
                 },
                 "projectId": {
                     "type": "string"
                 },
                 "recurrenceRuleId": {
-                    "type": "string"
+                    "type": "string",
+                    "x-nullable": true
                 },
                 "rollsOver": {
                     "type": "boolean"
                 },
                 "scheduledFor": {
-                    "type": "string"
+                    "type": "string",
+                    "format": "date",
+                    "x-nullable": true
                 },
                 "scheduledTime": {
-                    "type": "string"
+                    "type": "string",
+                    "x-nullable": true
                 },
                 "status": {
-                    "type": "string"
+                    "$ref": "#/definitions/task.TaskStatus"
                 },
                 "subtaskCount": {
                     "description": "SubtaskCount / OpenSubtaskCount are always populated, on every read.",
@@ -5542,10 +5625,12 @@
                     "type": "integer"
                 },
                 "updatedAt": {
-                    "type": "string"
+                    "type": "string",
+                    "format": "date-time"
                 },
                 "url": {
-                    "type": "string"
+                    "type": "string",
+                    "x-nullable": true
                 }
             }
         },

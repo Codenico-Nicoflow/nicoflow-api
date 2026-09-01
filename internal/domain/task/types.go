@@ -42,34 +42,73 @@ type Task struct {
 	OpenSubtaskCount int
 }
 
+// The wire enums. swaggo derives the OpenAPI `enum` from the ordered consts of a
+// named string type, which is what lets the generated TypeScript be a literal
+// union instead of a bare `string`. Values must match the DB CHECK constraints.
+type (
+	// TaskStatus mirrors the tasks_status_check constraint (migration 025).
+	TaskStatus string
+	// TaskPriority is the user-set urgency of a task.
+	TaskPriority string
+	// TaskEnergy is the focus cost of a task (SPEC §3.4).
+	TaskEnergy string
+	// TaskOccurrenceStatus is set only on materialized recurring occurrences and
+	// is nil on an ordinary or still-live one (E-050).
+	TaskOccurrenceStatus string
+)
+
+const (
+	TaskStatusActive    TaskStatus = "active"
+	TaskStatusDone      TaskStatus = "done"
+	TaskStatusCancelled TaskStatus = "cancelled"
+)
+
+const (
+	TaskPriorityLow    TaskPriority = "low"
+	TaskPriorityMedium TaskPriority = "medium"
+	TaskPriorityHigh   TaskPriority = "high"
+)
+
+const (
+	TaskEnergyLow    TaskEnergy = "low"
+	TaskEnergyMedium TaskEnergy = "medium"
+	TaskEnergyDeep   TaskEnergy = "deep"
+)
+
+const (
+	TaskOccurrenceStatusMissed    TaskOccurrenceStatus = "missed"
+	TaskOccurrenceStatusCancelled TaskOccurrenceStatus = "cancelled"
+	TaskOccurrenceStatusSkipped   TaskOccurrenceStatus = "skipped"
+)
+
 // TaskView is the JSON response shape (ITask) for a single task.
 type TaskView struct {
-	ID               string  `json:"id"`
-	ProjectID        string  `json:"projectId"`
-	Title            string  `json:"title"`
-	Notes            *string `json:"notes"`
-	Status           string  `json:"status"`
-	Priority         string  `json:"priority"`
-	Energy           string  `json:"energy"`
-	RollsOver        bool    `json:"rollsOver"`
-	ScheduledFor     *string `json:"scheduledFor"`
-	ScheduledTime    *string `json:"scheduledTime"`
-	EstimatedMinutes *int    `json:"estimatedMinutes"`
-	URL              *string `json:"url"`
-	DisplayOrder     int     `json:"displayOrder"`
-	CompletedAt      *string `json:"completedAt"`
-	CreatedAt        string  `json:"createdAt"`
-	UpdatedAt        string  `json:"updatedAt"`
-	RecurrenceRuleID *string `json:"recurrenceRuleId"`
-	OccurrenceDate   *string `json:"occurrenceDate"`
-	OccurrenceStatus *string `json:"occurrenceStatus"`
+	ID               string                `json:"id" validate:"required"`
+	ProjectID        string                `json:"projectId" validate:"required"`
+	Title            string                `json:"title" validate:"required"`
+	Notes            *string               `json:"notes" extensions:"x-nullable"`
+	Status           TaskStatus            `json:"status" validate:"required"`
+	Priority         TaskPriority          `json:"priority" validate:"required"`
+	Energy           TaskEnergy            `json:"energy" validate:"required"`
+	RollsOver        bool                  `json:"rollsOver" validate:"required"`
+	ScheduledFor     *string               `json:"scheduledFor" format:"date" extensions:"x-nullable"`
+	ScheduledTime    *string               `json:"scheduledTime" extensions:"x-nullable"`
+	EstimatedMinutes *int                  `json:"estimatedMinutes" extensions:"x-nullable"`
+	URL              *string               `json:"url" extensions:"x-nullable"`
+	DisplayOrder     int                   `json:"displayOrder" validate:"required"`
+	CompletedAt      *string               `json:"completedAt" format:"date-time" extensions:"x-nullable"`
+	CreatedAt        string                `json:"createdAt" format:"date-time" validate:"required"`
+	UpdatedAt        string                `json:"updatedAt" format:"date-time" validate:"required"`
+	RecurrenceRuleID *string               `json:"recurrenceRuleId" extensions:"x-nullable"`
+	OccurrenceDate   *string               `json:"occurrenceDate" format:"date" extensions:"x-nullable"`
+	OccurrenceStatus *TaskOccurrenceStatus `json:"occurrenceStatus" extensions:"x-nullable"`
 	// TotalFocusSeconds is the SUM of the task's closed focus segments (E-049).
 	// Enriched only on Focus + GetTask; 0 on the project task-list, where a
 	// per-row SUM would be pure cost for a value the list never renders.
-	TotalFocusSeconds int64 `json:"totalFocusSeconds"`
+	TotalFocusSeconds int64 `json:"totalFocusSeconds" validate:"required"`
 	// SubtaskCount / OpenSubtaskCount are always populated, on every read.
-	SubtaskCount     int `json:"subtaskCount"`
-	OpenSubtaskCount int `json:"openSubtaskCount"`
+	SubtaskCount     int `json:"subtaskCount" validate:"required"`
+	OpenSubtaskCount int `json:"openSubtaskCount" validate:"required"`
 }
 
 // ListTasksResponse is the list response for tasks within a project.
@@ -153,6 +192,17 @@ type ReorderOneRequest struct {
 	DisplayOrder int `json:"displayOrder"`
 }
 
+// occurrenceStatusPtr converts the domain model's untyped pointer to the wire
+// enum, preserving nil. The domain model stays plain strings so SQL scanning is
+// unaffected; only the view carries the enum type swaggo reads.
+func occurrenceStatusPtr(s *string) *TaskOccurrenceStatus {
+	if s == nil {
+		return nil
+	}
+	v := TaskOccurrenceStatus(*s)
+	return &v
+}
+
 // TaskToView maps the domain model to its JSON response shape.
 func TaskToView(t Task) TaskView {
 	v := TaskView{
@@ -160,9 +210,9 @@ func TaskToView(t Task) TaskView {
 		ProjectID:        t.ProjectID,
 		Title:            t.Title,
 		Notes:            t.Notes,
-		Status:           t.Status,
-		Priority:         t.Priority,
-		Energy:           t.Energy,
+		Status:           TaskStatus(t.Status),
+		Priority:         TaskPriority(t.Priority),
+		Energy:           TaskEnergy(t.Energy),
 		RollsOver:        t.RollsOver,
 		ScheduledFor:     t.ScheduledFor,
 		ScheduledTime:    t.ScheduledTime,
@@ -173,7 +223,7 @@ func TaskToView(t Task) TaskView {
 		UpdatedAt:        t.UpdatedAt.UTC().Format(time.RFC3339),
 		RecurrenceRuleID: t.RecurrenceRuleID,
 		OccurrenceDate:   t.OccurrenceDate,
-		OccurrenceStatus: t.OccurrenceStatus,
+		OccurrenceStatus: occurrenceStatusPtr(t.OccurrenceStatus),
 		SubtaskCount:     t.SubtaskCount,
 		OpenSubtaskCount: t.OpenSubtaskCount,
 	}

@@ -480,11 +480,11 @@ func (a recurrenceTaskAdapter) GetTemplate(ctx context.Context, userID, taskID s
 		ProjectID:        t.ProjectID,
 		Title:            t.Title,
 		Notes:            t.Notes,
-		Priority:         t.Priority,
-		Energy:           t.Energy,
+		Priority:         string(t.Priority),
+		Energy:           string(t.Energy),
 		EstimatedMinutes: t.EstimatedMinutes,
 		RecurrenceRuleID: t.RecurrenceRuleID,
-		Status:           t.Status,
+		Status:           string(t.Status),
 	}, nil
 }
 

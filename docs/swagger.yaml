@@ -1220,6 +1220,16 @@ definitions:
         example: task not found
         type: string
     type: object
+  task.TaskEnergy:
+    enum:
+    - low
+    - medium
+    - deep
+    type: string
+    x-enum-varnames:
+    - TaskEnergyLow
+    - TaskEnergyMedium
+    - TaskEnergyDeep
   task.TaskEnvelope:
     properties:
       data:
@@ -1232,42 +1242,85 @@ definitions:
         $ref: '#/definitions/task.ListTasksResponse'
       error: {}
     type: object
+  task.TaskOccurrenceStatus:
+    enum:
+    - missed
+    - cancelled
+    - skipped
+    type: string
+    x-enum-varnames:
+    - TaskOccurrenceStatusMissed
+    - TaskOccurrenceStatusCancelled
+    - TaskOccurrenceStatusSkipped
+  task.TaskPriority:
+    enum:
+    - low
+    - medium
+    - high
+    type: string
+    x-enum-varnames:
+    - TaskPriorityLow
+    - TaskPriorityMedium
+    - TaskPriorityHigh
+  task.TaskStatus:
+    enum:
+    - active
+    - done
+    - cancelled
+    type: string
+    x-enum-varnames:
+    - TaskStatusActive
+    - TaskStatusDone
+    - TaskStatusCancelled
   task.TaskView:
     properties:
       completedAt:
+        format: date-time
         type: string
+        x-nullable: true
       createdAt:
+        format: date-time
         type: string
       displayOrder:
         type: integer
       energy:
-        type: string
+        $ref: '#/definitions/task.TaskEnergy'
       estimatedMinutes:
         type: integer
+        x-nullable: true
       id:
         type: string
       notes:
         type: string
+        x-nullable: true
       occurrenceDate:
+        format: date
         type: string
+        x-nullable: true
       occurrenceStatus:
-        type: string
+        allOf:
+        - $ref: '#/definitions/task.TaskOccurrenceStatus'
+        x-nullable: true
       openSubtaskCount:
         type: integer
       priority:
-        type: string
+        $ref: '#/definitions/task.TaskPriority'
       projectId:
         type: string
       recurrenceRuleId:
         type: string
+        x-nullable: true
       rollsOver:
         type: boolean
       scheduledFor:
+        format: date
         type: string
+        x-nullable: true
       scheduledTime:
         type: string
+        x-nullable: true
       status:
-        type: string
+        $ref: '#/definitions/task.TaskStatus'
       subtaskCount:
         description: SubtaskCount / OpenSubtaskCount are always populated, on every
           read.
@@ -1281,9 +1334,25 @@ definitions:
           per-row SUM would be pure cost for a value the list never renders.
         type: integer
       updatedAt:
+        format: date-time
         type: string
       url:
         type: string
+        x-nullable: true
+    required:
+    - createdAt
+    - displayOrder
+    - energy
+    - id
+    - openSubtaskCount
+    - priority
+    - projectId
+    - rollsOver
+    - status
+    - subtaskCount
+    - title
+    - totalFocusSeconds
+    - updatedAt
     type: object
   task.TimeSpreadEnvelope:
     properties:
