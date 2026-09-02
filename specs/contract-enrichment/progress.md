@@ -1,3 +1,9 @@
+## 2026-09-02T07:00:00Z — Enrich task.SubtaskView (7 fields)
+
+tried: validate:"required" on all 7 value fields, format:"date-time" on CreatedAt/UpdatedAt
+result: gate green (build, vet, task tests, required[]=7 + createdAt date-time)
+learned: SubtaskView lives in task/subtask_types.go, NOT types.go — the [files:] hint was wrong; TaskView in types.go is still un-enriched despite tasks.md calling it the reference
+
 ## 2026-09-02T06:00:00Z — Enrich area.AreaView (7 fields)
 
 tried: validate:"required" on all 7 value fields, format:"date-time" on CreatedAt/UpdatedAt

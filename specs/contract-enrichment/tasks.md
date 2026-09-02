@@ -29,7 +29,7 @@ not that swaggo emitted anything.
 
 - [x] Enrich area.AreaView (7 fields) [ac:AC1,AC4] [files:internal/domain/area/types.go] [verify:make swagger && python3 -c "import json;d=json.load(open('docs/swagger.json'))['definitions']['area.AreaView'];assert d.get('required'),'no required[]';print('ok',d['required'])"]
 
-- [ ] Enrich task.SubtaskView (7 fields) [ac:AC1,AC4] [files:internal/domain/task/types.go] [verify:make swagger && python3 -c "import json;d=json.load(open('docs/swagger.json'))['definitions']['task.SubtaskView'];assert d.get('required'),'no required[]';print('ok',d['required'])"]
+- [x] Enrich task.SubtaskView (7 fields) [ac:AC1,AC4] [files:internal/domain/task/types.go] [verify:make swagger && python3 -c "import json;d=json.load(open('docs/swagger.json'))['definitions']['task.SubtaskView'];assert d.get('required'),'no required[]';print('ok',d['required'])"]
 
 - [ ] Enrich area.AreaWithProjectsView (8 fields) [ac:AC1,AC4] [files:internal/domain/area/types.go] [verify:make swagger && python3 -c "import json;d=json.load(open('docs/swagger.json'))['definitions']['area.AreaWithProjectsView'];assert d.get('required'),'no required[]';print('ok',d['required'])"]
 
@@ -56,3 +56,5 @@ not that swaggo emitted anything.
 ## Discovered
 
 _(the loop appends here — never reorder or delete the planned list above)_
+
+- [ ] Enrich task.TaskView (22 fields) — tasks.md names it the enriched reference implementation but internal/domain/task/types.go:46 has no validate/format/x-nullable tags and no named status enum [ac:AC1,AC2,AC3,AC4] [files:internal/domain/task/types.go] [verify:make swagger && python3 -c "import json;d=json.load(open('docs/swagger.json'))['definitions']['task.TaskView'];assert d.get('required'),'no required[]';print('ok',d['required'])"]

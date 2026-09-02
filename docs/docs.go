@@ -5493,9 +5493,19 @@ const docTemplate = `{
         },
         "task.SubtaskView": {
             "type": "object",
+            "required": [
+                "createdAt",
+                "done",
+                "id",
+                "position",
+                "taskId",
+                "title",
+                "updatedAt"
+            ],
             "properties": {
                 "createdAt": {
-                    "type": "string"
+                    "type": "string",
+                    "format": "date-time"
                 },
                 "done": {
                     "type": "boolean"
@@ -5513,7 +5523,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "updatedAt": {
-                    "type": "string"
+                    "type": "string",
+                    "format": "date-time"
                 }
             }
         },

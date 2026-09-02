@@ -15,13 +15,13 @@ type Subtask struct {
 
 // SubtaskView is the JSON response shape (ISubtask).
 type SubtaskView struct {
-	ID        string `json:"id"`
-	TaskID    string `json:"taskId"`
-	Title     string `json:"title"`
-	Done      bool   `json:"done"`
-	Position  int    `json:"position"`
-	CreatedAt string `json:"createdAt"`
-	UpdatedAt string `json:"updatedAt"`
+	ID        string `json:"id"        validate:"required"`
+	TaskID    string `json:"taskId"    validate:"required"`
+	Title     string `json:"title"     validate:"required"`
+	Done      bool   `json:"done"      validate:"required"`
+	Position  int    `json:"position"  validate:"required"`
+	CreatedAt string `json:"createdAt" validate:"required" format:"date-time"`
+	UpdatedAt string `json:"updatedAt" validate:"required" format:"date-time"`
 }
 
 // ListSubtasksResponse is the list response.
