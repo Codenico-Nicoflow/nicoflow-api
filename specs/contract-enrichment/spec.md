@@ -50,18 +50,33 @@ struct, the generated TypeScript, and every call site in `nicoflow-shared`,
 `nicoflow-frontend` and `nicoflow-mobile`. A type is not done until all four
 repos compile against the real name.
 
+**Request bodies** are part of the contract too — a client that sends the wrong
+shape is as broken as one that misreads a response. 32 `*Request` types, 100
+fields, enriched and generated alongside the views.
+
+Two of them (`task.UpdateTaskRequest`, `project.UpdateProjectRequest`) emit
+**zero properties** today: they use `optional.Field[T]` generics that swaggo
+cannot introspect, so the generated TypeScript is an empty object and the
+contract for those endpoints is silently missing. Fixing that needs a swaggo
+type override, not just tags.
+
+**Zod schemas** hardcode the same enum values in 5 places
+(`z.enum(['active','done','cancelled'])` and friends) — a fourth copy of values
+that already exist in the DB CHECK, the Go consts, and the generated union. They
+are rewritten to derive from the generated type, so a value can only be added in
+one place.
+
 ### Out
 
-- Request bodies and internal DTOs (not the consumer contract)
-- Generating Zod schemas (input validation is a different contract)
+Nothing. Every wire type, every consumer, every duplicate definition.
 
 ## Non-Goals
 
 - Hand-authoring OpenAPI. The Go structs stay the source of truth.
 - Changing any wire value. This is a typing exercise: if the JSON a client
   receives changes, something is wrong.
-- Retyping domain models. Only the `*View` structs are enriched; the domain
-  layer keeps plain strings so SQL scanning is untouched.
+- Retyping domain models. Only the wire structs are enriched; the domain layer
+  keeps plain strings so SQL scanning is untouched.
 - **Alias shims.** No `export type ITask = TaskView`. An alias leaves two names
   for one thing and defers the rename indefinitely — the call sites keep saying
   `ITask` and nobody ever goes back. Delete the hand-written interface and fix
@@ -185,6 +200,16 @@ artifacts. `git revert` restores the previous contract exactly.
 - [ ] **AC9** `pnpm type-check` passes in `nicoflow-frontend` and
       `nicoflow-mobile` against the generated types, with no `as` cast or local
       re-declaration introduced to get there.
+- [ ] **AC10** Every `*Request` definition carries `required`, enums, formats
+      and nullability on the same terms as the views.
+- [ ] **AC11** No definition emits zero properties. `task.UpdateTaskRequest` and
+      `project.UpdateProjectRequest` currently do, because `optional.Field[T]`
+      is opaque to swaggo — both describe their real shape.
+- [ ] **AC12** No Zod schema hardcodes an enum's values. Each derives from the
+      generated type, so adding a value in Go is the only way to add one.
+- [ ] **AC13** Searching the four repos for any enum's value set returns exactly
+      one definition — the Go named type — plus the generated output and the DB
+      CHECK that constrains it.
 
 ## Open Questions
 
