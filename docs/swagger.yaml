@@ -657,6 +657,9 @@ definitions:
         type: string
       slug:
         type: string
+    required:
+    - labelKey
+    - slug
     type: object
   habit.SwaggerError:
     properties:

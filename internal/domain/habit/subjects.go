@@ -21,8 +21,8 @@ package habit
 // string: the server does not know the caller's language, and shipping English
 // here would force every client to re-translate it.
 type SubjectView struct {
-	Slug     string `json:"slug"`
-	LabelKey string `json:"labelKey"`
+	Slug     string `json:"slug" validate:"required"`
+	LabelKey string `json:"labelKey" validate:"required"`
 }
 
 // SubjectCatalog is the canonical set. Ordered deliberately — build habits

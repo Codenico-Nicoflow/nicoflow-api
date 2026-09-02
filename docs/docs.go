@@ -4596,6 +4596,10 @@ const docTemplate = `{
         },
         "habit.SubjectView": {
             "type": "object",
+            "required": [
+                "labelKey",
+                "slug"
+            ],
             "properties": {
                 "labelKey": {
                     "type": "string"
