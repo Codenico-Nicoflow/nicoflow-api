@@ -1,6 +1,6 @@
 ---
 slug: contract-enrichment
-consumers: [api, shared]
+consumers: [api, shared, frontend, mobile]
 status: planned
 ---
 
@@ -45,13 +45,15 @@ collapses those into one definition the compiler enforces.
 - `format:"date"` / `format:"date-time"` on date and timestamp fields
 - Repointing existing untyped consts and inline comparisons at the new types
 
+Each type is aligned **everywhere it is used, in the same change**: the Go
+struct, the generated TypeScript, and every call site in `nicoflow-shared`,
+`nicoflow-frontend` and `nicoflow-mobile`. A type is not done until all four
+repos compile against the real name.
+
 ### Out
 
 - Request bodies and internal DTOs (not the consumer contract)
-- Swapping frontend/mobile imports to the generated types (separate work)
-- Renaming `ITask` → `TaskView` (the shim lands first, renaming is cosmetic)
 - Generating Zod schemas (input validation is a different contract)
-- `task.TaskView` (done)
 
 ## Non-Goals
 
@@ -60,6 +62,10 @@ collapses those into one definition the compiler enforces.
   receives changes, something is wrong.
 - Retyping domain models. Only the `*View` structs are enriched; the domain
   layer keeps plain strings so SQL scanning is untouched.
+- **Alias shims.** No `export type ITask = TaskView`. An alias leaves two names
+  for one thing and defers the rename indefinitely — the call sites keep saying
+  `ITask` and nobody ever goes back. Delete the hand-written interface and fix
+  the imports in the same change, so there is exactly one name for each type.
 
 ## Contract
 
@@ -117,7 +123,7 @@ not pick a side.
 | Named type breaks a caller             | The compiler finds every one — that is the point. `TaskView` surfaced exactly one, in `cmd/api/main.go` |
 | Wrong enum values invented             | Values come from the table above, not from inference. Disagreement is a blocker                         |
 | Enrichment misses a field              | The verify step diffs the definition's `required` array against the struct's non-pointer count          |
-| Frontend breaks on the new types       | Out of scope here; consumers still use hand-written types until the shim lands                          |
+| Frontend breaks on the new types       | Expected, and the point — `tsc` names every call site. Fix them in the same change rather than aliasing |
 
 ## Test Strategy
 
@@ -132,8 +138,16 @@ not pick a side.
 
 ## Rollout
 
-One domain per commit, vertically: enrich Go → `make swagger` → `pnpm codegen` →
-build + test green. Each domain is independently revertable.
+One type at a time, all the way through every repo that uses it:
+
+1. Enrich the Go struct, `make swagger`, `make build`, domain tests
+2. `pnpm codegen` in `nicoflow-shared`
+3. Delete the hand-written interface for that type
+4. Fix every call site `tsc` names — in shared, frontend and mobile
+5. All four repos green
+
+A type is done only after step 5. Half-migrated is worse than not started: two
+names for one shape, and no compiler pressure to finish.
 
 Order is smallest-blast-radius first, so a mistake in the pattern is caught on a
 2-field view rather than a 22-field one:
@@ -165,6 +179,12 @@ artifacts. `git revert` restores the previous contract exactly.
 - [ ] **AC7** No enum value is defined in more than one Go location: the former
       unexported consts, inline comparisons, and the hardcoded schema strings in
       `internal/domain/ai/tools.go` all reference the named types.
+- [ ] **AC8** Every hand-written interface that duplicates a generated type is
+      deleted, and no alias re-export of one exists (`export type ITask =
+      TaskView` and the like). Exactly one name per shape, across all four repos.
+- [ ] **AC9** `pnpm type-check` passes in `nicoflow-frontend` and
+      `nicoflow-mobile` against the generated types, with no `as` cast or local
+      re-declaration introduced to get there.
 
 ## Open Questions
 
