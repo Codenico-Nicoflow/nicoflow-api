@@ -22,7 +22,20 @@ change.
 A type is done only after step 6. Half-migrated is worse than not started: two
 names for one shape, and no compiler pressure to finish.
 
-Domain tests must stay green — this changes types, never wire values.
+**Corrections are in scope.** Where enrichment reveals the contract was wrong —
+a field marked optional the handler always requires, a nullable that is never
+null — fix it and change the wire. Do not preserve a bug to keep the JSON
+identical.
+
+Record every correction in `CORRECTIONS.md` next to this file: the field, the
+old behaviour, the new one, and why. That file becomes the breaking-change list
+in the PR.
+
+Two rules on direction. Narrowing a **response** (optional → required) is safe
+for readers. Making a **request** field required is not: the API starts
+rejecting bodies it used to accept, and a shipped client may be sending exactly
+those. Before requiring a request field, confirm no consumer omits it — if one
+does and cannot supply it, that is a blocker, not a rename.
 
 The `[verify:]` commands read the regenerated definition and assert the
 enrichment actually landed, because a build passing only proves the Go compiles,
@@ -79,6 +92,8 @@ not that swaggo emitted anything.
 - [ ] Point the 5 hardcoded z.enum lists at the generated unions so a value can only be added in Go [ac:AC12] [files:../nicoflow-shared/src/schemas] [verify:cd ../nicoflow-shared && ! grep -rqE "z\\.enum\\(\\['(active|low|task)" src/schemas/ && pnpm type-check && pnpm test]
 
 - [ ] Final sweep: every definition enriched, no empty ones, no duplicate enum definitions anywhere in the four repos [ac:AC1,AC3,AC10,AC11,AC13] [verify:make swagger && python3 -c "import json;d=json.load(open('docs/swagger.json'))['definitions'];bad=[k for k,v in d.items() if (k.endswith('View') or k.endswith('Request')) and not v.get('required') and v.get('properties')];assert not bad,f'unenriched: {bad}';empty=[k for k,v in d.items() if not v.get('properties')];assert not empty,f'empty: {empty}';print('contract complete')" && (cd ../nicoflow-shared && pnpm codegen && pnpm type-check) && (cd ../nicoflow-frontend && pnpm type-check) && (cd ../nicoflow-mobile && pnpm type-check)]
+
+- [ ] Review CORRECTIONS.md as a whole: confirm every wire change is intentional, that no request field was made required while a consumer still omits it, and that each has an updated handler test [ac:AC5] [files:specs/contract-enrichment/CORRECTIONS.md] [verify:test -f specs/contract-enrichment/CORRECTIONS.md && make test && (cd ../nicoflow-shared && pnpm codegen && pnpm type-check) && (cd ../nicoflow-frontend && pnpm type-check) && (cd ../nicoflow-mobile && pnpm type-check)]
 
 ## Discovered
 

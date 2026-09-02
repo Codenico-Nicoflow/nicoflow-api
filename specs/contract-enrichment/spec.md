@@ -73,8 +73,8 @@ Nothing. Every wire type, every consumer, every duplicate definition.
 ## Non-Goals
 
 - Hand-authoring OpenAPI. The Go structs stay the source of truth.
-- Changing any wire value. This is a typing exercise: if the JSON a client
-  receives changes, something is wrong.
+- Redesigning endpoints. The shape stays what it is; only its description
+  becomes accurate.
 - Retyping domain models. Only the wire structs are enriched; the domain layer
   keeps plain strings so SQL scanning is untouched.
 - **Alias shims.** No `export type ITask = TaskView`. An alias leaves two names
@@ -134,7 +134,9 @@ not pick a side.
 
 | Risk                                   | Mitigation                                                                                              |
 | -------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| A "typing-only" change alters the wire | Enums are string-kinded; `json.Marshal` output is identical. Tests assert on JSON bodies                |
+| A correction rejects a request that used to be accepted | This is the deliberate part, and the sharpest risk. Marking a request field required makes the API reject bodies it previously tolerated, and a shipped client may be sending exactly those. Before correcting a **request** field, confirm no consumer omits it — `tsc` across the three TypeScript repos is the check, and a caller that cannot supply it is a blocker, not a rename |
+| A response correction breaks a client  | Narrowing a response (optional → required, nullable → not) is safe for readers; widening is not. Never make a response field nullable that clients currently treat as always-present without listing it as a breaking change |
+| Corrections pile up unnoticed          | Every one is listed in the PR body with old and new behaviour. A silent contract change is the failure this work exists to prevent |
 | Named type breaks a caller             | The compiler finds every one — that is the point. `TaskView` surfaced exactly one, in `cmd/api/main.go` |
 | Wrong enum values invented             | Values come from the table above, not from inference. Disagreement is a blocker                         |
 | Enrichment misses a field              | The verify step diffs the definition's `required` array against the struct's non-pointer count          |
@@ -149,7 +151,7 @@ not pick a side.
 | `make swagger` + inspect definition | enum/required/nullable/format actually emitted       |
 | `pnpm codegen` + `tsc`              | generated TypeScript is valid and self-consistent    |
 | `pnpm codegen:check`                | generated output committed and in sync               |
-| existing handler tests              | JSON bodies unchanged — the wire did not move        |
+| existing handler tests              | a changed assertion means the wire moved — justify or revert |
 
 ## Rollout
 
@@ -187,8 +189,12 @@ artifacts. `git revert` restores the previous contract exactly.
       rather than `string`.
 - [ ] **AC4** Every date or timestamp field carries `format: date` or
       `format: date-time`.
-- [ ] **AC5** `make build` and `go test ./...` pass, and no handler test's
-      asserted JSON body changed — the wire is identical.
+- [ ] **AC5** `make build` and `go test ./...` pass. Where enrichment reveals a
+      contract that was wrong — a field marked optional that the handler always
+      requires, a nullable that is never null — the contract is **corrected**,
+      not preserved. Every such change is listed in the PR description with the
+      old and new behaviour, and its handler test is updated to assert the
+      corrected shape.
 - [ ] **AC6** `pnpm type-check` passes in `nicoflow-shared` and
       `pnpm codegen:check` exits 0.
 - [ ] **AC7** No enum value is defined in more than one Go location: the former
