@@ -193,13 +193,13 @@ type HabitDetailView = HabitView
 // rather than a gap: a Mon/Wed/Fri habit must not look like it failed four days
 // a week. For a week cell it is always true — a quota week is always "on".
 type CellView struct {
-	Date      string `json:"date"`
-	Scheduled bool   `json:"scheduled"`
-	Value     int    `json:"value"`
-	Satisfied bool   `json:"satisfied"`
+	Date      string `json:"date" format:"date" validate:"required"`
+	Scheduled bool   `json:"scheduled" validate:"required"`
+	Value     int    `json:"value" validate:"required"`
+	Satisfied bool   `json:"satisfied" validate:"required"`
 
 	// Set only on week cells, where a period accumulates toward a quota.
-	Progress *PeriodProgress `json:"progress"`
+	Progress *PeriodProgress `json:"progress" extensions:"x-nullable"`
 }
 
 // toView renders a habit with no history — the shape used before check-ins are

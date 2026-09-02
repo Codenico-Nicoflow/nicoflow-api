@@ -1,3 +1,9 @@
+## 2026-09-02T03:00:00Z — Enrich habit.CellView (5 fields)
+
+tried: validate:"required" on Date/Scheduled/Value/Satisfied, format:"date" on Date, x-nullable on *PeriodProgress
+result: gate green (build, vet, habit tests, required[]=4, progress allOf+x-nullable)
+learned: pointer-to-struct nullable emits as allOf $ref + x-nullable, not a bare $ref
+
 ## 2026-09-02T02:00:00Z — Enrich googlecal.CalendarView (5 fields)
 
 tried: validate:"required" on all 5 value fields in events.go; make swagger

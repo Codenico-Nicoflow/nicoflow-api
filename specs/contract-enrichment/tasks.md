@@ -21,7 +21,7 @@ not that swaggo emitted anything.
 
 - [x] Enrich googlecal.CalendarView (5 fields) [ac:AC1] [files:internal/domain/googlecal/events.go] [verify:make swagger && python3 -c "import json;d=json.load(open('docs/swagger.json'))['definitions']['googlecal.CalendarView'];assert d.get('required'),'no required[]';print('ok',d['required'])"]
 
-- [ ] Enrich habit.CellView (5 fields) [ac:AC1] [files:internal/domain/habit/types.go] [verify:make swagger && python3 -c "import json;d=json.load(open('docs/swagger.json'))['definitions']['habit.CellView'];assert d.get('required'),'no required[]';print('ok',d['required'])"]
+- [x] Enrich habit.CellView (5 fields) [ac:AC1] [files:internal/domain/habit/types.go] [verify:make swagger && python3 -c "import json;d=json.load(open('docs/swagger.json'))['definitions']['habit.CellView'];assert d.get('required'),'no required[]';print('ok',d['required'])"]
 
 - [ ] Enrich note.NoteView (7 fields, createdAt/updatedAt are date-time) [ac:AC1,AC4] [files:internal/domain/note/types.go] [verify:make swagger && python3 -c "import json;d=json.load(open('docs/swagger.json'))['definitions']['note.NoteView'];assert d.get('required'),'no required[]';assert d['properties']['createdAt'].get('format')=='date-time','createdAt needs format';print('ok')"]
 

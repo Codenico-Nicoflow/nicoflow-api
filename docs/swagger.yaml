@@ -506,17 +506,24 @@ definitions:
   habit.CellView:
     properties:
       date:
+        format: date
         type: string
       progress:
         allOf:
         - $ref: '#/definitions/habit.PeriodProgress'
         description: Set only on week cells, where a period accumulates toward a quota.
+        x-nullable: true
       satisfied:
         type: boolean
       scheduled:
         type: boolean
       value:
         type: integer
+    required:
+    - date
+    - satisfied
+    - scheduled
+    - value
     type: object
   habit.CheckInRequest:
     properties:

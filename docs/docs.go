@@ -4391,9 +4391,16 @@ const docTemplate = `{
         },
         "habit.CellView": {
             "type": "object",
+            "required": [
+                "date",
+                "satisfied",
+                "scheduled",
+                "value"
+            ],
             "properties": {
                 "date": {
-                    "type": "string"
+                    "type": "string",
+                    "format": "date"
                 },
                 "progress": {
                     "description": "Set only on week cells, where a period accumulates toward a quota.",
@@ -4401,7 +4408,8 @@ const docTemplate = `{
                         {
                             "$ref": "#/definitions/habit.PeriodProgress"
                         }
-                    ]
+                    ],
+                    "x-nullable": true
                 },
                 "satisfied": {
                     "type": "boolean"
