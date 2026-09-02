@@ -3652,12 +3652,22 @@
         },
         "area.AreaView": {
             "type": "object",
+            "required": [
+                "color",
+                "createdAt",
+                "displayOrder",
+                "icon",
+                "id",
+                "name",
+                "updatedAt"
+            ],
             "properties": {
                 "color": {
                     "type": "string"
                 },
                 "createdAt": {
-                    "type": "string"
+                    "type": "string",
+                    "format": "date-time"
                 },
                 "displayOrder": {
                     "type": "integer"
@@ -3672,7 +3682,8 @@
                     "type": "string"
                 },
                 "updatedAt": {
-                    "type": "string"
+                    "type": "string",
+                    "format": "date-time"
                 }
             }
         },
@@ -3690,12 +3701,22 @@
         },
         "area.AreaWithProjectsView": {
             "type": "object",
+            "required": [
+                "color",
+                "createdAt",
+                "displayOrder",
+                "icon",
+                "id",
+                "name",
+                "updatedAt"
+            ],
             "properties": {
                 "color": {
                     "type": "string"
                 },
                 "createdAt": {
-                    "type": "string"
+                    "type": "string",
+                    "format": "date-time"
                 },
                 "displayOrder": {
                     "type": "integer"
@@ -3716,7 +3737,8 @@
                     }
                 },
                 "updatedAt": {
-                    "type": "string"
+                    "type": "string",
+                    "format": "date-time"
                 }
             }
         },

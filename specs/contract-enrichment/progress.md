@@ -1,3 +1,9 @@
+## 2026-09-02T06:00:00Z — Enrich area.AreaView (7 fields)
+
+tried: validate:"required" on all 7 value fields, format:"date-time" on CreatedAt/UpdatedAt
+result: gate green — Tier 1 + Tier 2 (lint 0 issues, full suite no FAIL), required[]=7
+learned: AreaView has no pointers/enums; AreaWithProjectsView embeds it, so its required[] should inherit — check that next
+
 ## 2026-09-02T05:00:00Z — Enrich note.NoteDetailView (7 fields)
 
 tried: mirrored NoteView tags — required on 6 value fields, x-nullable on *ProjectID, date-time on CreatedAt/UpdatedAt

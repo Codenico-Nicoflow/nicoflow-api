@@ -26,13 +26,13 @@ type AreaWithProjects struct {
 
 // AreaView is the JSON response shape for a single area.
 type AreaView struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	Color        string `json:"color"`
-	Icon         string `json:"icon"`
-	DisplayOrder int    `json:"displayOrder"`
-	CreatedAt    string `json:"createdAt"`
-	UpdatedAt    string `json:"updatedAt"`
+	ID           string `json:"id" validate:"required"`
+	Name         string `json:"name" validate:"required"`
+	Color        string `json:"color" validate:"required"`
+	Icon         string `json:"icon" validate:"required"`
+	DisplayOrder int    `json:"displayOrder" validate:"required"`
+	CreatedAt    string `json:"createdAt" format:"date-time" validate:"required"`
+	UpdatedAt    string `json:"updatedAt" format:"date-time" validate:"required"`
 }
 
 // AreaWithProjectsView is the JSON response shape for an area with its nested projects.

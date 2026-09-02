@@ -3655,12 +3655,22 @@ const docTemplate = `{
         },
         "area.AreaView": {
             "type": "object",
+            "required": [
+                "color",
+                "createdAt",
+                "displayOrder",
+                "icon",
+                "id",
+                "name",
+                "updatedAt"
+            ],
             "properties": {
                 "color": {
                     "type": "string"
                 },
                 "createdAt": {
-                    "type": "string"
+                    "type": "string",
+                    "format": "date-time"
                 },
                 "displayOrder": {
                     "type": "integer"
@@ -3675,7 +3685,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "updatedAt": {
-                    "type": "string"
+                    "type": "string",
+                    "format": "date-time"
                 }
             }
         },
@@ -3693,12 +3704,22 @@ const docTemplate = `{
         },
         "area.AreaWithProjectsView": {
             "type": "object",
+            "required": [
+                "color",
+                "createdAt",
+                "displayOrder",
+                "icon",
+                "id",
+                "name",
+                "updatedAt"
+            ],
             "properties": {
                 "color": {
                     "type": "string"
                 },
                 "createdAt": {
-                    "type": "string"
+                    "type": "string",
+                    "format": "date-time"
                 },
                 "displayOrder": {
                     "type": "integer"
@@ -3719,7 +3740,8 @@ const docTemplate = `{
                     }
                 },
                 "updatedAt": {
-                    "type": "string"
+                    "type": "string",
+                    "format": "date-time"
                 }
             }
         },

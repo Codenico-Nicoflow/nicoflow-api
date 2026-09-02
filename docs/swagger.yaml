@@ -17,6 +17,7 @@ definitions:
       color:
         type: string
       createdAt:
+        format: date-time
         type: string
       displayOrder:
         type: integer
@@ -27,7 +28,16 @@ definitions:
       name:
         type: string
       updatedAt:
+        format: date-time
         type: string
+    required:
+    - color
+    - createdAt
+    - displayOrder
+    - icon
+    - id
+    - name
+    - updatedAt
     type: object
   area.AreaWithProjectsEnvelope:
     properties:
@@ -42,6 +52,7 @@ definitions:
       color:
         type: string
       createdAt:
+        format: date-time
         type: string
       displayOrder:
         type: integer
@@ -56,7 +67,16 @@ definitions:
           $ref: '#/definitions/project.ProjectView'
         type: array
       updatedAt:
+        format: date-time
         type: string
+    required:
+    - color
+    - createdAt
+    - displayOrder
+    - icon
+    - id
+    - name
+    - updatedAt
     type: object
   area.CreateAreaRequest:
     properties:
