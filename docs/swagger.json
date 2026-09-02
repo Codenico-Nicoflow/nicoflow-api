@@ -3708,6 +3708,7 @@
                 "icon",
                 "id",
                 "name",
+                "projects",
                 "updatedAt"
             ],
             "properties": {

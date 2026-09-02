@@ -3711,6 +3711,7 @@ const docTemplate = `{
                 "icon",
                 "id",
                 "name",
+                "projects",
                 "updatedAt"
             ],
             "properties": {

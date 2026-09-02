@@ -1,3 +1,9 @@
+## 2026-09-02T08:00:00Z — Enrich area.AreaWithProjectsView (8 fields)
+
+tried: validate:"required" on Projects; AreaView embed already enriched
+result: gate green (build, vet, area tests, required[]=8 incl. flattened AreaView fields)
+learned: swaggo flattens embedded structs into the outer required[] — embed enrichment inherits for free; Projects built with make(...,len) so never nil
+
 ## 2026-09-02T07:00:00Z — Enrich task.SubtaskView (7 fields)
 
 tried: validate:"required" on all 7 value fields, format:"date-time" on CreatedAt/UpdatedAt

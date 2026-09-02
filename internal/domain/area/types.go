@@ -38,7 +38,7 @@ type AreaView struct {
 // AreaWithProjectsView is the JSON response shape for an area with its nested projects.
 type AreaWithProjectsView struct {
 	AreaView
-	Projects []project.ProjectView `json:"projects"`
+	Projects []project.ProjectView `json:"projects" validate:"required"`
 }
 
 // ListAreasResponse is the paginated list response.

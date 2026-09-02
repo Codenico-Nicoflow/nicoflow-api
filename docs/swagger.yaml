@@ -76,6 +76,7 @@ definitions:
     - icon
     - id
     - name
+    - projects
     - updatedAt
     type: object
   area.CreateAreaRequest:
