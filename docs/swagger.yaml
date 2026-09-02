@@ -757,17 +757,27 @@ definitions:
       content:
         type: object
       createdAt:
+        format: date-time
         type: string
       id:
         type: string
       projectId:
         type: string
+        x-nullable: true
       title:
         type: string
       updatedAt:
+        format: date-time
         type: string
       version:
         type: integer
+    required:
+    - content
+    - createdAt
+    - id
+    - title
+    - updatedAt
+    - version
     type: object
   note.NoteListEnvelope:
     properties:

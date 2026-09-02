@@ -4743,24 +4743,35 @@ const docTemplate = `{
         },
         "note.NoteDetailView": {
             "type": "object",
+            "required": [
+                "content",
+                "createdAt",
+                "id",
+                "title",
+                "updatedAt",
+                "version"
+            ],
             "properties": {
                 "content": {
                     "type": "object"
                 },
                 "createdAt": {
-                    "type": "string"
+                    "type": "string",
+                    "format": "date-time"
                 },
                 "id": {
                     "type": "string"
                 },
                 "projectId": {
-                    "type": "string"
+                    "type": "string",
+                    "x-nullable": true
                 },
                 "title": {
                     "type": "string"
                 },
                 "updatedAt": {
-                    "type": "string"
+                    "type": "string",
+                    "format": "date-time"
                 },
                 "version": {
                     "type": "integer"

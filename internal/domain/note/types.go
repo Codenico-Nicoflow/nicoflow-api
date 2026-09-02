@@ -55,13 +55,13 @@ type Note struct {
 // NoteDetailView is the scalar shape — the whole document. All IDs are strings;
 // instants are RFC3339 UTC.
 type NoteDetailView struct {
-	ID        string          `json:"id"`
-	ProjectID *string         `json:"projectId"`
-	Title     string          `json:"title"`
-	Content   json.RawMessage `json:"content" swaggertype:"object"`
-	Version   int             `json:"version"`
-	CreatedAt time.Time       `json:"createdAt"`
-	UpdatedAt time.Time       `json:"updatedAt"`
+	ID        string          `json:"id" validate:"required"`
+	ProjectID *string         `json:"projectId" extensions:"x-nullable"`
+	Title     string          `json:"title" validate:"required"`
+	Content   json.RawMessage `json:"content" swaggertype:"object" validate:"required"`
+	Version   int             `json:"version" validate:"required"`
+	CreatedAt time.Time       `json:"createdAt" format:"date-time" validate:"required"`
+	UpdatedAt time.Time       `json:"updatedAt" format:"date-time" validate:"required"`
 }
 
 // NoteView is the list shape. It carries an excerpt derived from content_text
