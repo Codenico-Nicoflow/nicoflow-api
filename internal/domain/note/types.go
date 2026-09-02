@@ -70,13 +70,13 @@ type NoteDetailView struct {
 // response. Same principle as totalFocusSeconds being scalar-only (E-049).
 // Never render a note body from a list response.
 type NoteView struct {
-	ID        string    `json:"id"`
-	ProjectID *string   `json:"projectId"`
-	Title     string    `json:"title"`
-	Excerpt   string    `json:"excerpt"`
-	Version   int       `json:"version"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID        string    `json:"id" validate:"required"`
+	ProjectID *string   `json:"projectId" extensions:"x-nullable"`
+	Title     string    `json:"title" validate:"required"`
+	Excerpt   string    `json:"excerpt" validate:"required"`
+	Version   int       `json:"version" validate:"required"`
+	CreatedAt time.Time `json:"createdAt" format:"date-time" validate:"required"`
+	UpdatedAt time.Time `json:"updatedAt" format:"date-time" validate:"required"`
 }
 
 func toDetailView(n Note) NoteDetailView {

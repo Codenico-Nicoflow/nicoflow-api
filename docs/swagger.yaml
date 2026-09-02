@@ -780,6 +780,7 @@ definitions:
   note.NoteView:
     properties:
       createdAt:
+        format: date-time
         type: string
       excerpt:
         type: string
@@ -787,12 +788,21 @@ definitions:
         type: string
       projectId:
         type: string
+        x-nullable: true
       title:
         type: string
       updatedAt:
+        format: date-time
         type: string
       version:
         type: integer
+    required:
+    - createdAt
+    - excerpt
+    - id
+    - title
+    - updatedAt
+    - version
     type: object
   note.SwaggerError:
     properties:

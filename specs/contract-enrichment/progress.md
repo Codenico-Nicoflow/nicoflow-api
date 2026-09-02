@@ -1,3 +1,9 @@
+## 2026-09-02T04:00:00Z — Enrich note.NoteView (7 fields)
+
+tried: validate:"required" on 6 value fields, x-nullable on *ProjectID, format:"date-time" on CreatedAt/UpdatedAt
+result: gate green — Tier 1 + Tier 2 (lint 0 issues, full suite ok), verify required[]=6 + createdAt format
+learned: NoteDetailView shares the same field set minus excerpt plus content — next task is a near-copy
+
 ## 2026-09-02T03:00:00Z — Enrich habit.CellView (5 fields)
 
 tried: validate:"required" on Date/Scheduled/Value/Satisfied, format:"date" on Date, x-nullable on *PeriodProgress

@@ -4781,9 +4781,18 @@ const docTemplate = `{
         },
         "note.NoteView": {
             "type": "object",
+            "required": [
+                "createdAt",
+                "excerpt",
+                "id",
+                "title",
+                "updatedAt",
+                "version"
+            ],
             "properties": {
                 "createdAt": {
-                    "type": "string"
+                    "type": "string",
+                    "format": "date-time"
                 },
                 "excerpt": {
                     "type": "string"
@@ -4792,13 +4801,15 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "projectId": {
-                    "type": "string"
+                    "type": "string",
+                    "x-nullable": true
                 },
                 "title": {
                     "type": "string"
                 },
                 "updatedAt": {
-                    "type": "string"
+                    "type": "string",
+                    "format": "date-time"
                 },
                 "version": {
                     "type": "integer"
