@@ -1,3 +1,9 @@
+## 2026-09-02T02:00:00Z — Enrich googlecal.CalendarView (5 fields)
+
+tried: validate:"required" on all 5 value fields in events.go; make swagger
+result: gate green (build, vet, googlecal tests, verify required[] = 5 fields)
+learned: CalendarView has no pointers/enums — pure required pass
+
 ## 2026-09-02T01:00:00Z — Enrich auth.CalendarPrefsView (4 fields)
 
 tried: validate:"required" on all 4 fields in types.go CalendarPrefsView; make swagger

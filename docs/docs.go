@@ -4246,6 +4246,13 @@ const docTemplate = `{
         },
         "googlecal.CalendarView": {
             "type": "object",
+            "required": [
+                "backgroundColor",
+                "id",
+                "primary",
+                "selected",
+                "summary"
+            ],
             "properties": {
                 "backgroundColor": {
                     "type": "string"

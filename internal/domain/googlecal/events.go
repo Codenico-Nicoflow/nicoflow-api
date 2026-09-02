@@ -217,9 +217,9 @@ func truncateRunes(s string, limit int) string {
 
 // CalendarView is one calendar in the picker (NIC-1857).
 type CalendarView struct {
-	ID              string `json:"id"`
-	Summary         string `json:"summary"`
-	BackgroundColor string `json:"backgroundColor"`
-	Primary         bool   `json:"primary"`
-	Selected        bool   `json:"selected"`
+	ID              string `json:"id"              validate:"required"`
+	Summary         string `json:"summary"         validate:"required"`
+	BackgroundColor string `json:"backgroundColor" validate:"required"`
+	Primary         bool   `json:"primary"         validate:"required"`
+	Selected        bool   `json:"selected"        validate:"required"`
 }

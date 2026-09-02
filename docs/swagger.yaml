@@ -414,6 +414,12 @@ definitions:
         type: boolean
       summary:
         type: string
+    required:
+    - backgroundColor
+    - id
+    - primary
+    - selected
+    - summary
     type: object
   googlecal.ErrorEnvelope:
     properties:
