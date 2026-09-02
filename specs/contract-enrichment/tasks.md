@@ -17,7 +17,7 @@ not that swaggo emitted anything.
 
 - [x] Enrich habit.SubjectView (2 fields) [ac:AC1] [files:internal/domain/habit/subjects.go] [verify:make swagger && python3 -c "import json;d=json.load(open('docs/swagger.json'))['definitions']['habit.SubjectView'];assert d.get('required'),'no required[]';print('ok',d['required'])"]
 
-- [ ] Enrich auth.CalendarPrefsView (4 fields) [ac:AC1] [files:internal/domain/auth/types.go] [verify:make swagger && python3 -c "import json;d=json.load(open('docs/swagger.json'))['definitions']['auth.CalendarPrefsView'];assert d.get('required'),'no required[]';print('ok',d['required'])"]
+- [x] Enrich auth.CalendarPrefsView (4 fields) [ac:AC1] [files:internal/domain/auth/types.go] [verify:make swagger && python3 -c "import json;d=json.load(open('docs/swagger.json'))['definitions']['auth.CalendarPrefsView'];assert d.get('required'),'no required[]';print('ok',d['required'])"]
 
 - [ ] Enrich googlecal.CalendarView (5 fields) [ac:AC1] [files:internal/domain/googlecal/events.go] [verify:make swagger && python3 -c "import json;d=json.load(open('docs/swagger.json'))['definitions']['googlecal.CalendarView'];assert d.get('required'),'no required[]';print('ok',d['required'])"]
 

@@ -3852,6 +3852,12 @@ const docTemplate = `{
         },
         "auth.CalendarPrefsView": {
             "type": "object",
+            "required": [
+                "dayEndHour",
+                "dayStartHour",
+                "weekStart",
+                "workdays"
+            ],
             "properties": {
                 "dayEndHour": {
                     "type": "integer"

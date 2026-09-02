@@ -187,10 +187,10 @@ type UserView struct {
 
 // CalendarPrefsView is the wire shape of the calendar display preferences.
 type CalendarPrefsView struct {
-	WeekStart    int   `json:"weekStart"`
-	Workdays     []int `json:"workdays"`
-	DayStartHour int   `json:"dayStartHour"`
-	DayEndHour   int   `json:"dayEndHour"`
+	WeekStart    int   `json:"weekStart" validate:"required"`
+	Workdays     []int `json:"workdays" validate:"required"`
+	DayStartHour int   `json:"dayStartHour" validate:"required"`
+	DayEndHour   int   `json:"dayEndHour" validate:"required"`
 }
 
 func userToView(u User) UserView {

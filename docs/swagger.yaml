@@ -153,6 +153,11 @@ definitions:
         items:
           type: integer
         type: array
+    required:
+    - dayEndHour
+    - dayStartHour
+    - weekStart
+    - workdays
     type: object
   auth.ChangePasswordRequest:
     properties:

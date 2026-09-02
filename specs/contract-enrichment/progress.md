@@ -1,3 +1,9 @@
+## 2026-09-02T01:00:00Z — Enrich auth.CalendarPrefsView (4 fields)
+
+tried: validate:"required" on all 4 fields in types.go CalendarPrefsView; make swagger
+result: gate green (build, vet, auth tests, verify required[] = 4 fields)
+learned: workdays is normalized to []int{} in userToView, never nil — safe as required
+
 ## 2026-09-02T00:00:00Z — Enrich habit.SubjectView (2 fields)
 
 tried: added validate:"required" to Slug and LabelKey in subjects.go; regenerated swagger
