@@ -27,13 +27,34 @@ func scan(row pgx.Row, a *Attachment) error {
 	)
 }
 
-// InsertGuarded runs the byte + count checks inside the INSERT so two concurrent
-// uploads can't both read "under limit" and both write. The row appears only if
-// both sub-selects still hold at write time; 0 rows ⇒ a limit would be exceeded.
+// InsertGuarded enforces the byte + count caps.
+//
+// Putting the sub-selects in the INSERT's WHERE is not enough on its own. Under
+// READ COMMITTED each concurrent statement sees the total as it was before the
+// other's uncommitted row, so both read "under limit" and both write — the cap
+// is exceeded by exactly the number of racers. There is also no row to lock:
+// the aggregate is over rows that do not exist yet, so SELECT ... FOR UPDATE
+// has nothing to take. The same shape as focus.OpenAtomic, and the same fix —
+// an advisory lock keyed on the user, which always exists.
+//
+// The lock is per-user, so uploads by different users never contend.
 func (r *pgRepo) InsertGuarded(ctx context.Context, a Attachment) (Attachment, bool, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return Attachment{}, false, fmt.Errorf("attachment.InsertGuarded: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx,
+		`SELECT pg_advisory_xact_lock(hashtextextended('attachment_quota:' || $1, 0))`,
+		a.UserID,
+	); err != nil {
+		return Attachment{}, false, fmt.Errorf("attachment.InsertGuarded: lock user: %w", err)
+	}
+
 	var out Attachment
-	err := scan(
-		r.db.QueryRow(ctx, `
+	err = scan(
+		tx.QueryRow(ctx, `
 			INSERT INTO file_attachments
 				(id, owner_type, owner_id, user_id, file_name, file_size, mime_type, s3_key, created_at)
 			SELECT $1, $2, $3, $4, $5, $6, $7, $8, NOW()
@@ -52,8 +73,8 @@ func (r *pgRepo) InsertGuarded(ctx context.Context, a Attachment) (Attachment, b
 		return Attachment{}, false, nil
 	}
 	// s3_key is UNIQUE: a retried confirm (dropped response, double tap) races
-	// itself. Return the row the winner wrote so the retry reads as success
-	// instead of a 500.
+	// itself. Read the winner's row outside this tx — the deferred rollback
+	// releases the lock, and the row we want was committed by someone else.
 	if isUniqueViolation(err) {
 		existing, getErr := r.GetByS3Key(ctx, a.UserID, a.S3Key)
 		if getErr != nil {
@@ -63,6 +84,9 @@ func (r *pgRepo) InsertGuarded(ctx context.Context, a Attachment) (Attachment, b
 	}
 	if err != nil {
 		return Attachment{}, false, fmt.Errorf("attachment.InsertGuarded: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Attachment{}, false, fmt.Errorf("attachment.InsertGuarded: commit: %w", err)
 	}
 	return out, true, nil
 }
