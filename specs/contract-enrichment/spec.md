@@ -6,9 +6,10 @@ status: planned
 
 # Contract Enrichment — Level 2 for all View types
 
-Make the generated TypeScript strong enough to replace the hand-written types:
+Make `docs/swagger.json` an accurate description of what the API actually sends:
 literal-union enums, honest nullability, required fields, and date formats on
-all 17 response views.
+all 17 response views and 32 request types — then align the hand-written
+TypeScript against it.
 
 ## Why
 
@@ -23,7 +24,7 @@ id?: string;        // is it ever missing? no
 ```
 
 Generating from that would be a downgrade — `tsc` would stop catching things it
-catches today. The enrichment is what makes generated types worth having.
+catches today. The enrichment is what makes the swagger worth aligning against.
 
 `task.TaskView` is already done and is the reference implementation: it went
 from 22 loosely-typed fields to 13 required, 4 enums, 9 nullable, 5 formatted.
@@ -46,25 +47,24 @@ collapses those into one definition the compiler enforces.
 - Repointing existing untyped consts and inline comparisons at the new types
 
 Each type is aligned **everywhere it is used, in the same change**: the Go
-struct, the generated TypeScript, and every call site in `nicoflow-shared`,
-`nicoflow-frontend` and `nicoflow-mobile`. A type is not done until all four
-repos compile against the real name.
+struct, the hand-written TypeScript interface in `nicoflow-shared`, and every
+call site in `nicoflow-frontend` and `nicoflow-mobile`. A type is not done until
+all four repos agree.
 
 **Request bodies** are part of the contract too — a client that sends the wrong
 shape is as broken as one that misreads a response. 32 `*Request` types, 100
-fields, enriched and generated alongside the views.
+fields, enriched on the same terms as the views.
 
 Two of them (`task.UpdateTaskRequest`, `project.UpdateProjectRequest`) emit
 **zero properties** today: they use `optional.Field[T]` generics that swaggo
-cannot introspect, so the generated TypeScript is an empty object and the
-contract for those endpoints is silently missing. Fixing that needs a swaggo
-type override, not just tags.
+cannot introspect, so the contract for those endpoints is silently missing.
+Fixing that needs a swaggo type override, not just tags.
 
 **Zod schemas** hardcode the same enum values in 5 places
 (`z.enum(['active','done','cancelled'])` and friends) — a fourth copy of values
-that already exist in the DB CHECK, the Go consts, and the generated union. They
-are rewritten to derive from the generated type, so a value can only be added in
-one place.
+that already exist in the DB CHECK, the Go consts, and the shared TypeScript
+constants. They are rewritten to reference the shared constants, so within the
+TypeScript repos a value is written down once.
 
 ### Out
 
@@ -149,8 +149,7 @@ not pick a side.
 | `make build`                        | the named types compile and every caller was updated |
 | `go test ./internal/domain/<d>/...` | no behavioural change in the domain                  |
 | `make swagger` + inspect definition | enum/required/nullable/format actually emitted       |
-| `pnpm codegen` + `tsc`              | generated TypeScript is valid and self-consistent    |
-| `pnpm codegen:check`                | generated output committed and in sync               |
+| `pnpm type-check` in shared         | the hand-written interfaces still compile            |
 | existing handler tests              | a changed assertion means the wire moved — justify or revert |
 
 ## Rollout
@@ -158,9 +157,8 @@ not pick a side.
 One type at a time, all the way through every repo that uses it:
 
 1. Enrich the Go struct, `make swagger`, `make build`, domain tests
-2. `pnpm codegen` in `nicoflow-shared`
-3. Delete the hand-written interface for that type
-4. Fix every call site `tsc` names — in shared, frontend and mobile
+2. Update the matching interface in `nicoflow-shared` to agree with the swagger
+3. Fix every call site `tsc` names — in shared, frontend and mobile
 5. All four repos green
 
 A type is done only after step 5. Half-migrated is worse than not started: two
@@ -175,17 +173,17 @@ Order is smallest-blast-radius first, so a mistake in the pattern is caught on a
 `bucket.BucketView` → `notification.NotificationView` → `auth.UserView` →
 `project.ProjectView` → `googlecal.GoogleEventView` → `habit.HabitView`
 
-**Rollback:** each domain is one commit touching one `types.go` plus regenerated
-artifacts. `git revert` restores the previous contract exactly.
+**Rollback:** each domain is one commit per repo. `git revert` restores the
+previous contract exactly.
 
 ## Acceptance Criteria
 
 - [ ] **AC1** Every `*View` definition in `docs/swagger.json` has a non-empty
       `required` array listing exactly its non-pointer fields.
 - [ ] **AC2** Every pointer field in a `*View` carries `x-nullable: true` in
-      `docs/swagger.json`, and its generated TypeScript is `| null`.
+      `docs/swagger.json`, and the matching TypeScript field is `| null`.
 - [ ] **AC3** Every enumerated wire field is a named Go type whose values match
-      the table in this spec, and its generated TypeScript is a literal union
+      the table in this spec, and the matching TypeScript is a literal union
       rather than `string`.
 - [ ] **AC4** Every date or timestamp field carries `format: date` or
       `format: date-time`.
@@ -195,27 +193,28 @@ artifacts. `git revert` restores the previous contract exactly.
       not preserved. Every such change is listed in the PR description with the
       old and new behaviour, and its handler test is updated to assert the
       corrected shape.
-- [ ] **AC6** `pnpm type-check` passes in `nicoflow-shared` and
-      `pnpm codegen:check` exits 0.
+- [ ] **AC6** `pnpm type-check` and `pnpm test` pass in `nicoflow-shared`, and
+      every interface there agrees with its `docs/swagger.json` definition.
 - [ ] **AC7** No enum value is defined in more than one Go location: the former
       unexported consts, inline comparisons, and the hardcoded schema strings in
       `internal/domain/ai/tools.go` all reference the named types.
-- [ ] **AC8** Every hand-written interface that duplicates a generated type is
-      deleted, and no alias re-export of one exists (`export type ITask =
-      TaskView` and the like). Exactly one name per shape, across all four repos.
+- [ ] **AC8** Each shape has exactly one TypeScript definition, in
+      `nicoflow-shared`. No consumer re-declares one locally, and no alias
+      duplicates one under a second name.
 - [ ] **AC9** `pnpm type-check` passes in `nicoflow-frontend` and
-      `nicoflow-mobile` against the generated types, with no `as` cast or local
-      re-declaration introduced to get there.
+      `nicoflow-mobile` against the corrected shared types, with no `as` cast or
+      local re-declaration introduced to get there.
 - [ ] **AC10** Every `*Request` definition carries `required`, enums, formats
       and nullability on the same terms as the views.
 - [ ] **AC11** No definition emits zero properties. `task.UpdateTaskRequest` and
       `project.UpdateProjectRequest` currently do, because `optional.Field[T]`
       is opaque to swaggo — both describe their real shape.
-- [ ] **AC12** No Zod schema hardcodes an enum's values. Each derives from the
-      generated type, so adding a value in Go is the only way to add one.
-- [ ] **AC13** Searching the four repos for any enum's value set returns exactly
-      one definition — the Go named type — plus the generated output and the DB
-      CHECK that constrains it.
+- [ ] **AC12** No Zod schema hardcodes an enum's values. Each references the
+      shared constants, so within the TypeScript repos a value is written once.
+- [ ] **AC13** Searching for any enum's value set returns two definitions and no
+      more: the Go named type (with its DB CHECK) and the shared TypeScript
+      constant. Two languages, one definition each — never a third copy inside a
+      handler, a schema or a consumer.
 
 ## Open Questions
 

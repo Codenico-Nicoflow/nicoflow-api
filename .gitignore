@@ -8,3 +8,7 @@ coverage.out
 # IDE
 .idea/
 *.iml
+
+# Harness loop state — local working memory, not shared
+specs/**/progress.md
+specs/**/blockers.md
