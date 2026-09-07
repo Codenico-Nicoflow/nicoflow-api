@@ -1,9 +1,12 @@
 # Tasks — contract-enrichment (nicoflow-api)
 
-Reference implementation: `task.TaskView` in `internal/domain/task/types.go`
-(already enriched). Copy its shape — named enum types, `x-nullable` on pointers,
-`validate:"required"` on value fields, `format` on dates, conversion at the view
-boundary via `TaskStatus(t.Status)` and the `occurrenceStatusPtr` helper.
+Nothing is enriched yet — there is no worked example in the tree to copy. The
+rules are in `GATES.md` under "Enrichment rules": named enum types, `x-nullable`
+on pointers, `validate:"required"` on value fields, `format` on dates, and
+conversion at the view boundary rather than in the domain model.
+
+`task.TaskView` is the largest and comes last, so the pattern is settled on
+smaller views first.
 
 One view per iteration:
 
@@ -72,6 +75,8 @@ not that swaggo emitted anything.
 - [ ] Enrich googlecal.GoogleEventView (12 fields) [ac:AC1,AC2,AC4] [files:internal/domain/googlecal/events.go] [verify:make swagger && python3 -c "import json;d=json.load(open('docs/swagger.json'))['definitions']['googlecal.GoogleEventView'];assert d.get('required'),'no required[]';print('ok',d['required'])"]
 
 - [ ] Enrich habit.HabitView (22 fields) — polarity build|quit and scheduleKind daily|weekdays|weekly_quota already have consts at habit/types.go:28 [ac:AC1,AC2,AC3,AC4] [files:internal/domain/habit/types.go] [verify:make swagger && python3 -c "import json;d=json.load(open('docs/swagger.json'))['definitions']['habit.HabitView'];p=d['properties']['polarity'];assert p.get('enum') or '\$ref' in p or 'allOf' in p,'polarity must be an enum';print('ok')"]
+
+- [ ] Enrich task.TaskView (22 fields) — the largest, and last so the pattern is settled first. status/priority/energy are enums (active|done|cancelled, low|medium|high, low|medium|deep), occurrenceStatus is a nullable enum (missed|cancelled|skipped), 9 pointer fields are nullable, scheduledFor and occurrenceDate are date, completedAt/createdAt/updatedAt are date-time [ac:AC1,AC2,AC3,AC4] [files:internal/domain/task/types.go] [verify:make swagger && python3 -c "import json;d=json.load(open('docs/swagger.json'))['definitions']['task.TaskView'];assert d.get('required'),'no required[]';p=d['properties']['status'];assert p.get('enum') or 'allOf' in p or '\$ref' in p,'status must be an enum';assert d['properties']['notes'].get('x-nullable'),'notes must be nullable';print('ok',len(d['required']),'required')"]
 
 - [ ] Repoint the hardcoded enum strings in internal/domain/ai/tools.go at the named types so no enum value is defined twice [ac:AC7] [files:internal/domain/ai/tools.go] [verify:go build ./... && ! grep -q '"active", "done", "cancelled"' internal/domain/ai/tools.go]
 
