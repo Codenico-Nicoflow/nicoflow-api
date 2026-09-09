@@ -66,6 +66,8 @@ func (m *mockRepo) UpsertPushSubscription(_ context.Context, _ string, _ notific
 	return nil
 }
 func (m *mockRepo) DeletePushSubscription(_ context.Context, _, _ string) error { return nil }
+
+func (m *mockRepo) DeleteExpoPushSubscription(_ context.Context, _, _ string) error { return nil }
 func (m *mockRepo) ListPushSubscriptions(_ context.Context, _ string) ([]notification.PushSubscription, error) {
 	return nil, nil
 }

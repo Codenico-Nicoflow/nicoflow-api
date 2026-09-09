@@ -7,6 +7,7 @@ import (
 
 	"github.com/nicoflow/nicoflow-api/internal/apperror"
 	"github.com/nicoflow/nicoflow-api/internal/domain/notification"
+	"github.com/nicoflow/nicoflow-api/pkg/expopush"
 	"github.com/nicoflow/nicoflow-api/pkg/pushutil"
 )
 
@@ -25,6 +26,10 @@ func (r *subRepo) UpsertPushSubscription(_ context.Context, _ string, sub notifi
 }
 func (r *subRepo) DeletePushSubscription(_ context.Context, _, endpoint string) error {
 	r.deleted = append(r.deleted, endpoint)
+	return nil
+}
+func (r *subRepo) DeleteExpoPushSubscription(_ context.Context, _, token string) error {
+	r.deleted = append(r.deleted, token)
 	return nil
 }
 
@@ -77,7 +82,7 @@ func TestSubscribe_MissingFields(t *testing.T) {
 
 func TestUnsubscribe_Deletes(t *testing.T) {
 	svc, repo := newSubService()
-	if err := svc.Unsubscribe(context.Background(), "u1", "https://push/1"); err != nil {
+	if err := svc.Unsubscribe(context.Background(), "u1", notification.SubscribeRequest{Endpoint: "https://push/1"}); err != nil {
 		t.Fatalf("Unsubscribe: %v", err)
 	}
 	if len(repo.deleted) != 1 || repo.deleted[0] != "https://push/1" {
@@ -90,8 +95,9 @@ func TestUnsubscribe_Deletes(t *testing.T) {
 // pushSenderRepo serves a fixed subscription list and records prunes.
 type pushSenderRepo struct {
 	*mockRepo
-	subs    []notification.PushSubscription
-	deleted []string
+	subs        []notification.PushSubscription
+	deleted     []string
+	expoDeleted []string
 }
 
 func (r *pushSenderRepo) ListPushSubscriptions(_ context.Context, _ string) ([]notification.PushSubscription, error) {
@@ -99,6 +105,10 @@ func (r *pushSenderRepo) ListPushSubscriptions(_ context.Context, _ string) ([]n
 }
 func (r *pushSenderRepo) DeletePushSubscription(_ context.Context, _, endpoint string) error {
 	r.deleted = append(r.deleted, endpoint)
+	return nil
+}
+func (r *pushSenderRepo) DeleteExpoPushSubscription(_ context.Context, _, token string) error {
+	r.expoDeleted = append(r.expoDeleted, token)
 	return nil
 }
 
@@ -122,7 +132,7 @@ func TestPushSender_Sends(t *testing.T) {
 		{Endpoint: "https://push/1", P256dhKey: "p", AuthKey: "a"},
 	}}
 	sender := &fakeSender{}
-	ps := notification.NewPushSender(repo, sender)
+	ps := notification.NewPushSender(repo, sender, expopush.New(false, ""))
 
 	if err := ps.Send(context.Background(), "u1", notification.NotificationView{Title: "T", Body: "B"}); err != nil {
 		t.Fatalf("Send: %v", err)
@@ -139,7 +149,7 @@ func TestPushSender_PrunesExpired(t *testing.T) {
 		{Endpoint: "https://push/live", P256dhKey: "p", AuthKey: "a"},
 	}}
 	sender := &fakeSender{expired: map[string]bool{"https://push/dead": true}}
-	ps := notification.NewPushSender(repo, sender)
+	ps := notification.NewPushSender(repo, sender, expopush.New(false, ""))
 
 	if err := ps.Send(context.Background(), "u1", notification.NotificationView{Title: "T"}); err != nil {
 		t.Fatalf("Send: %v", err)
@@ -153,7 +163,7 @@ func TestPushSender_PrunesExpired(t *testing.T) {
 func TestPushSender_NoSubsNoOp(t *testing.T) {
 	repo := &pushSenderRepo{mockRepo: &mockRepo{}}
 	sender := &fakeSender{}
-	ps := notification.NewPushSender(repo, sender)
+	ps := notification.NewPushSender(repo, sender, expopush.New(false, ""))
 
 	if err := ps.Send(context.Background(), "u1", notification.NotificationView{}); err != nil {
 		t.Fatalf("Send: %v", err)

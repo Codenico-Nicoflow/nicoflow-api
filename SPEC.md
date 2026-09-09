@@ -1747,13 +1747,18 @@ keeps its stored value; on first write, omitted fields take their default.
 
 #### POST /v1/notifications/push/subscribe
 
-Store a browser Web Push subscription (upsert by endpoint). **Pro-only.**
+Store a push subscription (upsert). **Pro-only, on every platform.**
+
+The body is a **discriminated union on `platform`** (E-037 / NIC-1991). `platform`
+is **optional and defaults to `"web"`**, so web clients that predate mobile are
+unchanged and keep sending the original shape.
 
 - **Auth required:** Yes
-- **Request body**
+- **Request body — `platform: "web"` (default)**
 
 ```json
 {
+  "platform": "web",
   "endpoint": "https://fcm.googleapis.com/fcm/send/...",
   "p256dhKey": "<base64url>",
   "authKey": "<base64url>",
@@ -1761,22 +1766,49 @@ Store a browser Web Push subscription (upsert by endpoint). **Pro-only.**
 }
 ```
 
+- **Request body — `platform: "expo"`** (iOS/Android via the Expo Push Service)
+
+```json
+{
+  "platform": "expo",
+  "expoPushToken": "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]",
+  "deviceId": "optional-stable-device-id"
+}
+```
+
+`deviceId` is optional but recommended: a device receives a **new Expo token** on
+reinstall/restore, so keying the upsert on the token alone accumulates one dead
+row per reinstall. When `deviceId` is present it is the upsert key and the token
+is refreshed in place; otherwise the token itself is the key.
+
 **Responses**
-- **201 Created** — subscription stored (a repeat subscribe on the same endpoint refreshes it, no duplicate row).
-- **403 `PLAN_LIMIT_EXCEEDED`** — free plan; nothing stored.
-- **422 `INVALID_INPUT`** — missing `endpoint` / `p256dhKey` / `authKey`.
+- **201 Created** — subscription stored (a repeat subscribe refreshes it, no duplicate row).
+- **403 `PLAN_LIMIT_EXCEEDED`** — free plan; nothing stored. Applies to **both** platforms.
+- **422 `INVALID_INPUT`** — missing the fields required for the given platform
+  (`endpoint`/`p256dhKey`/`authKey` for web, `expoPushToken` for expo), or an
+  unrecognised `platform`.
+
+**Delivery.** The fanout routes each stored subscription by its platform: `web`
+goes out over VAPID Web Push, `expo` is batched to the Expo Push Service
+(≤100 messages per request). A token Expo reports as `DeviceNotRegistered` is
+pruned, the same way a web endpoint returning 404/410 is. Both transports are
+no-ops when unconfigured (`VAPID_*` unset / `EXPO_PUSH_ENABLED` not `true`).
 
 ---
 
 #### DELETE /v1/notifications/push/subscribe
 
-Remove the user's subscription for an endpoint. Idempotent; **no plan gate** (a
-downgraded user must still be able to unsubscribe).
+Remove a subscription. Idempotent; **no plan gate** (a downgraded user must still
+be able to unsubscribe).
 
 - **Auth required:** Yes
-- **Request body:** `{ "endpoint": "https://..." }`
+- **Request body:** `{ "endpoint": "https://..." }` (web) or
+  `{ "expoPushToken": "ExponentPushToken[...]" }` (mobile). `expoPushToken` wins
+  when both are present.
 
-**Response — 204 No Content**
+**Responses**
+- **204 No Content** — removed, or there was nothing to remove.
+- **422 `INVALID_INPUT`** — neither identifier supplied.
 
 ---
 

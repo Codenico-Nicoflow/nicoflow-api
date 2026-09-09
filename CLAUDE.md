@@ -89,7 +89,7 @@ Dependency direction: Handler → Service interface → Repository interface. In
 - Never modify a deployed migration — always add a new numbered `.up.sql` / `.down.sql` pair.
 - `display_order` / `sort_order` use `INT DEFAULT 0`. Sparse ordering is intentional.
 
-### Migrations (001–044 applied)
+### Migrations (001–053 applied)
 
 ```
 001 create_users                     019 enrich_areas_projects
@@ -118,6 +118,9 @@ Dependency direction: Handler → Service interface → Repository interface. In
                                      042 create_google_oauth_states
                                      043 users_calendar_preferences
                                      044 create_notes
+                                     045–051 (notes/recurrence follow-ups)
+                                     052 notification_prefs_digests
+                                     053 push_subscriptions_platform
 ```
 (031–035 are the notification stack: notifications table → preferences → Web Push subscriptions → per-family toggles → reminder-hours. 036 is the E-024 file-attachments table: polymorphic owner `{type,id}` (no FK), `user_id` cascade, unique `s3_key`; quota enforced by the repo's atomic guarded insert — NIC-1638.)
 
@@ -239,9 +242,21 @@ Check via `COUNT(*)` before insert. Plan is read from `ctx` Claims — no DB cal
 - `push_subscriptions` table (migration 033, `UNIQUE(user_id, endpoint)`, FK cascade). `POST /v1/notifications/push/subscribe` (Pro-only → `PLAN_LIMIT_EXCEEDED` on free; `422` on missing keys; upsert → `201`) + `DELETE …/subscribe` (idempotent, no plan gate → `204`).
 - VAPID via `pkg/pushutil` (`VAPID_PUBLIC_KEY/PRIVATE_KEY/SUBJECT`); any unset ⇒ no-op sender (safe local dev, mirrors `SMTP_DSN`). `NewPushSender` fans a created notification to all of a user's subscriptions, pruning 404/410 (expired) endpoints.
 
+## Mobile push (E-037 — Pro, NIC-1991)
+
+Migration **053** makes `push_subscriptions` multi-transport: `platform` (`'web'|'expo'`, `NOT NULL DEFAULT 'web'`), `expo_push_token`, `device_id`. `endpoint`/`p256dh_key`/`auth_key` become nullable, and a `CHECK` enforces that each row carries exactly the fields its transport needs — a bad row cannot be written even if the service is bypassed.
+
+- **The subscribe body is a discriminated union on `platform`, defaulting to `web`** — existing web clients are untouched (SPEC §3, push section). `expo` requires `expoPushToken`; `deviceId` is optional.
+- **Expo upsert key is `device_id` when present, else the token.** A device gets a *new* Expo token on reinstall/restore, so keying on the token alone accumulates a dead row per reinstall. Both are **partial unique indexes** (`WHERE platform = 'expo' …`), so web rows are unaffected and each needs its own `ON CONFLICT` target — which is why the repo has separate web/expo upsert statements rather than one.
+- **The Pro gate applies to both platforms** — switching `platform` must never bypass it.
+- Fanout (`pkg/expopush`) batches to the Expo Push Service (≤100/request, its documented limit). `DeviceNotRegistered` is Expo's analogue of Web Push 404/410 → prune; **any other ticket error is logged, never pruned** (pruning on `MessageTooBig` would drop live devices). A whole-batch failure is best-effort: logged, never propagated, never prunes.
+- `EXPO_PUSH_ENABLED` gates the transport (no-op sender when not `true`, mirroring VAPID). `EXPO_ACCESS_TOKEN` is only needed when the Expo project has enhanced push security on.
+
 ## Notification preferences (E-020/E-025)
 
-`notification_preferences` (migration 032 + 034): `email_digest`, `push_enabled`, `sms_enabled`, `before_due_minutes`, `after_due_minutes`, and the four per-family toggles `overdue_enabled` / `daily_summary_enabled` / `inbox_nudges_enabled` / `streaks_enabled` (all `DEFAULT TRUE`). Lazy upsert; an absent row = all defaults. Each proactive sweep reads its toggle (COALESCE to default) alongside plan before emitting.
+`notification_preferences` (migrations 032 + 034 + 035, reshaped by **052**): `email_digest`, `push_enabled`, `sms_enabled`, `morning_digest_enabled`, `evening_digest_enabled`, `streaks_enabled`, `morning_hour`, `evening_hour`. Lazy upsert; an absent row = all defaults. Each proactive sweep reads its toggle (COALESCE to default) alongside plan before emitting.
+
+> ⚠️ **052 retired `overdue_enabled` / `daily_summary_enabled` / `inbox_nudges_enabled` / `before_due_minutes` / `after_due_minutes`** in favour of the two unified morning/evening digests. Older docs and tickets still name the dropped columns — they no longer exist.
 
 ---
 

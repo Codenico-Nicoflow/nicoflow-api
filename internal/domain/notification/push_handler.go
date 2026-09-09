@@ -11,14 +11,14 @@ import (
 
 // Subscribe godoc
 // @Summary      Subscribe to web push
-// @Description  Stores a browser Web Push subscription for the user (Pro-only). Upserts on endpoint. Free-plan callers get PLAN_LIMIT_EXCEEDED.
+// @Description  Stores a push subscription for the user (Pro-only). Discriminated on `platform`: web (default) sends endpoint+keys, expo sends expoPushToken. Upserts. Free-plan callers get PLAN_LIMIT_EXCEEDED.
 // @Tags         notifications
 // @Accept       json
-// @Param        body  body      SubscribeRequest  true  "Push subscription (endpoint + keys)"
+// @Param        body  body      SubscribeRequest  true  "Push subscription (web: endpoint + keys; expo: expoPushToken)"
 // @Security     BearerAuth
 // @Success      201  "Subscription stored"
 // @Failure      403  {object}  ErrorEnvelope  "PLAN_LIMIT_EXCEEDED (free plan)"
-// @Failure      422  {object}  ErrorEnvelope  "INVALID_INPUT (missing endpoint/keys)"
+// @Failure      422  {object}  ErrorEnvelope  "INVALID_INPUT (missing fields for the platform)"
 // @Router       /notifications/push/subscribe [post]
 func (h *Handler) Subscribe(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromCtx(r.Context())
@@ -39,10 +39,10 @@ func (h *Handler) Subscribe(w http.ResponseWriter, r *http.Request) {
 
 // Unsubscribe godoc
 // @Summary      Unsubscribe from web push
-// @Description  Removes the user's Web Push subscription for the given endpoint. Idempotent.
+// @Description  Removes the user's push subscription by endpoint (web) or expoPushToken (mobile). Idempotent.
 // @Tags         notifications
 // @Accept       json
-// @Param        body  body      SubscribeRequest  true  "Endpoint to remove"
+// @Param        body  body      SubscribeRequest  true  "Endpoint or expoPushToken to remove"
 // @Security     BearerAuth
 // @Success      204  "Subscription removed"
 // @Router       /notifications/push/subscribe [delete]
@@ -55,7 +55,7 @@ func (h *Handler) Unsubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.Unsubscribe(r.Context(), userID, req.Endpoint); err != nil {
+	if err := h.svc.Unsubscribe(r.Context(), userID, req); err != nil {
 		writeAppError(w, r, err)
 		return
 	}
