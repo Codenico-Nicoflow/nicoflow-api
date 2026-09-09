@@ -42,6 +42,7 @@ import (
 	"github.com/nicoflow/nicoflow-api/internal/storage"
 	"github.com/nicoflow/nicoflow-api/internal/ws"
 	"github.com/nicoflow/nicoflow-api/pkg/cryptoutil"
+	"github.com/nicoflow/nicoflow-api/pkg/expopush"
 	"github.com/nicoflow/nicoflow-api/pkg/optional"
 	"github.com/nicoflow/nicoflow-api/pkg/pushutil"
 
@@ -125,8 +126,9 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("invalid VAPID configuration")
 	}
+	expoSender := expopush.New(cfg.ExpoPushEnabled, cfg.ExpoAccessToken)
 	notificationSvc := notification.NewService(notificationRepo, ws.NewNotificationBroadcaster(wsHub)).
-		WithPushSender(notification.NewPushSender(notificationRepo, pushSender))
+		WithPushSender(notification.NewPushSender(notificationRepo, pushSender, expoSender))
 
 	// Project domain. notificationSvc drives the explicit project_completed
 	// notification (fires on the status PATCH transition into "completed").

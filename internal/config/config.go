@@ -56,6 +56,11 @@ type Config struct {
 	VAPIDPublicKey  string
 	VAPIDPrivateKey string
 	VAPIDSubject    string
+	// Expo push (E-037 / NIC-1991). ExpoPushEnabled gates the mobile transport;
+	// unset ⇒ no-op sender, mirroring VAPID. ExpoAccessToken is only needed when
+	// the Expo project has enhanced push security turned on.
+	ExpoPushEnabled bool
+	ExpoAccessToken string
 	// AnthropicAPIKey enables the AI assistant (E-026). Unset ⇒ /v1/ai/* returns
 	// 503 AI_UNAVAILABLE (kill switch), never a silent no-op — mirrors storage.
 	AnthropicAPIKey string
@@ -151,6 +156,8 @@ func Load() Config {
 		VAPIDPublicKey:           os.Getenv("VAPID_PUBLIC_KEY"),
 		VAPIDPrivateKey:          os.Getenv("VAPID_PRIVATE_KEY"),
 		VAPIDSubject:             os.Getenv("VAPID_SUBJECT"),
+		ExpoPushEnabled:          os.Getenv("EXPO_PUSH_ENABLED") == "true",
+		ExpoAccessToken:          os.Getenv("EXPO_ACCESS_TOKEN"),
 		AnthropicAPIKey:          os.Getenv("ANTHROPIC_API_KEY"),
 		AIModel:                  aiModel,
 		GoogleClientID:           os.Getenv("GOOGLE_CLIENT_ID"),

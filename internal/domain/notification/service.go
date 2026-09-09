@@ -40,7 +40,7 @@ type Service interface {
 	// caller gets a PLAN_LIMIT_EXCEEDED error and nothing is stored.
 	Subscribe(ctx context.Context, userID, plan string, req SubscribeRequest) error
 	// Unsubscribe removes the user's subscription for the given endpoint (idempotent).
-	Unsubscribe(ctx context.Context, userID, endpoint string) error
+	Unsubscribe(ctx context.Context, userID string, req SubscribeRequest) error
 }
 
 type service struct {

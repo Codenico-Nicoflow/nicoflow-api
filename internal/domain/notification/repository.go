@@ -42,7 +42,7 @@ type Repository interface {
 	// row and returns the result.
 	UpsertPreferences(ctx context.Context, userID string, u UpdatePreferences) (Preferences, error)
 
-	// UpsertPushSubscription stores a web-push subscription, upserting on
+	// UpsertPushSubscription stores a push subscription, upserting on
 	// (user_id, endpoint) so a repeat subscribe refreshes rather than duplicates.
 	UpsertPushSubscription(ctx context.Context, userID string, sub PushSubscription) error
 	// DeletePushSubscription removes a user's subscription by endpoint. Idempotent —
@@ -50,6 +50,9 @@ type Repository interface {
 	DeletePushSubscription(ctx context.Context, userID, endpoint string) error
 	// ListPushSubscriptions returns all of a user's stored subscriptions.
 	ListPushSubscriptions(ctx context.Context, userID string) ([]PushSubscription, error)
+	// DeleteExpoPushSubscription removes a user's Expo subscription by token.
+	// Idempotent — the mobile counterpart of DeletePushSubscription.
+	DeleteExpoPushSubscription(ctx context.Context, userID, token string) error
 }
 
 type pgRepository struct {
