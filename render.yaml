@@ -97,6 +97,12 @@ services:
         sync: false
       - key: VAPID_SUBJECT
         sync: false
+      # Expo push for the mobile app (E-037). Not "true" ⇒ the mobile transport
+      # is a no-op, mirroring unset VAPID keys. Not a secret, so the value lives
+      # here rather than in the dashboard. EXPO_ACCESS_TOKEN is only needed when
+      # the Expo project has enhanced push security enabled.
+      - key: EXPO_PUSH_ENABLED
+        value: "true"
       # AI assistant (E-026). Unset ⇒ the kill switch returns 503 AI_UNAVAILABLE
       # on every /v1/ai/* route (never a silent no-op), and the FE shows its
       # feature-disabled banner. Billed per token on the Anthropic account, so a
