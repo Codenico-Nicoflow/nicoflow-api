@@ -2013,12 +2013,23 @@ manual rename of that instance can be overwritten. Editing an *instance*
 A schedule change recomputes `nextOccurrence`. `endDate` accepts an explicit `null`
 to clear it, which revives an exhausted series. Broadcasts `recurrence.updated`.
 
+`projectId` moves the whole series. The rule stamps its project onto every occurrence
+it materializes, so a move that only touched the current task would leave every future
+one landing in the old project. The move therefore carries the rule **and the same rows
+the re-stamp covers** — the live and still-pending occurrences — in one transaction.
+Done and cancelled occurrences keep the project they were completed under; history is
+not rewritten. The destination must belong to the caller, and on Free it must have room
+under the 50-active-task-per-project limit (a no-op move to the same project is exempt —
+it frees as many slots as it fills).
+
 - **Auth required:** Yes
 
 **Response — 200 OK:** `RecurrenceRuleView`
 
-**Errors:** `RECURRENCE_RULE_NOT_FOUND` (404), `PLAN_LIMIT_EXCEEDED` (403 — setting a
-`scheduledTime` on Free), `INVALID_RECURRENCE` (422), `INVALID_INPUT` (422), `INVALID_DATE` (422)
+**Errors:** `RECURRENCE_RULE_NOT_FOUND` (404), `PROJECT_NOT_FOUND` (404 — `projectId` is
+not a project the caller owns), `PLAN_LIMIT_EXCEEDED` (403 — setting a `scheduledTime` on
+Free, or moving into a project already at the Free active-task cap), `INVALID_RECURRENCE`
+(422), `INVALID_INPUT` (422 — blank `projectId`), `INVALID_DATE` (422)
 
 #### PATCH /v1/recurrence-rules/:id/pause
 
