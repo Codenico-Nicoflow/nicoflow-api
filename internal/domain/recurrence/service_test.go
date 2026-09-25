@@ -14,10 +14,11 @@ import (
 
 // fakeRepo records what the service asked for and returns scripted results.
 type fakeRepo struct {
-	rules        map[string]Rule
-	ruleOrder    []string // insertion order, for IsWithinFreeLimit's ranking
-	count        int
-	projectOwned bool
+	rules            map[string]Rule
+	ruleOrder        []string // insertion order, for IsWithinFreeLimit's ranking
+	count            int
+	projectOwned     bool
+	activeTaskCounts map[string]int // project id → active task count, for the move limit
 
 	createdOcc   Occurrence
 	deletedID    string
@@ -182,6 +183,9 @@ func (f *fakeRepo) ListOccurrenceStatuses(context.Context, string, string) ([]st
 }
 func (f *fakeRepo) ProjectOwned(context.Context, string, string) (bool, error) {
 	return f.projectOwned, nil
+}
+func (f *fakeRepo) CountActiveTasks(_ context.Context, _, projectID string) (int, error) {
+	return f.activeTaskCounts[projectID], nil
 }
 
 // recorder captures emitted events so tests can assert on real-time fan-out.
@@ -661,6 +665,78 @@ func TestUpdate_RejectsInvalidSchedule(t *testing.T) {
 // editable and makes the rest read-only until deleted or they re-upgrade —
 // otherwise a Pro user with 10 rules keeps full edit/pause on all 10 forever
 // after downgrading, silently bypassing the cap a new free user can't get past.
+// Moving the series repoints the rule itself, so future occurrences materialize
+// into the destination rather than the project the series started in.
+func TestUpdate_MovesSeriesToAnotherProject(t *testing.T) {
+	repo := newFakeRepo()
+	svc := NewServiceWithClock(repo, nil, newFakeTaskReader(), fixedClock("2026-03-01"))
+	view := seedRule(t, svc)
+
+	dest := "p2"
+	got, err := svc.Update(context.Background(), "u1", view.ID, "free", UpdateRuleRequest{ProjectID: &dest})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if got.ProjectID != dest {
+		t.Errorf("projectId = %q, want %q", got.ProjectID, dest)
+	}
+}
+
+func TestUpdate_RejectsBadProjectMove(t *testing.T) {
+	blank := "   "
+	unowned := "p2"
+	tests := []struct {
+		name         string
+		projectID    *string
+		projectOwned bool
+		wantCode     string
+	}{
+		{"blank projectId", &blank, true, apperror.ErrInvalidInput},
+		{"project the caller does not own", &unowned, false, apperror.ErrProjectNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			svc := NewServiceWithClock(repo, nil, newFakeTaskReader(), fixedClock("2026-03-01"))
+			view := seedRule(t, svc)
+			repo.projectOwned = tt.projectOwned // after seeding — Create checks ownership too
+
+			_, err := svc.Update(context.Background(), "u1", view.ID, "free",
+				UpdateRuleRequest{ProjectID: tt.projectID})
+			assertCode(t, err, tt.wantCode)
+		})
+	}
+}
+
+// The destination's live-task cap is the free plan's, so a move into a full
+// project is refused rather than pushing it over. Pro is never gated, and a
+// no-op move (same project) frees as many slots as it fills.
+func TestUpdate_ProjectMoveRespectsDestinationTaskLimit(t *testing.T) {
+	setup := func() (*fakeRepo, Service, RuleView) {
+		repo := newFakeRepo()
+		repo.activeTaskCounts = map[string]int{"p2": freePlanTaskLimit}
+		svc := NewServiceWithClock(repo, nil, newFakeTaskReader(), fixedClock("2026-03-01"))
+		return repo, svc, seedRule(t, svc)
+	}
+	dest := "p2"
+
+	_, svc, view := setup()
+	_, err := svc.Update(context.Background(), "u1", view.ID, "free", UpdateRuleRequest{ProjectID: &dest})
+	assertCode(t, err, apperror.ErrPlanLimitExceeded)
+
+	_, svc, view = setup()
+	if _, err := svc.Update(context.Background(), "u1", view.ID, "pro", UpdateRuleRequest{ProjectID: &dest}); err != nil {
+		t.Errorf("move into a full project as pro = %v, want success", err)
+	}
+
+	repo, svc, view := setup()
+	repo.activeTaskCounts["p1"] = freePlanTaskLimit
+	same := "p1"
+	if _, err := svc.Update(context.Background(), "u1", view.ID, "free", UpdateRuleRequest{ProjectID: &same}); err != nil {
+		t.Errorf("no-op move within a full project = %v, want success", err)
+	}
+}
+
 func TestUpdate_ReadOnlyOverFreeLimitAfterDowngrade(t *testing.T) {
 	repo := newFakeRepo()
 	svc := NewServiceWithClock(repo, nil, newFakeTaskReader(), fixedClock("2026-03-01"))

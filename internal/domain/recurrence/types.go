@@ -15,6 +15,11 @@ const freePlanRuleLimit = 3
 // planFree is the JWT claim value for the free tier.
 const planFree = "free"
 
+// freePlanTaskLimit mirrors task.FreePlanTaskLimit. Duplicated rather than
+// imported: recurrence writes occurrence rows directly and deliberately does not
+// depend on the task package. Keep the two in step.
+const freePlanTaskLimit = 50
+
 const (
 	maxTitleLen = 255
 	maxNotesLen = 2000
@@ -157,6 +162,10 @@ type CreateRuleRequest struct {
 // Schedule fields use optional.Field so "absent" and "explicit null" differ:
 // clearing endDate un-exhausts a series, which absence must not do.
 type UpdateRuleRequest struct {
+	// ProjectID moves the whole series. The rule stamps its project onto every
+	// occurrence it materializes, so without this a series move relocates only
+	// the current occurrence and future ones keep landing in the old project.
+	ProjectID        *string                `json:"projectId"`
 	Title            *string                `json:"title"`
 	Notes            optional.Field[string] `json:"notes"`
 	Priority         *string                `json:"priority"`
@@ -334,6 +343,10 @@ type Repository interface {
 
 	// ProjectOwned reports whether the project exists and belongs to the user.
 	ProjectOwned(ctx context.Context, userID, projectID string) (bool, error)
+
+	// CountActiveTasks counts active tasks in a project — the per-project live-task
+	// limit a series move must respect in its destination.
+	CountActiveTasks(ctx context.Context, userID, projectID string) (int, error)
 
 	// ListDue returns every non-paused, non-exhausted rule whose cursor has come
 	// due, joined to the owner's timezone so the sweep can decide "today" in the
