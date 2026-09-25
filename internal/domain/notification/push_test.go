@@ -98,6 +98,14 @@ type pushSenderRepo struct {
 	subs        []notification.PushSubscription
 	deleted     []string
 	expoDeleted []string
+	// unread is the badge count the fanout reads; unreadErr forces the
+	// best-effort path where the count can't be resolved.
+	unread    int
+	unreadErr error
+}
+
+func (r *pushSenderRepo) CountUnread(_ context.Context, _ string) (int, error) {
+	return r.unread, r.unreadErr
 }
 
 func (r *pushSenderRepo) ListPushSubscriptions(_ context.Context, _ string) ([]notification.PushSubscription, error) {

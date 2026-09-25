@@ -25,6 +25,9 @@ type Message struct {
 	Title string         `json:"title"`
 	Body  string         `json:"body"`
 	Data  map[string]any `json:"data,omitempty"`
+	// Badge sets the OS app-icon badge. A pointer so 0 — which clears the badge —
+	// is distinguishable from "leave it alone", which is what omitting it means.
+	Badge *int `json:"badge,omitempty"`
 }
 
 // Result reports the outcome for a single token in the batch. Order matches the
