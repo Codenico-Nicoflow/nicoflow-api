@@ -235,3 +235,65 @@ func TestPushSender_ExpoBatchFailureIsBestEffort(t *testing.T) {
 		t.Fatalf("a transport failure must not prune tokens, got %v", repo.expoDeleted)
 	}
 }
+
+// The badge is what sets the app-icon count on a device whose app isn't running,
+// so it has to ride the payload rather than be computed by the client.
+func TestPushSender_ExpoMessageCarriesBadge(t *testing.T) {
+	repo := &pushSenderRepo{mockRepo: &mockRepo{}, unread: 3, subs: []notification.PushSubscription{
+		{Platform: "expo", ExpoPushToken: "t1"},
+	}}
+	expo := &fakeExpoSender{}
+	ps := notification.NewPushSender(repo, &fakeSender{}, expo)
+
+	if err := ps.Send(context.Background(), "u1", notification.NotificationView{Title: "T"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	got := expo.batches[0][0]
+	if got.Badge == nil {
+		t.Fatal("want a badge on the expo message, got none")
+	}
+	// The notification row is written before the fanout runs, so the count already
+	// includes the one being delivered. Reordering the write past the fanout would
+	// silently make every badge one short — this is what catches that.
+	if *got.Badge != 3 {
+		t.Fatalf("badge = %d, want 3 (the count must include the notification being delivered)", *got.Badge)
+	}
+}
+
+// Push is best-effort: a count that can't be read costs the badge, never the
+// notification.
+func TestPushSender_SendsWithoutBadgeWhenCountFails(t *testing.T) {
+	repo := &pushSenderRepo{mockRepo: &mockRepo{}, unreadErr: errors.New("db down"), subs: []notification.PushSubscription{
+		{Platform: "expo", ExpoPushToken: "t1"},
+	}}
+	expo := &fakeExpoSender{}
+	ps := notification.NewPushSender(repo, &fakeSender{}, expo)
+
+	if err := ps.Send(context.Background(), "u1", notification.NotificationView{Title: "T"}); err != nil {
+		t.Fatalf("a failed unread count must not fail Send, got %v", err)
+	}
+	if len(expo.batches) != 1 || len(expo.batches[0]) != 1 {
+		t.Fatalf("want the push delivered anyway, got %v", expo.batches)
+	}
+	if expo.batches[0][0].Badge != nil {
+		t.Fatalf("want no badge when the count failed, got %d", *expo.batches[0][0].Badge)
+	}
+}
+
+// A badge of 0 clears the icon, which is a real instruction — it must survive as
+// a sent value rather than being dropped as a zero.
+func TestPushSender_ZeroBadgeIsSent(t *testing.T) {
+	repo := &pushSenderRepo{mockRepo: &mockRepo{}, unread: 0, subs: []notification.PushSubscription{
+		{Platform: "expo", ExpoPushToken: "t1"},
+	}}
+	expo := &fakeExpoSender{}
+	ps := notification.NewPushSender(repo, &fakeSender{}, expo)
+
+	if err := ps.Send(context.Background(), "u1", notification.NotificationView{Title: "T"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if got := expo.batches[0][0].Badge; got == nil || *got != 0 {
+		t.Fatalf("want an explicit zero badge, got %v", got)
+	}
+}

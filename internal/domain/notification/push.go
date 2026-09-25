@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 
 	"github.com/rs/zerolog/log"
 
@@ -108,6 +109,7 @@ type pushRepo interface {
 	ListPushSubscriptions(ctx context.Context, userID string) ([]PushSubscription, error)
 	DeletePushSubscription(ctx context.Context, userID, endpoint string) error
 	DeleteExpoPushSubscription(ctx context.Context, userID, token string) error
+	CountUnread(ctx context.Context, userID string) (int, error)
 }
 
 // pushDispatcher satisfies the PushSender seam (dispatch.go): it fans a created
@@ -149,6 +151,22 @@ func (d *pushDispatcher) Send(ctx context.Context, userID string, view Notificat
 		return err
 	}
 
+	// The badge is the only way to set the app-icon count on a device whose app
+	// isn't running, so it rides the payload. Resolved once per fanout, not per
+	// subscription, and skipped entirely when the user has no Expo device — web
+	// push has no badge to set. The notification row is already written by the
+	// time we get here, so the count includes the one being delivered, which is
+	// what the device should show. Best-effort: a failure must never cost the
+	// push, so it just sends without a badge.
+	var badge *int
+	if slices.ContainsFunc(subs, func(s PushSubscription) bool { return s.Platform == PlatformExpo }) {
+		if count, err := d.repo.CountUnread(ctx, userID); err != nil {
+			log.Error().Err(err).Str("user_id", userID).Msg("push: unread count failed, sending without badge")
+		} else {
+			badge = &count
+		}
+	}
+
 	var expoMsgs []expopush.Message
 	for _, s := range subs {
 		if s.Platform == PlatformExpo {
@@ -158,6 +176,7 @@ func (d *pushDispatcher) Send(ctx context.Context, userID string, view Notificat
 				Title: view.Title,
 				Body:  view.Body,
 				Data:  map[string]any{"type": view.Type, "id": view.ID},
+				Badge: badge,
 			})
 			continue
 		}
