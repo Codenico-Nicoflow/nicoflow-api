@@ -286,6 +286,10 @@ func (s *service) Update(ctx context.Context, userID, id, plan string, req Updat
 		return RuleView{}, err
 	}
 
+	if err := s.requireProjectMoveAllowed(ctx, userID, plan, req, existing); err != nil {
+		return RuleView{}, err
+	}
+
 	updated, scheduleChanged, err := applyUpdate(existing, req)
 	if err != nil {
 		return RuleView{}, err
@@ -309,6 +313,43 @@ func (s *service) Update(ctx context.Context, userID, id, plan string, req Updat
 	return view, nil
 }
 
+// requireProjectMoveAllowed guards a series project move: the destination must
+// exist, belong to the caller, and have room for the occurrences moving into it.
+// A no-op move (same project) skips the limit check — it frees as many slots as
+// it fills, so counting it would reject a series already sitting at the cap.
+func (s *service) requireProjectMoveAllowed(
+	ctx context.Context, userID, plan string, req UpdateRuleRequest, existing Rule,
+) error {
+	if req.ProjectID == nil {
+		return nil
+	}
+	target := strings.TrimSpace(*req.ProjectID)
+	if target == "" {
+		return apperror.New(http.StatusUnprocessableEntity, apperror.ErrInvalidInput, "projectId cannot be blank")
+	}
+
+	owned, err := s.repo.ProjectOwned(ctx, userID, target)
+	if err != nil {
+		return err
+	}
+	if !owned {
+		return apperror.New(http.StatusNotFound, apperror.ErrProjectNotFound, "project not found")
+	}
+
+	if plan != planFree || target == existing.ProjectID {
+		return nil
+	}
+	count, err := s.repo.CountActiveTasks(ctx, userID, target)
+	if err != nil {
+		return err
+	}
+	if count >= freePlanTaskLimit {
+		return apperror.New(http.StatusForbidden, apperror.ErrPlanLimitExceeded,
+			"free plan allows up to 50 active tasks per project")
+	}
+	return nil
+}
+
 // applyUpdate folds the patch onto the existing rule and reports whether any
 // schedule-bearing field moved (which forces a cursor recompute).
 func applyUpdate(r Rule, req UpdateRuleRequest) (Rule, bool, error) {
@@ -319,6 +360,9 @@ func applyUpdate(r Rule, req UpdateRuleRequest) (Rule, bool, error) {
 // applyTemplatePatch folds the task-template fields onto the rule. None of them
 // affect when the rule fires.
 func applyTemplatePatch(r Rule, req UpdateRuleRequest) Rule {
+	if req.ProjectID != nil {
+		r.ProjectID = strings.TrimSpace(*req.ProjectID)
+	}
 	if req.Title != nil {
 		r.Title = strings.TrimSpace(*req.Title)
 	}

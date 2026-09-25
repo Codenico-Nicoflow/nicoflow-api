@@ -276,12 +276,12 @@ func (r *pgRepo) Update(ctx context.Context, rule Rule) (Rule, error) {
 			title = $3, notes = $4, priority = $5, energy = $6, estimated_minutes = $7,
 			freq = $8, interval = $9, by_weekday = $10, by_monthday = $11,
 			start_date = $12, end_date = $13, next_occurrence = $14,
-			scheduled_time = $15::time, updated_at = NOW()
+			scheduled_time = $15::time, project_id = $16, updated_at = NOW()
 		WHERE id = $1 AND user_id = $2
 		RETURNING`+selectCols,
 		rule.ID, rule.UserID, rule.Title, rule.Notes, rule.Priority, rule.Energy, rule.EstimatedMinutes,
 		rule.Freq, rule.Interval, rule.ByWeekday, rule.ByMonthday,
-		rule.StartDate, rule.EndDate, rule.NextOccurrence, rule.ScheduledTime,
+		rule.StartDate, rule.EndDate, rule.NextOccurrence, rule.ScheduledTime, rule.ProjectID,
 	), &out)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Rule{}, errRuleNotFound()
@@ -292,16 +292,22 @@ func (r *pgRepo) Update(ctx context.Context, rule Rule) (Rule, error) {
 
 	// Re-stamping is unconditional — no per-field dirty tracking — so a manual
 	// rename of the live instance can be overwritten. Accepted (NIC-1772).
+	//
+	// project_id rides along on the same scope: a series move takes its live and
+	// still-pending occurrences with it, so the series never half-lives in two
+	// projects. Done/cancelled rows keep the project they were completed under —
+	// history is not rewritten.
 	if _, err := tx.Exec(ctx, `
 		UPDATE tasks SET
 			title = $3, notes = $4, priority = $5, energy = $6, estimated_minutes = $7,
 			scheduled_for = COALESCE($8::date::text, scheduled_for),
 			occurrence_date = COALESCE($8::date, occurrence_date),
 			scheduled_time = $9::time,
+			project_id = $10,
 			updated_at = NOW()
 		WHERE recurrence_rule_id = $1 AND user_id = $2 AND status NOT IN ('done', 'cancelled')`,
 		rule.ID, rule.UserID, rule.Title, rule.Notes, rule.Priority, rule.Energy, rule.EstimatedMinutes,
-		rule.NextOccurrence, rule.ScheduledTime,
+		rule.NextOccurrence, rule.ScheduledTime, rule.ProjectID,
 	); err != nil {
 		return Rule{}, fmt.Errorf("recurrence.Update restamp: %w", err)
 	}
@@ -673,6 +679,18 @@ func (r *pgRepo) IsWithinFreeLimit(ctx context.Context, userID, ruleID string, l
 		return false, fmt.Errorf("recurrence.IsWithinFreeLimit: %w", err)
 	}
 	return within, nil
+}
+
+func (r *pgRepo) CountActiveTasks(ctx context.Context, userID, projectID string) (int, error) {
+	var count int
+	if err := r.db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM tasks
+		 WHERE user_id = @userID AND project_id = @projectID AND status = 'active'`,
+		pgx.NamedArgs{"userID": userID, "projectID": projectID},
+	).Scan(&count); err != nil {
+		return 0, fmt.Errorf("recurrence.CountActiveTasks: %w", err)
+	}
+	return count, nil
 }
 
 func (r *pgRepo) ProjectOwned(ctx context.Context, userID, projectID string) (bool, error) {
