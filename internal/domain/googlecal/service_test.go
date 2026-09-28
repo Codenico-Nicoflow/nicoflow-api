@@ -138,10 +138,13 @@ func TestService_Connect(t *testing.T) {
 		wantRedirect string
 	}{
 		{name: "issues a consent url", enabled: true, next: "/calendar", wantRedirect: "/calendar"},
+		{name: "accepts the exact native settings callback", enabled: true, next: "nicoflow:///settings", wantRedirect: "nicoflow:///settings"},
 		{name: "disabled integration is typed", enabled: false, wantErrCode: apperror.ErrGoogleAuthFailed},
 		// An attacker-supplied `next` must never become a Location header —
 		// an open redirect on our own domain is a phishing primitive.
 		{name: "absolute url is dropped", enabled: true, next: "https://evil.com", wantRedirect: ""},
+		{name: "unrecognized app scheme is dropped", enabled: true, next: "otherapp:///settings", wantRedirect: ""},
+		{name: "redirect query is dropped", enabled: true, next: "/settings?next=https://evil.com", wantRedirect: ""},
 		{name: "protocol-relative url is dropped", enabled: true, next: "//evil.com", wantRedirect: ""},
 		{name: "backslash trick is dropped", enabled: true, next: "/\\evil.com", wantRedirect: ""},
 		{name: "crlf injection is dropped", enabled: true, next: "/ok\r\nX-Bad: 1", wantRedirect: ""},
@@ -179,6 +182,28 @@ func TestService_Connect(t *testing.T) {
 				t.Error("state fingerprint was not stored")
 			}
 		})
+	}
+}
+
+func TestService_Cancel(t *testing.T) {
+	states := newMockStates()
+	oauth := &mockOAuth{enabled: true}
+	svc := googlecal.NewService(&mockRepo{}, states, oauth)
+	if _, err := svc.Connect(context.Background(), "user-1", "nicoflow:///settings"); err != nil {
+		t.Fatalf("Connect() error = %v", err)
+	}
+
+	redirect, err := svc.Cancel(context.Background(), oauth.lastState)
+	if err != nil {
+		t.Fatalf("Cancel() error = %v", err)
+	}
+	if redirect != "nicoflow:///settings" {
+		t.Fatalf("Cancel() redirect = %q, want native settings callback", redirect)
+	}
+
+	_, err = svc.Cancel(context.Background(), oauth.lastState)
+	if got := codeOf(t, err); got != apperror.ErrInvalidToken {
+		t.Fatalf("replayed Cancel() error code = %q, want %q", got, apperror.ErrInvalidToken)
 	}
 }
 
@@ -275,12 +300,13 @@ func TestService_CallbackStateHandling(t *testing.T) {
 
 func TestService_CallbackFailures(t *testing.T) {
 	tests := []struct {
-		name        string
-		enabled     bool
-		state       string
-		code        string
-		exchangeErr error
-		wantCode    string
+		name         string
+		enabled      bool
+		state        string
+		code         string
+		exchangeErr  error
+		wantCode     string
+		wantRedirect string
 	}{
 		{name: "missing state", enabled: true, code: "c", wantCode: apperror.ErrInvalidInput},
 		{name: "missing code", enabled: true, state: "s", wantCode: apperror.ErrInvalidInput},
@@ -291,8 +317,9 @@ func TestService_CallbackFailures(t *testing.T) {
 			// hour — worse than a visible failure, because the user believes it
 			// worked.
 			enabled: true, state: "s", code: "c",
-			exchangeErr: googlecal.ErrOAuthExchange,
-			wantCode:    apperror.ErrGoogleAuthFailed,
+			exchangeErr:  googlecal.ErrOAuthExchange,
+			wantCode:     apperror.ErrGoogleAuthFailed,
+			wantRedirect: "nicoflow:///settings",
 		},
 	}
 
@@ -304,18 +331,21 @@ func TestService_CallbackFailures(t *testing.T) {
 
 			if tt.exchangeErr != nil {
 				// Give the state a chance to be valid so the exchange is reached.
-				if _, err := svc.Connect(context.Background(), "user-1", ""); err != nil {
+				if _, err := svc.Connect(context.Background(), "user-1", tt.wantRedirect); err != nil {
 					t.Fatalf("Connect() error = %v", err)
 				}
 				tt.state = oauth.lastState
 			}
 
-			_, err := svc.Callback(context.Background(), tt.state, tt.code)
+			redirect, err := svc.Callback(context.Background(), tt.state, tt.code)
 			if err == nil {
 				t.Fatal("Callback() succeeded, want an error")
 			}
 			if got := codeOf(t, err); got != tt.wantCode {
 				t.Errorf("error code = %q, want %q", got, tt.wantCode)
+			}
+			if redirect != tt.wantRedirect {
+				t.Errorf("failure redirect = %q, want %q", redirect, tt.wantRedirect)
 			}
 			if strings.Contains(err.Error(), "1//0-refresh") {
 				t.Error("error message leaked token material")
