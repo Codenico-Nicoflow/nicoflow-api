@@ -19,6 +19,8 @@ type Service interface {
 	// Callback consumes the state, exchanges the code, and stores the connection.
 	// Returns the redirect path recorded at Connect time.
 	Callback(ctx context.Context, state, code string) (redirectPath string, err error)
+	// Cancel consumes a declined or cancelled OAuth state and returns its saved destination.
+	Cancel(ctx context.Context, state string) (redirectPath string, err error)
 	Get(ctx context.Context, userID string) (ConnectionView, error)
 	// Disconnect revokes the grant WITH Google and then deletes the local row.
 	Disconnect(ctx context.Context, userID string) error
@@ -81,7 +83,7 @@ func (s *service) Callback(ctx context.Context, state, code string) (string, err
 		// The underlying error may quote Google's response; log it server-side
 		// with the user id and return a typed code carrying no detail.
 		log.Error().Err(err).Str("user_id", userID).Msg("googlecal: token exchange failed")
-		return "", authFailed("could not complete the Google connection")
+		return redirectPath, authFailed("could not complete the Google connection")
 	}
 
 	if _, err := s.repo.Upsert(ctx, Connection{
@@ -94,9 +96,20 @@ func (s *service) Callback(ctx context.Context, state, code string) (string, err
 		// disclosure, not a required second step.
 		SelectedCalendarIDs: []string{"primary"},
 	}); err != nil {
-		return "", err
+		return redirectPath, err
 	}
 
+	return redirectPath, nil
+}
+
+func (s *service) Cancel(ctx context.Context, state string) (string, error) {
+	if state == "" {
+		return "", apperror.New(http.StatusBadRequest, apperror.ErrInvalidToken, "invalid or expired oauth state")
+	}
+	_, redirectPath, err := s.states.Consume(ctx, StateFingerprint(state))
+	if err != nil {
+		return "", apperror.New(http.StatusBadRequest, apperror.ErrInvalidToken, "invalid or expired oauth state")
+	}
 	return redirectPath, nil
 }
 
@@ -155,16 +168,23 @@ func (s *service) RevokeForUser(ctx context.Context, userID string) {
 	}
 }
 
-// sanitiseRedirect keeps only same-app absolute paths.
+// mobileSettingsRedirect is the only native destination accepted for the OAuth
+// callback. The redirect carries a status only; OAuth credentials never reach it.
+const mobileSettingsRedirect = "nicoflow:///settings"
+
+// sanitiseRedirect keeps only same-app absolute paths or the exact native route.
 //
 // Rejects anything with a scheme or authority — "//evil.com" is a
 // protocol-relative URL that browsers treat as absolute, which is the classic
 // way an open-redirect filter gets bypassed.
 func sanitiseRedirect(path string) string {
+	if path == mobileSettingsRedirect {
+		return path
+	}
 	if path == "" || !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") {
 		return ""
 	}
-	if strings.Contains(path, "\\") || strings.ContainsAny(path, "\r\n") {
+	if strings.Contains(path, "\\") || strings.ContainsAny(path, "\r\n?#") {
 		return ""
 	}
 	return path

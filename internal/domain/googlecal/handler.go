@@ -56,7 +56,11 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 	// scary page — send them back with a status the UI can read.
 	if reason := q.Get("error"); reason != "" {
 		log.Info().Str("reason", reason).Msg("googlecal: consent declined")
-		h.redirect(w, r, "", "denied")
+		redirectPath, err := h.svc.Cancel(r.Context(), q.Get("state"))
+		if err != nil {
+			redirectPath = ""
+		}
+		h.redirect(w, r, redirectPath, "denied")
 		return
 	}
 
@@ -64,7 +68,7 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// The browser cannot act on a JSON error envelope here, so failures come
 		// back as a status the SPA turns into a message.
-		h.redirect(w, r, "", "failed")
+		h.redirect(w, r, redirectPath, "failed")
 		return
 	}
 
@@ -102,6 +106,13 @@ func (h *Handler) Disconnect(w http.ResponseWriter, r *http.Request) {
 // `path` is sanitised at Connect time too; this is the second of the two checks,
 // because this is the method that actually writes a Location header.
 func (h *Handler) redirect(w http.ResponseWriter, r *http.Request, path, status string) {
+	if path == mobileSettingsRedirect {
+		target, _ := url.Parse(mobileSettingsRedirect)
+		target.RawQuery = url.Values{"google": {status}}.Encode()
+		http.Redirect(w, r, target.String(), http.StatusFound)
+		return
+	}
+
 	base, err := url.Parse(h.appBaseURL)
 	if err != nil || base.Host == "" {
 		// A misconfigured base URL must not become a redirect to whatever the

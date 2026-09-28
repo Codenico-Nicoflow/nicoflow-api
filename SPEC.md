@@ -2350,8 +2350,11 @@ is an authenticated XHR — a redirect would be followed by `fetch` without the
 browser ever navigating.
 
 - **Auth required:** Yes
-- **Query:** `next` (optional) — an in-app absolute path to return to. Anything
-  with a scheme or authority is discarded (open-redirect defence).
+- **Query:** `next` (optional) — an in-app absolute path to return to, or the
+  exact native settings URI `nicoflow:///settings`. All other URI schemes and
+  authorities are discarded (open-redirect defence). The native URI receives
+  only `?google=connected|denied|failed`; OAuth codes and credentials are never
+  placed in the app redirect.
 
 ```json
 { "data": { "authUrl": "https://accounts.google.com/o/oauth2/v2/auth?..." }, "error": null }
@@ -2361,8 +2364,10 @@ browser ever navigating.
 
 **Unauthenticated** — the browser arrives from `accounts.google.com` with no
 `Authorization` header, so the single-use `state` is what identifies the user and
-proves they started the flow. Always **redirects** back into the SPA with a
-`?google=connected|denied|failed` status; never returns JSON.
+proves they started the flow. Always **redirects** to the saved web path or exact
+native settings URI with a `?google=connected|denied|failed` status; never returns
+JSON. Denial consumes the state too, preserving the originating client without
+allowing callback replay.
 
 Rate-limited per IP (20/min) because it is public and makes a network call.
 
