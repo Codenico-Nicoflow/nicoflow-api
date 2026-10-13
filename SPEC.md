@@ -1575,10 +1575,10 @@ client never needs a nil check.
 does not handle the new group silently drops results.
 
 **Notes in search** match on **title _and_ body text**, because the note search
-vector is generated from `title || content_text`. An **orphaned** note
-(`project_id` NULL after its project was deleted) is still returned, with empty
-`projectId`/`projectName` — search is user-scoped, not project-scoped, which is
-precisely what keeps orphans reachable.
+vector is generated from `title || content_text`. Search is scoped to content
+in Projects the caller can access, regardless of Task assignee. Orphan Notes
+are removed by the approved pre-launch Notes reset described in §3.18; new
+Notes always belong to a Project.
 
 > **Drift note:** this section previously documented `type` (singular),
 > `offset`, and a `_highlight` field. None of those exist in the shipped API —
@@ -2719,17 +2719,257 @@ cache sync the event has a correctness role: a second tab can notice a change
 and refetch _before_ the user types, defusing conflicts before `version` has to
 reject them.
 
-#### Project delete orphans notes, never destroys them
+#### Project delete cascades Notes
 
-`notes.project_id` is nullable with `ON DELETE SET NULL`, mirroring
-`tasks.project_id`. Deleting a project **orphans** its notes rather than
-destroying reference material. The API still requires `projectId` on create;
-nullability exists only to survive the delete. Orphans stay reachable through
-**search**, which is user-scoped rather than project-scoped — that is the only
-surface that can still find them.
+The approved pre-launch migration deletes all existing Notes. It then makes
+`notes.project_id` required with `ON DELETE CASCADE`. Every newly created Note
+must belong to a Project, and permanent Project deletion permanently deletes
+its Notes and note links. There is no production user data in scope for the
+pre-launch Notes reset.
 
 ---
 
+### 3.18 Approved Areas, Projects & Tasks collaboration contract
+
+This section records the approved Areas → Projects → Tasks collaboration
+delta. It supersedes conflicting lifecycle, ownership, visibility, and delete
+semantics in §§3.2–3.4 and 3.10–3.17. These contracts must be implemented
+consistently by the API, shared package, web, and mobile clients.
+
+#### Shared Projects and access
+
+- Areas remain private to their owner. Projects may be shared with existing
+  accounts by exact username lookup and an owner-created invitation.
+- An invitation grants no access while pending. It stays pending until the
+  recipient accepts, declines, or the owner withdraws it; invitations do not
+  expire automatically.
+- Accepted members access only the shared Project and its content, never the
+  owner’s Area or sibling Projects. A Project permission check is required for
+  every read/write path, including Notes, attachments, search, recurrence,
+  calendar/time spread, notifications, and realtime delivery.
+- The owner may invite/remove members, edit Project metadata, archive, restore,
+  or permanently delete. Accepted members may create/edit/complete/cancel,
+  reopen, reorder, and assign Project Tasks. A Task has at most one assignee,
+  chosen from its owner or accepted Project members.
+- Removing a member or leaving the Project immediately ends access. Open and
+  cancelled Tasks assigned to that member become unassigned. Completed Tasks
+  retain the former assignee display name as historical attribution.
+- Shared Tasks appear in personal Today and Calendar views only for the member
+  they are assigned to. They remain visible to accepted members in the Project.
+  Search returns all content in Projects accessible to the caller, regardless
+  of assignee.
+- Shared Task and Project writes use optimistic `version` checks. A stale write
+  returns `409 CONFLICT`; clients preserve the user’s draft and offer Review
+  latest or Discard draft. Shared edits are disabled offline; there is no
+  queued-write behavior.
+
+#### Archive, restore, quota, and deletion
+
+- Areas and Projects can be archived/restored by their owner. Archive is
+  reversible and content becomes read-only. After six months, the owner is
+  notified that the archived resource is eligible for permanent deletion;
+  deletion is never automatic. Only active Areas and Projects count toward
+  active-resource quotas; completed Projects do not count.
+- Permanent deletion is separate from archive and owner-only. It requires
+  exact-name confirmation and permanently removes nested content and shared
+  access. During the old-client transition, legacy Area/Project DELETE routes
+  act as archive aliases; new clients use explicit archive/restore and
+  permanent-delete routes.
+- When an account is deleted, its user record follows the existing account
+  soft-delete behavior, while all Projects owned by that account and their
+  content (including shared Projects) are permanently deleted. No separate
+  notice is sent to other members. Their access ends with deletion.
+- Basic Project sharing is available on Free. The member-count cap remains
+  deferred to the Billing PRD; do not hard-code the provisional assumption of
+  three invitees plus the owner.
+
+#### Approved collaboration endpoints
+
+The detailed request/response contract for exact username lookup, invitations,
+Project membership, Task assignment, archive/restore, deletion impact, and
+permanent deletion is maintained in the approved [Areas, Projects & Tasks API
+Contract](https://nicoflow.atlassian.net/wiki/spaces/NIC/pages/84148225). The
+following route families are introduced or revised:
+
+| Method and route | Contract |
+| --- | --- |
+| `GET /v1/users/lookup?username={exact}` | Authenticated exact lookup; returns public username/display name only; rate limited. |
+| `GET /v1/projects?scope=owned\|shared&view=active\|archive` | Lists owned Projects or accepted shared Projects; shared views omit Area data. |
+| `GET/POST /v1/projects/{id}/invitations` | Owner manages invitations; invitee accepts/declines from `/v1/invitations/{id}/{accept\|decline}`; owner withdraws. |
+| `GET /v1/projects/{id}/members`, `DELETE /v1/projects/{id}/members/{userId}`, `POST /v1/projects/{id}/leave` | Reads membership, removes a member, or lets an accepted member leave. |
+| `POST /v1/areas/{id}/archive`, `/restore`; `POST /v1/projects/{id}/archive`, `/restore` | Explicit reversible lifecycle operations. |
+| `GET /v1/archive` | Paginated archive visible to the caller, without exposing a shared Project’s owner Area. |
+| `POST /v1/areas/{id}/permanent-delete`, `/projects/{id}/permanent-delete` | Owner-only confirmed cascade deletion; supports idempotency and deletion-impact preview. |
+| `PATCH /v1/tasks/{id}` | Adds nullable `assigneeUserId` and optimistic `version`; assignee must be an owner/member. |
+
+All responses retain the standard API envelope. Unauthorized or revoked
+Project access returns the existing not-found family to avoid existence
+leaks; a visible resource with a forbidden member action returns
+`403 FORBIDDEN`. Archived content writes return `409 RESOURCE_ARCHIVED`.
+Notifications for invitations, assignment, and archive-age reminders are
+in-app and realtime, with localized en/he/ru copy. No email or push behavior is
+added by this contract. Billing member limits and metric success thresholds
+remain deferred decisions.
+
+
+#### Full approved route contract
+
+## Conventions applying to every endpoint
+
+- JWT auth required. IDs are strings. Success uses `{ "data": T, "error": null }`; errors use `{ "data": null, "error": { "code", "message" } }`. Existing 204 responses remain bodyless.
+- Reads of missing, foreign, pending-invite, revoked or unaccepted Project content return the existing 404 resource code to avoid existence leaks. A visible resource with an action forbidden to a member returns `403 FORBIDDEN`.
+- Project content writes when the Project or its Area is archived return `409 RESOURCE_ARCHIVED`. Stale versions return existing `409 CONFLICT`; responses contain no newer content unless the caller still has read access.
+- Collection endpoints use current opaque cursors, `limit` 1–100/default 50, `nextCursor: ""` at end. Mutations that can be replayed use `Idempotency-Key` (opaque 1–128 characters) for bounded dedupe, especially invitations and destructive operations. Exact retention window needs technical review.
+- The server checks current Project permission and lifecycle at the mutation transaction boundary. WebSocket delivery is after commit and never substitutes for an authorization check.
+
+## A. Existing endpoint revisions
+
+| Canonical section | Existing route | Proposed contract change |
+| --- | --- | --- |
+| §3.2 | `GET /v1/areas`, `GET /v1/areas/with-projects` | Owner Areas only. Default excludes archived Areas; add `state=active|archived` on paginated list. `with-projects` remains owner-only and active navigation only, excluding effective archived Projects. `IArea` adds `archivedAt: string|null`, `version: number`. |
+| §3.2 | `GET/PATCH /v1/areas/{id}` | Owner only. PATCH rejects archived writes except restore endpoint. Add version guard for owner edit; `409 CONFLICT` on stale version. |
+| §3.2 | `DELETE /v1/areas/{id}` | During old-client transition, becomes a 204 archive alias, **not** permanent deletion. Publish deprecation. A new explicit permanent-delete route is required. |
+| §3.3 | `GET /v1/projects` | Add `scope=owned|shared` (default `owned`), `view=active|archive` (default active); `status` remains optional within view. For `scope=shared`, only accepted membership; no Area fields. Shared Projects never appear in `GET /areas/with-projects`. |
+| §3.3 | `GET /v1/areas/{areaId}/projects` | Owner only; no member traversal through owner Area. Active view excludes effectively archived Projects. |
+| §3.3 | `GET /v1/projects/{id}` | Owner/accepted member. `IProject` adds `accessRole`, `owner` summary, `areaId: string|null` (null for member), `archivedAt`, `effectiveArchived`, `version`, `targetDate`. Retain legacy `dueDate` read-only during migration; clients display Target date and no overdue state. |
+| §3.3 | `POST /v1/areas/{areaId}/projects` | Owner only. Create `active` by default; reject initial archived state through generic create. `targetDate` optional; accept legacy `dueDate` for old clients in transition. |
+| §3.3 | `PATCH /v1/projects/{id}` | Owner only for name/icon/target date/Area/status/favorite. Member `isFavorite` needs a separate per-user preference if desired; this draft does not add one. Use version guard. `status=archived` via generic PATCH is deprecated; explicit archive route owns lifecycle. Completed ↔ active is allowed with quota checks when reopening. |
+| §3.3 | `DELETE /v1/projects/{id}` | During old-client transition, becomes a 204 archive alias; not permanent. |
+| §3.4 | `GET/POST /v1/projects/{projectId}/tasks`, `GET/PATCH /v1/tasks/{id}` | Owner/accepted members can read/write active Project Tasks. `ITask` adds `assigneeUserId: string|null`, `assigneeDisplayName: string|null`, `version: number`; removes Energy after coordinated cutover. `POST` title-only remains valid, Open + Medium default, new Task at end of manual order. |
+| §3.4 | `PATCH /v1/tasks/{id}/status`, `/schedule`, `/reorder` | Owner/accepted members; reject archived content; version guard on shared writes. Status stays active/done/cancelled. Completion with open Subtasks requires **client confirmation**; server preserves Subtasks. Reorder is transactional. |
+| §3.4 | `DELETE /v1/tasks/{id}` | Owner only, permanent; members use status=cancelled/reopen. Existing recurring-task delete guard remains. |
+| §3.5 | Subtask GET/POST/PATCH/DELETE | Access inherits Task Project; owner/member content writes in active Project. No assignee/date/priority on Subtask. Archived is read-only. |
+| §3.17 | Notes and note links/search | Membership-based read/write for accepted members, with existing version/409 behavior; effective archive read-only. No orphan Notes after approved migration. Search mentions/backlinks must filter accessible Projects and never reveal foreign titles. |
+| §§3.6–3.16 | Inbox, Calendar/Time Spread, Search, Recurrence, AI, Notifications, attachments | Every Project read/write and notification deep link must use the same access resolver. Cross-feature presentation choices remain with their PRDs; security changes are mandatory for sharing. |
+
+**Compatibility warning:** changing `IProject.areaId` from always-string to nullable and reinterpreting DELETE are breaking consumer semantics. Update backend, shared package and both clients together; gate new collaboration behind minimum supported client versions. Never claim old clients provide the new deletion confirmation.
+
+## B. Exact username lookup and invitations
+
+### `GET /v1/users/lookup?username={exact}` (§3.1)
+
+Authenticated, exact case-normalized match only, no prefix/list endpoint. Response 200:
+
+```json
+{ "data": { "id": "usr_1", "displayName": "Maya", "username": "maya7" }, "error": null }
+```
+
+Unknown/deactivated account → `404 USER_NOT_FOUND`; malformed username → `422 INVALID_INPUT`; rapid probing → `429 RATE_LIMITED`. Never return email, status, plan, owner Projects or suggestions. Rate limit per actor and IP, with audit of volume (no search term logging).
+
+### `POST /v1/projects/{projectId}/invitations` (§3.3 new)
+
+Owner only, Project effectively active. Body `{"recipientUserId":"usr_1"}` after exact lookup; header `Idempotency-Key` required. Server rechecks active account, rejects self/accepted member/duplicate pending. Response 201:
+
+```json
+{ "data": { "id": "inv_1", "projectId": "proj_1", "recipient": { "id": "usr_1", "displayName": "Maya", "username": "maya7" }, "status": "pending", "createdAt": "2026-10-07T10:00:00Z" }, "error": null }
+```
+
+Errors: `404 PROJECT_NOT_FOUND`, `403 FORBIDDEN`, `409 CONFLICT`, `409 RESOURCE_ARCHIVED`, `422 INVALID_INPUT`, `429 RATE_LIMITED`, and `403 PLAN_LIMIT_EXCEEDED` **only after Billing approves a cap**. A pending invitation grants no content access.
+
+### Invitation lists and decisions
+
+- `GET /v1/projects/{projectId}/invitations?status=pending|accepted|declined|withdrawn&cursor=&limit=` — owner only, paginated; list response `{items, nextCursor}`.
+- `GET /v1/invitations?status=pending&cursor=&limit=` — recipient’s own invitations, paginated; Project summary includes name/icon and owner public name, no Area ID/content.
+- `POST /v1/invitations/{id}/accept` — recipient only, pending only; atomic membership creation; response 200 `{data: IProject, error:null}` with `areaId:null` and `accessRole:"member"`.
+- `POST /v1/invitations/{id}/decline` — recipient only; response 200 `{data: InvitationView, error:null}`.
+- `POST /v1/projects/{projectId}/invitations/{id}/withdraw` — owner only; response 200 InvitationView.
+
+Idempotent repeat of the same final decision returns current state for the same actor; opposite decision yields `409 CONFLICT`. Invitations have no automatic expiry and remain pending until accepted, declined, or withdrawn by the owner. List responses never include recipient email.
+
+## C. Membership and assignment
+
+### `GET /v1/projects/{projectId}/members`
+
+Owner or accepted member. Response 200:
+
+```json
+{ "data": { "items": [ { "userId":"usr_owner", "displayName":"Alex", "username":"alex", "role":"owner" }, { "userId":"usr_1", "displayName":"Maya", "username":"maya7", "role":"member" } ], "nextCursor":"" }, "error":null }
+```
+
+Paginate for consistency even if Billing later caps membership. Does not expose email or owner Area. Archived Project members may read roster but cannot mutate Project content.
+
+### `DELETE /v1/projects/{projectId}/members/{userId}`
+
+Owner only. Cannot remove owner. 204 bodyless. In one transaction: delete membership, clear assignment on open and cancelled Tasks, preserve completed Task assignee display-name snapshot, commit; then send minimal revocation event. `403 FORBIDDEN` for member actor, `404 PROJECT_NOT_FOUND` for invisible Project/member.
+
+### `POST /v1/projects/{projectId}/leave`
+
+Accepted member only; owner gets `403 FORBIDDEN`. 204 bodyless. Same assignment and revocation rules as removal. Archive state does not block leaving. Repeat after leaving may return 404, with no content leak.
+
+### `PATCH /v1/tasks/{id}` assignee addition
+
+Body includes `{"assigneeUserId":"usr_1","version":8}` or `{"assigneeUserId":null,"version":8}`. Assignee must be owner or accepted member of the Task’s current Project; otherwise `422 INVALID_ASSIGNEE` (new code) without leaking account identity. A Task moved to another Project must clear or validate assignee atomically; **proposal:** clear assignment on move, show confirmation in clients. Success returns updated Task with incremented version. A change by someone other than the new assignee creates one in-app `task_assigned` notification to the new assignee; self-assignment and unassignment are quiet. Do not send email/push in this feature. Task status does not automatically change on assignment.
+
+## D. Archive, restore and permanent delete
+
+### `POST /v1/areas/{id}/archive`, `POST /v1/projects/{id}/archive`
+
+Owner only. Empty body, `Idempotency-Key` recommended. 200 updated resource. An already directly archived resource returns its current archive state; no second clock is started. Archiving an Area does not mutate child Project statuses. `area.archivedAt` and `project.archivedAt` are UTC timestamps. The Project response also exposes `effectiveArchived`.
+
+### `POST /v1/areas/{id}/restore`, `POST /v1/projects/{id}/restore`
+
+Owner only. 200 updated resource. Project restore under archived Area → `409 PARENT_ARCHIVED`. Quota failure → `403 PLAN_LIMIT_EXCEEDED` with structured `details` below; Area restore is all-or-nothing. A direct Project restore returns prior active/completed status. If resource is already active, return current state without quota consumption. `details` must not expose other owners’ data.
+
+```json
+{ "data": null, "error": { "code": "PLAN_LIMIT_EXCEEDED", "message": "Restore needs more active project slots.", "details": { "resource": "project", "required": 3, "available": 1, "limit": 5 } } }
+```
+
+### `GET /v1/archive?cursor=&limit=`
+
+Paginated owner-and-member-visible archive entries, each `{kind:"area"|"project", id, name, archivedAt, archiveReason:"direct"|"area", accessRole}`. Member Project entries never contain Area ID/name. Archive age and eligibility apply to directly archived resources; inherited Projects show the parent Area as the reason. Existing area/project GET routes remain available as read-only for permitted viewers.
+
+### `POST /v1/areas/{id}/permanent-delete`, `POST /v1/projects/{id}/permanent-delete`
+
+Owner only. Body `{"confirmName":"exact current name","version":8}`, header `Idempotency-Key` required. 204 on success; `422 CONFIRMATION_MISMATCH` for wrong name, `409 CONFLICT` for stale version, `403 FORBIDDEN` for member, 404 for invisible resource. Matching uses server-normalized Unicode but otherwise exact case and punctuation. Area deletion cascades all nested Projects, Tasks, Subtasks, Notes, links, memberships and invitations; Project deletion cascades its content. Attachment object deletion is queued with retry and observable completion. The response commits only after SQL deletion, and retries with the same key must not double-process. Client shows number of Projects/content and affected members **before** confirming; a `GET /v1/{areas|projects}/{id}/deletion-impact` endpoint should return `{projects, tasks, notes, attachments, members}` counts from a consistent read.
+
+**No automatic permanent deletion.** A scheduled job checks direct `archivedAt` and creates owner in-app notices after months 1, 2, 3, 4, 5 and 6 (at 6, eligible). It does not call either permanent-delete endpoint.
+
+## E. Shapes, errors, events and migration notes
+
+### Changed resource fragments
+
+```json
+{ "id":"area_1", "name":"Home", "archivedAt":null, "version":1 }
+```
+
+```json
+{ "id":"proj_1", "areaId":null, "accessRole":"member", "owner":{"id":"usr_owner","displayName":"Alex","username":"alex"}, "status":"active", "targetDate":"2026-11-01", "archivedAt":null, "effectiveArchived":false, "version":3 }
+```
+
+```json
+{ "id":"task_1", "projectId":"proj_1", "status":"active", "priority":"medium", "assigneeUserId":"usr_1", "assigneeDisplayName":"Maya", "version":9 }
+```
+
+These are **fragments**; unchanged existing fields remain. `targetDate` is ISO date `YYYY-MM-DD` or null, without automatic overdue behavior. The old `dueDate` timestamp is maintained only during migration. `scheduledFor` remains the existing soft Task date, not a deadline. Energy is removed from Task create/update/list/sort/filter and recurrence/AI tool templates only after clients and backend have cut over. During transition the server may accept old Energy input but ignore it while returning a deprecated field to old clients; this compatibility behavior requires an explicit rollout window and generated OpenAPI update.
+
+### New/changed §4 errors
+
+| Code | HTTP | Meaning |
+| --- | --- | --- |
+| `RESOURCE_ARCHIVED` | 409 | Visible Project/Area is read-only through direct or inherited archive. |
+| `PARENT_ARCHIVED` | 409 | Project restore requires owner Area restore first. |
+| `INVALID_ASSIGNEE` | 422 | Target is not owner or accepted Project member. |
+| `CONFIRMATION_MISMATCH` | 422 | Exact-name deletion confirmation failed. |
+| Existing `CONFLICT` | 409 | Stale version, duplicate pending invite, or conflicting invite transition; client uses operation context. |
+| Existing `PLAN_LIMIT_EXCEEDED` | 403 | Active quota or later-approved member cap; add optional safe `details`. |
+
+### New §3.15 WebSocket events
+
+| Event | Recipient/payload |
+| --- | --- |
+| `project.invitation_created` | Invitee only; invitation summary without content. |
+| `project.membership_changed` | Current owner and members; `{projectId, membershipVersion}`; clients refetch roster. |
+| `project.access_revoked` | Former member only; `{projectId}`; purge cached Project/Task/Note data, navigate out. |
+| `project.archived`, `project.restored` | Current owner and members; minimal `{projectId}` and refetch, never owner Area metadata to members. |
+| Existing `task.*`, `project.*`, `note.*` | Fan out to owner and current accepted members, payload filtered to visibility; no owner Area ID in member Project payload. |
+
+### New notification types (§3.11)
+
+`project_invitation`, `task_assigned`, `archive_monthly_notice`, `archive_eligible`. In-app and WebSocket only for this feature; translated copy and deep links in en/he/ru. Dedupe by invitation ID, task assignment transition ID, and `(entity kind,id,archive timestamp,month number)`. No member archive-age notice. Unknown types retain client fallback.
+
+### Required cross-contract changes
+
+The canonical API SPEC now contains this approved contract. The maintained frontend SPEC has been reconciled for corresponding client behavior. Replace the older §3.17 orphan-Notes behavior with the approved pre-launch reset: delete all existing Notes, require every new Note to belong to a Project, and cascade Notes on Project deletion. Shared Tasks appear in personal Today/Calendar only when assigned to the current member; Search includes all content in accessible Projects, regardless of assignee. Account deletion continues to soft-delete the user record while permanently deleting all Projects owned by that account and their content, including shared Projects; no separate notice is sent to other members. Member-cap limits and metric thresholds remain deferred to Billing and instrumentation decisions.
 ## §4 Error Code Reference
 
 All API errors return a consistent envelope:
@@ -2845,7 +3085,7 @@ Today = **backend logging only**: `zerolog` → stdout → Render dashboard tail
 
 | Epic | Jira | Confluence | What |
 | --- | --- | --- | --- |
-| **E-040 Legal & Compliance** | NIC-1443 | 2.40 (`50593797`) | ToS + Privacy + cookie/consent + signup consent; **GDPR** account-delete UX (wires existing `DELETE /v1/users/me` soft-delete) + data-export endpoint. Hard gate on Web v1; consent gates E-041. |
+| **E-040 Legal & Compliance** | NIC-1443 | 2.40 (`50593797`) | ToS + Privacy + cookie/consent + signup consent; **GDPR** account-delete UX (soft-deletes the user record and permanently deletes owned Projects and their content) + data-export endpoint. Hard gate on Web v1; consent gates E-041. |
 | **E-041 Product Analytics (PostHog)** | NIC-1444 | 2.41 (`50921473`) | Behavioral event tracking (cross-platform web+mobile+desktop). Typed event taxonomy, funnels (signup→activation, free→Pro), consent-gated, `VITE_POSTHOG_KEY` (absent = no-op). Mobile SDK deferred to E-034+. |
 | **E-042 Help, Support & Static Content** | NIC-1445 | 2.42 (`50823171`) | Help/FAQ, support/contact, onboarding empty-states, marketing/public pages, **SEO/meta/OG** on shareable pages, README polish. |
 | **E-043 Uptime, Logs & Status (Betterstack)** | NIC-1446 | 2.43 (`50692109`) | Render Log Stream → Betterstack Logs (persistent/searchable/alertable), `/v1/health` uptime monitor + alerts, public status page. Infra layer — complements Sentry (E-038), no overlap. |

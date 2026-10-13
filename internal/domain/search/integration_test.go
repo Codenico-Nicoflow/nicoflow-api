@@ -304,19 +304,17 @@ func TestIntegration_Search_PrefixMatch(t *testing.T) {
 
 // ── notes in search (E-053 / NIC-1909) ───────────────────────────────────────
 
-// seedNote inserts a note directly. projectID empty ⇒ an orphaned note, the
-// state a project delete leaves behind.
+// seedNote inserts a note directly under its required project.
 func seedNote(t *testing.T, pool *pgxpool.Pool, userID, projectID, title, contentText string) string {
 	t.Helper()
 	id := uuid.New().String()
-	var pid *string
-	if projectID != "" {
-		pid = &projectID
+	if projectID == "" {
+		t.Fatal("project id is required for a note")
 	}
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO notes (id, user_id, project_id, title, content_text)
 		VALUES ($1, $2, $3, $4, $5)`,
-		id, userID, pid, title, contentText,
+		id, userID, projectID, title, contentText,
 	); err != nil {
 		t.Fatalf("seed note: %v", err)
 	}
@@ -360,10 +358,8 @@ func TestIntegration_Search_NotesMatchTitleAndBody(t *testing.T) {
 	}
 }
 
-// AC2 — deleting a project orphans its notes rather than destroying them, and
-// search is user-scoped, so an orphan stays findable. Search is the only surface
-// that can still reach it.
-func TestIntegration_Search_OrphanedNoteStillFound(t *testing.T) {
+// AC2 — deleting a project removes its notes from search as well as storage.
+func TestIntegration_Search_ProjectDeleteCascadesNotes(t *testing.T) {
 	srv, pool := newSearchServer(t)
 	userID, token := mustCreateUser(t, pool)
 	_, projectID, _ := seedAreaProjectTask(t, pool, userID, "Work", "Doomed", "unrelated task", "")
@@ -383,15 +379,8 @@ func TestIntegration_Search_OrphanedNoteStillFound(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(env.Data.Notes) != 1 {
-		t.Fatalf("notes = %d, want the orphan still returned", len(env.Data.Notes))
-	}
-	got := env.Data.Notes[0]
-	if got.ID != noteID {
-		t.Errorf("id = %q, want %q", got.ID, noteID)
-	}
-	if got.ProjectID != "" || got.ProjectName != "" {
-		t.Errorf("orphan carries project fields: id=%q name=%q", got.ProjectID, got.ProjectName)
+	if len(env.Data.Notes) != 0 {
+		t.Fatalf("notes = %d, want 0 after the project cascade (deleted note %s)", len(env.Data.Notes), noteID)
 	}
 }
 

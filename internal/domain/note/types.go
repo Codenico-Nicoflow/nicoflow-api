@@ -33,9 +33,9 @@ const (
 // default or this constant supplied it.
 const EmptyDoc = `{"type":"doc","content":[]}`
 
-// Note is the internal domain model. ProjectID is a pointer because deleting a
-// project orphans its notes (ON DELETE SET NULL) rather than destroying them;
-// the API still requires a project on create.
+// Note is the internal domain model. ProjectID is a pointer to preserve the
+// repository's nullable-scan convention; the database requires a project and
+// deleting a project cascades to its notes.
 //
 // Content is the raw document; ContentText is its flattened plain text, kept
 // alongside so the generated search vector has an IMMUTABLE source. The two are

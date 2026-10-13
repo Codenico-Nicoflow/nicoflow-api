@@ -399,8 +399,8 @@ func TestDelete(t *testing.T) {
 	}
 }
 
-// AC5 — deleting a project orphans its notes rather than destroying them.
-func TestProjectDeleteOrphansNotes(t *testing.T) {
+// AC5 — deleting a project cascades to its notes.
+func TestProjectDeleteCascadesNotes(t *testing.T) {
 	repo, pool := newRepo(t)
 	ctx := context.Background()
 	userID := seedUser(t, pool)
@@ -416,12 +416,8 @@ func TestProjectDeleteOrphansNotes(t *testing.T) {
 	}
 
 	for _, id := range ids {
-		got, err := repo.GetByID(ctx, userID, id)
-		if err != nil {
-			t.Fatalf("note %s was destroyed with its project: %v", id, err)
-		}
-		if got.ProjectID != nil {
-			t.Errorf("ProjectID = %v, want nil after the project was deleted", *got.ProjectID)
+		if _, err := repo.GetByID(ctx, userID, id); err == nil {
+			t.Errorf("note %s still exists after its project was deleted", id)
 		}
 	}
 }
@@ -511,8 +507,7 @@ func TestContentDefaultsToEmptyDoc(t *testing.T) {
 	}
 }
 
-// A hard-deleted user takes their notes with them (ON DELETE CASCADE), unlike a
-// deleted project.
+// A hard-deleted user takes their notes with them (ON DELETE CASCADE).
 func TestUserDeleteCascades(t *testing.T) {
 	repo, pool := newRepo(t)
 	ctx := context.Background()
