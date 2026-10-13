@@ -554,6 +554,42 @@ func TestIntegration_DeleteMe(t *testing.T) {
 	assertErrCode(t, err, apperror.ErrUnauthorized)
 }
 
+func TestIntegration_DeleteMe_RemovesOwnedProjectsAndContent(t *testing.T) {
+	svc, pool := integrationSvc(t)
+	reg := mustRegister(t, svc)
+
+	areaID := "area-account-delete-" + reg.User.ID
+	projectID := "project-account-delete-" + reg.User.ID
+	noteID := "note-account-delete-" + reg.User.ID
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO areas (id, user_id, name) VALUES ($1, $2, 'Delete test')`, areaID, reg.User.ID); err != nil {
+		t.Fatalf("insert area: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO projects (id, user_id, area_id, name) VALUES ($1, $2, $3, 'Delete test')`, projectID, reg.User.ID, areaID); err != nil {
+		t.Fatalf("insert project: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO notes (id, user_id, project_id, title) VALUES ($1, $2, $3, 'Delete test')`, noteID, reg.User.ID, projectID); err != nil {
+		t.Fatalf("insert note: %v", err)
+	}
+
+	if err := svc.DeleteMe(context.Background(), reg.User.ID); err != nil {
+		t.Fatalf("DeleteMe() error = %v", err)
+	}
+
+	var projectCount, noteCount int
+	if err := pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM projects WHERE id = $1`, projectID).Scan(&projectCount); err != nil {
+		t.Fatalf("count projects: %v", err)
+	}
+	if err := pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM notes WHERE id = $1`, noteID).Scan(&noteCount); err != nil {
+		t.Fatalf("count notes: %v", err)
+	}
+	if projectCount != 0 || noteCount != 0 {
+		t.Fatalf("owned Project content remains after account deletion: projects=%d notes=%d", projectCount, noteCount)
+	}
+}
+
 // ── Email verification ──────────────────────────────────────────────────────
 
 // insertVerificationToken writes a valid email-verification token directly into

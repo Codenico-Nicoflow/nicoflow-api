@@ -237,8 +237,24 @@ func (r *pgRepo) UpdateUser(ctx context.Context, userID string, req UpdateMeRequ
 	return u, nil
 }
 
-func (r *pgRepo) SoftDeleteUser(ctx context.Context, userID string) error {
-	tag, err := r.db.Exec(ctx,
+func (r *pgRepo) SoftDeleteUser(ctx context.Context, userID string) (resultErr error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("auth.SoftDeleteUser begin: %w", err)
+	}
+	defer func() {
+		if rollbackErr := tx.Rollback(ctx); rollbackErr != nil &&
+			!errors.Is(rollbackErr, pgx.ErrTxClosed) && resultErr == nil {
+			resultErr = fmt.Errorf("auth.SoftDeleteUser rollback: %w", rollbackErr)
+		}
+	}()
+
+	// Projects are owned by their creator and must be permanently removed when
+	// that account is deleted, even though the user row itself is retained.
+	if _, err := tx.Exec(ctx, `DELETE FROM projects WHERE user_id = @userID`, pgx.NamedArgs{"userID": userID}); err != nil {
+		return fmt.Errorf("auth.SoftDeleteUser delete owned projects: %w", err)
+	}
+	tag, err := tx.Exec(ctx,
 		`UPDATE users SET deleted_at = NOW() WHERE id = @userID AND deleted_at IS NULL`,
 		pgx.NamedArgs{"userID": userID},
 	)
@@ -247,6 +263,9 @@ func (r *pgRepo) SoftDeleteUser(ctx context.Context, userID string) error {
 	}
 	if tag.RowsAffected() == 0 {
 		return apperror.New(http.StatusNotFound, apperror.ErrUserNotFound, "user not found")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("auth.SoftDeleteUser commit: %w", err)
 	}
 	return nil
 }
