@@ -182,8 +182,8 @@ func (r *pgRepository) SearchAreas(ctx context.Context, userID, term string, lim
 
 // SearchNotes matches against the notes_search_idx GIN column, which is generated
 // from title || content_text — so a hit on the body text works exactly like a hit
-// on the title. The join is LEFT: an orphaned note (project_id NULL after its
-// project was deleted) must still be returned, with empty project fields.
+// on the title. Notes require a project, and project deletion cascades to notes,
+// so only notes with a live project can be returned.
 func (r *pgRepository) SearchNotes(ctx context.Context, userID, term string, limit int) ([]NoteResult, error) {
 	const q = `
 		SELECT n.id,
@@ -192,7 +192,7 @@ func (r *pgRepository) SearchNotes(ctx context.Context, userID, term string, lim
 		       coalesce(n.project_id, '') AS project_id,
 		       coalesce(p.name, '')       AS project_name
 		FROM notes n
-		LEFT JOIN projects p ON p.id = n.project_id
+		JOIN projects p ON p.id = n.project_id
 		WHERE n.user_id = $1
 		  AND n.search_vector @@ to_tsquery('simple', $2)
 		ORDER BY ts_rank(n.search_vector, to_tsquery('simple', $2)) DESC, n.updated_at DESC
